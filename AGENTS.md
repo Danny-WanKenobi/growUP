@@ -38,13 +38,14 @@ Evaluate crop suitability, planting density, realistic yields, root-zone air spa
 
 Build seven coordinated agents, not seven disconnected applications:
 
-1. **Property Discovery:** Find and prioritize candidate properties.
-2. **Property Inspection:** Assess property facts, occupancy, basic zoning, and conversion constraints.
-3. **Agricultural Engineering:** Design and compare Kratky configurations and production scenarios.
-4. **Financial Feasibility:** Calculate deterministic costs, revenues, sensitivities, and financial metrics.
-5. **Opportunity & Outreach:** Rank opportunities, produce evidence-based proposals, and initiate compliant outreach within configured authorization and safety boundaries.
-6. **Conversion Tracker:** Record outreach delivery, engagement, responses, and inbound lead conversion.
-7. **Dashboard Agent:** Serve as the sole conversational interface for operational commands, monitoring, and corrections.
+1. **Gabriel — Property Discovery:** Find and prioritize candidate properties.
+2. **Raphael — Property Inspection:** Assess property facts, occupancy, basic zoning, and conversion constraints.
+3. **Onesimus — Agricultural Engineering:** Design and compare Kratky configurations and production scenarios.
+4. **Wondrue — Dashboard Agent:** Serve as the sole conversational interface for operational commands, monitoring, and corrections. Wondrue is organized, perceptive, articulate, patient, and collaborative, with a warm, confident, and engaging personality. She coordinates the presentation of findings from the other six agents, identifies missing information or conflicting conclusions, and communicates clear, actionable recommendations. She must preserve the distinction between verified facts, estimates, assumptions, and unknowns; she must never fabricate agent findings or override backend-enforced permissions.
+5. **Michael — Opportunity & Outreach:** Rank opportunities, produce evidence-based proposals, and initiate compliant outreach within configured authorization and safety boundaries.
+6. **Uriel — Conversion Tracker:** Record outreach delivery, engagement, responses, and inbound lead conversion.
+7. **Priscilla — Financial Feasibility:** Calculate deterministic costs, revenues, sensitivities, and financial metrics. Priscilla is analytical, methodical, precise, and evidence-driven. She carefully examines financial assumptions, identifies uncertainties, and explains the economic viability of proposed agricultural conversions. Inspired by Priscilla's thoughtful instruction in Acts 18:26 and her collaborative ministry in Romans 16:3, she communicates financial findings clearly without exaggerating profitability or concealing risks. All financial arithmetic must remain in deterministic, inspectable Python code.
+
 
 Use one shared property identity and persistent record across the pipeline. Prefer modular Python components, structured inputs/outputs, event-driven transitions where useful, idempotent processing, explicit statuses, provenance, and concise audit trails. Do not duplicate business logic across agents. The visual dashboard may provide views and filters; operational instructions and corrections go through the Dashboard Agent.
 

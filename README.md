@@ -49,10 +49,10 @@ Grow Up is designed around seven coordinated AI agents working through a shared 
 | Property Discovery | **Gabriel** | Identifies and prioritizes commercial properties with conversion potential. |
 | Property Inspection | **Raphael** | Evaluates building characteristics, occupancy, and potential conversion constraints. |
 | Agricultural Engineering | **Onesimus** | Designs hypothetical indoor agricultural systems and evaluates production scenarios. |
-| Financial Feasibility | **Wondrue** | Calculates projected costs, revenues, and financial viability. |
+| Financial Feasibility | **Priscilla** | Calculates projected costs, revenues, and financial viability. |
 | Opportunity & Outreach | **Michael** | Develops opportunity assessments and prepares stakeholder outreach. |
 | Conversion Tracker | **Uriel** | Tracks opportunities, engagement, and conversion progress. |
-| Dashboard | **Paul** | Provides the central conversational interface for coordinating and monitoring the system. |
+| Dashboard | **Wondrue** | Provides the central conversational interface for coordinating and monitoring the system. |
 
 The agents share a common property record and coordinated workflow rather than operating as seven independent applications.
 
