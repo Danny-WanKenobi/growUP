@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Root-owned, narrowly delegated Grow Up deployment controller.
+set -Eeuo pipefail
+umask 0027
+# Prevent overlapping deployments.
+exec 9>/run/lock/growup-deploy.lock
+flock -n 9 || {
+    echo 'Another Grow Up deployment is already running.' >&2
+    exit 1
+}
+[[ "$#" -eq 1 ]] || { echo 'Expected one release name' >&2; exit 2; }
+RELEASE=$1
+[[ "$RELEASE" =~ ^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{7}$ ]] || exit 2
+ROOT=/var/www/growup
+INCOMING="$ROOT/incoming"
+STAGING="$ROOT/.deploy-staging"
+ARCHIVE="$INCOMING/$RELEASE.tar"
+CHECKSUM="$ARCHIVE.sha256"
+STAGED="$STAGING/$RELEASE.tar"
+INSTALLER=/usr/local/libexec/growup/remote-install-release.sh
+SERVICE=growup.service
+[[ -f "$ARCHIVE" && -f "$CHECKSUM" ]] || { echo 'Missing uploaded archive/checksum' >&2; exit 1; }
+[[ -f "$INSTALLER" && -O "$INSTALLER" ]] || { echo 'Trusted installer missing' >&2; exit 1; }
+# Root controls staging; growup can read staged archives only.
+install -d -o root -g growup -m 750 "$STAGING"
+# Checksum file must contain exactly the expected digest and archive name.
+EXPECTED=$(cat "$CHECKSUM")
+[[ "$EXPECTED" =~ ^[0-9a-f]{64}\ \ ${RELEASE}\.tar$ ]] || { echo 'Invalid checksum manifest' >&2; exit 1; }
+ACTUAL=$(sha256sum "$ARCHIVE" | cut -d ' ' -f1)
+[[ "$ACTUAL  $RELEASE.tar" == "$EXPECTED" ]] || { echo 'SHA256 mismatch' >&2; exit 1; }
+install -o root -g growup -m 640 "$ARCHIVE" "$STAGED"
+STAGED_HASH=$(sha256sum "$STAGED" | cut -d ' ' -f1)
+[[ "$STAGED_HASH" == "${EXPECTED:0:64}" ]] || { echo 'Staged archive checksum mismatch' >&2; exit 1; }
+trap 'rm -f "$STAGED"' EXIT
+runuser -u growup -- /bin/bash "$INSTALLER" "$RELEASE" "$STAGED"
+PREVIOUS=$(readlink -f "$ROOT/current" || true)
+PENDING="$ROOT/.current-$RELEASE"
+ln -s "$ROOT/releases/$RELEASE" "$PENDING"
+mv -Tf "$PENDING" "$ROOT/current"
+rollback() {
+    echo 'Deployment failed; reverting active release.' >&2
+    if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
+        ln -s "$PREVIOUS" "$ROOT/.rollback-$RELEASE"
+        mv -Tf "$ROOT/.rollback-$RELEASE" "$ROOT/current"
+        systemctl restart "$SERVICE" || true
+    else
+        rm -f "$ROOT/current"
+        systemctl stop "$SERVICE" || true
+    fi
+}
+if ! systemctl restart "$SERVICE"; then rollback; exit 1; fi
+HEALTHY=0
+for i in $(seq 1 15); do
+    if systemctl is-active --quiet "$SERVICE" && curl -fsS --max-time 2 http://127.0.0.1:8001/health >/dev/null; then
+        HEALTHY=1; break
+    fi
+    sleep 2
+done
+if [[ "$HEALTHY" != 1 ]]; then rollback; exit 1; fi
+printf 'status=healthy\n' >> "$ROOT/releases/$RELEASE/RELEASE-MANIFEST.txt"
+rm -f "$ARCHIVE" "$CHECKSUM"
+echo "SUCCESS: Grow Up release activated: $RELEASE"
