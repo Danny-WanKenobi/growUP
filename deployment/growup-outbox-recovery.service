@@ -1,0 +1,33 @@
+# growup-outbox-recovery.service — one-shot SQLite outbox recovery cycle.
+#
+# TEMPLATE: copy to /etc/systemd/system/, then daemon-reload. Do NOT enable
+# during development deployment; the timer is activated manually after
+# verification (see deployment/README-DEPLOYMENT.md).
+#
+# Runs one bounded recovery cycle (<=100 events) and exits. Overlap with
+# a still-running cycle is prevented by flock: a contended run exits
+# nonzero immediately so systemd records the overrun instead of stacking.
+[Unit]
+Description=Grow Up SQLite outbox recovery cycle
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=growup
+Group=growup
+WorkingDirectory=/var/www/growup/current
+EnvironmentFile=/var/www/growup/shared/growup.env
+ExecStart=/usr/bin/flock -n /var/www/growup/shared/observability/recovery.lock /var/www/growup/current/.venv/bin/python -m app.observability.recovery
+# Hardening: keep SQLite, logs, and local PostgreSQL reachable.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/growup/shared /var/www/growup/logs
+# Local PostgreSQL over loopback needs no extra capability.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from app.observability.config import ObservabilityConfig, get_observability_config
 from app.observability.emitter import (
+    DurabilityError,
     EmitOutcome,
     EventPersistenceError,
     emit,
     emit_nonfatal,
+    get_outbox_status,
     get_pg_status,
     get_status,
     log_activity,
@@ -23,6 +25,7 @@ from app.observability.emitter import (
     log_evidence,
     log_handoff,
     log_warning,
+    require_durable,
 )
 from app.observability.events import (
     AgentEvent,
@@ -39,14 +42,17 @@ from app.observability.outbox import (
     OutboxError,
     OutboxUnavailableError,
     PendingEvent,
+    retry_delay_seconds,
     validate_production_path,
 )
 from app.observability.redaction import REDACTED, redact, scrub_text
 from app.observability.store import (
+    DeliveryResult,
     by_correlation,
     by_property,
     by_run,
     decisions,
+    deliver_event,
     handoffs,
     insert_event,
     purge_expired_events,
@@ -57,6 +63,8 @@ from app.observability.store import (
 __all__ = [
     "AgentEvent",
     "AgentId",
+    "DeliveryResult",
+    "DurabilityError",
     "EvidenceRef",
     "EmitOutcome",
     "EventPersistenceError",
@@ -75,9 +83,11 @@ __all__ = [
     "by_property",
     "by_run",
     "decisions",
+    "deliver_event",
     "emit",
     "emit_nonfatal",
     "get_observability_config",
+    "get_outbox_status",
     "get_pg_status",
     "get_sink",
     "get_status",
@@ -95,7 +105,9 @@ __all__ = [
     "query_events",
     "recent_by_agent",
     "redact",
+    "require_durable",
     "reset_sinks",
+    "retry_delay_seconds",
     "scrub_text",
     "validate_production_path",
 ]

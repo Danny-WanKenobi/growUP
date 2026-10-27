@@ -487,6 +487,55 @@ def test_materially_different_details_conflict(tmp_path) -> None:
     assert box.count_pending() == 1
 
 
+def test_purge_delivered_after_retention_window(tmp_path) -> None:
+    box = _box(tmp_path)
+    old = _event()
+    box.accept(old, now=_T0 - timedelta(days=60))
+    box.mark_delivered(old.event_id, now=_T0 - timedelta(days=31))
+    recent = _event()
+    box.accept(recent, now=_T0 - timedelta(days=10))
+    box.mark_delivered(recent.event_id, now=_T0 - timedelta(days=10))
+    assert box.purge_delivered(older_than_days=30, now=_T0) == 1
+    assert box.get(old.event_id) is None
+    assert box.get(recent.event_id) is not None
+    assert box.purge_delivered(older_than_days=30, now=_T0) == 0
+    with pytest.raises(ValueError):
+        box.purge_delivered(older_than_days=0)
+
+
+def test_purge_never_touches_pending(tmp_path) -> None:
+    box = _box(tmp_path)
+    ancient = _event()
+    box.accept(ancient, now=_T0 - timedelta(days=365))
+    box.record_attempt(ancient.event_id, "pg_unreachable", now=_T0 - timedelta(days=300))
+    attempted = _event()
+    box.accept(attempted, now=_T0 - timedelta(days=200))
+    assert box.purge_delivered(older_than_days=30, now=_T0) == 0
+    assert box.count_pending() == 2
+    assert box.get(ancient.event_id) is not None
+
+
+def test_purge_is_bounded(tmp_path) -> None:
+    box = _box(tmp_path)
+    for _ in range(3):
+        event = _event()
+        box.accept(event, now=_T0 - timedelta(days=60))
+        box.mark_delivered(event.event_id, now=_T0 - timedelta(days=31))
+    assert box.purge_delivered(older_than_days=30, limit=2, now=_T0) == 2
+    assert box.purge_delivered(older_than_days=30, limit=2, now=_T0) == 1
+
+
+def test_auto_backoff_without_explicit_retry(tmp_path) -> None:
+    box = _box(tmp_path)
+    event = _event()
+    box.accept(event, now=_T0)
+    assert box.record_attempt(event.event_id, "pg_unreachable", now=_T0) is True
+    assert box.pending(now=_T0 + timedelta(seconds=29)) == []
+    (pending,) = box.pending(now=_T0 + timedelta(seconds=31))
+    assert pending.attempts == 1
+    assert pending.next_retry_at == _T0 + timedelta(seconds=30)
+
+
 def test_event_ids_never_rewritten(tmp_path) -> None:
     box = _box(tmp_path)
     event = _event(event_id="stable-id-event-0001")
@@ -494,3 +543,91 @@ def test_event_ids_never_rewritten(tmp_path) -> None:
     assert box.get("stable-id-event-0001").event_id == "stable-id-event-0001"
     (pending,) = box.pending()
     assert pending.event.event_id == "stable-id-event-0001"
+
+
+# Pre-commit correction 1 - Phase 3A database upgrade.
+
+
+def _create_phase3a_database(path) -> str:
+    """Build a real Phase 3A-format database with one pending event.
+
+    Raw sqlite3 DDL replicating the Phase 3A schema: no delivered_at
+    column, only the pending index. Returns the stored payload text.
+    """
+    event = _event()
+    payload = json.dumps(event.to_record(), sort_keys=True)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE outbox_events (
+                event_id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                event_timestamp TEXT NOT NULL,
+                enqueued_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT NULL,
+                last_error TEXT NULL,
+                next_retry_at TEXT NULL,
+                CONSTRAINT outbox_status_check CHECK (status IN ('pending', 'delivered'))
+            );
+            CREATE INDEX outbox_pending_idx
+                ON outbox_events (status, enqueued_at, event_id);
+            """
+        )
+        with conn:
+            conn.execute(
+                "INSERT INTO outbox_events (event_id, payload, event_timestamp,"
+                " enqueued_at, status, attempts, last_attempt_at, last_error,"
+                " next_retry_at) VALUES (?, ?, ?, ?, 'pending', 2, ?, ?, ?)",
+                (
+                    event.event_id,
+                    payload,
+                    event.timestamp.isoformat(timespec="seconds"),
+                    _T0.isoformat(timespec="seconds"),
+                    _T0.isoformat(timespec="seconds"),
+                    "pg_unreachable",
+                    (_T0 + timedelta(minutes=5)).isoformat(timespec="seconds"),
+                ),
+            )
+    finally:
+        conn.close()
+    return payload
+
+
+def test_phase3a_database_upgrades_without_event_loss(tmp_path) -> None:
+    path = tmp_path / "events-outbox.sqlite3"
+    original_payload = _create_phase3a_database(path)
+    before = sqlite3.connect(str(path))
+    try:
+        before_row = before.execute(
+            "SELECT event_id, payload, event_timestamp, enqueued_at, status,"
+            " attempts, last_attempt_at, last_error, next_retry_at"
+            " FROM outbox_events"
+        ).fetchone()
+    finally:
+        before.close()
+    box = Outbox(path)
+    assert box.initialize() == path
+    assert box.initialize() == path  # upgrade is idempotent
+    conn = sqlite3.connect(str(path))
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(outbox_events)")}
+        assert "delivered_at" in columns
+        indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert {"outbox_pending_idx", "outbox_delivered_idx"} <= indexes
+        after_row = conn.execute(
+            "SELECT event_id, payload, event_timestamp, enqueued_at, status,"
+            " attempts, last_attempt_at, last_error, next_retry_at"
+            " FROM outbox_events"
+        ).fetchone()
+        assert after_row == before_row  # event and metadata byte-identical
+    finally:
+        conn.close()
+    assert box.count_pending() == 1
+    stored = box.get(before_row[0])
+    assert stored is not None
+    assert json.dumps(stored.to_record(), sort_keys=True) == original_payload
+    assert box.mark_delivered(before_row[0]) is True  # new column works
+    assert box.count_pending() == 0

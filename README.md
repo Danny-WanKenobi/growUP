@@ -928,19 +928,20 @@ research candidates use identity keys, never invented UUIDs. All
 Gabriel boundaries are nonfatal: diagnostic/activity sink failures
 degrade silently-safe, permanent failures downgrade to a file-traced
 warning via `emit_nonfatal`, and validation errors propagate as code
-bugs. `emit_nonfatal` returns an `EmitOutcome`
-(`persisted_pg`/`file_copy`/`degraded`/`error`) so callers can
-distinguish PostgreSQL-persisted permanent events from degraded ones.
-No extra Brave calls, no ranking/geography changes, no new endpoints
-or migrations.
+bugs. `emit_nonfatal` returns an `EmitOutcome` distinguishing
+PostgreSQL, outbox, file-only, degraded, and failed results (see
+Phase 3B for the durable path). Gabriel research keeps the legacy
+nonfatal path without an outbox. No extra Brave calls, no
+ranking/geography changes, no new endpoints or migrations.
 
 ### Phase 3A — Durable SQLite outbox (storage foundation)
 
 `app/observability/outbox.py` (`Outbox`) is the first stage of durable
 event recovery: a transactional SQLite store for permanent events that
-survives application restarts when PostgreSQL is unavailable.
-**The outbox is not yet connected to the live emitter** — no delivery,
-worker, or Gabriel integration exists in this phase.
+survives application restarts when PostgreSQL is unavailable. Phase 3B
+connects it to the emitter (`emit_nonfatal(..., outbox=...)`,
+`require_durable()`) and adds the recovery worker below; Gabriel
+research itself keeps the legacy nonfatal path.
 
 - **Configuration:** `OBS_OUTBOX_PATH` (default
   `outbox/events-outbox.sqlite3` for development). Ubuntu:
@@ -952,6 +953,56 @@ worker, or Gabriel integration exists in this phase.
   worker must use) rejects relative paths and anything resolving
   through symlinks under `/var/www/growup/releases/` or
   `/var/www/growup/current/`, failing closed with `OutboxConfigError`.
+
+### Phase 3B — Recovery worker and fail-closed durability
+
+Permanent events take the outbox-first path when an outbox is
+supplied: file trace copy → SQLite commit → immediate PostgreSQL
+delivery → mark delivered. `EmitOutcome` distinguishes
+`persisted_pg`, `persisted_outbox`, `file_copy`, `degraded`
+(outbox-durable, PostgreSQL pending), and `failed` (nowhere durable).
+JSONL is never durability. `require_durable()` raises
+`DurabilityError` when neither durable store accepts the event —
+consequential operations must abort on it. The legacy helpers
+(`emit`, `log_decision`/`log_evidence`/`log_handoff`, `emit_nonfatal`
+without an outbox) remain PostgreSQL-only and never touch the outbox;
+only `require_durable` with an explicitly supplied outbox takes the
+durable outbox-first path. Gabriel research keeps the legacy nonfatal
+path (no outbox); no current workflow is wired fail-closed, and none
+was invented for demonstration.
+
+- **Recovery:** `python -m app.observability.recovery` runs one
+  bounded cycle (≤100 events): deliver idempotently by `event_id`
+  (`inserted`/`already_present`/`conflict`; conflicts never
+  overwrite), mark only after confirmation, continue past individual
+  failures, back off retries (30s exponential, 1h cap), then purge
+  deliveries older than `OBS_DELIVERED_RETENTION_DAYS` (default 30;
+  pending rows can never match). Crash-safe: redelivery after a
+  restart confirms idempotently. Prints one metrics line
+  (`status/pending/attempted/delivered/already/failed/conflicts/`
+  `retries/purged/oldest_age_s`); exit 0 ok, 1 partial, 2 bad config,
+  3 nothing delivered (events stay pending/retryable), 4 outbox
+  unreachable. No FastAPI import, no Brave calls, no business reruns.
+- **Scheduling:** `deployment/growup-outbox-recovery.{service,timer}`
+  run the cycle 30s after each previous run completes
+  (`OnUnitInactiveSec`, not a fixed wall-clock cadence) as
+  `growup:growup` with `flock` overlap prevention and hardening that
+  preserves SQLite/log/loopback-PostgreSQL access. The timer is NOT
+  enabled by deployment; see
+  `deployment/README-DEPLOYMENT.md` for manual install, activation,
+  verification, and rollback. Never activate against a second
+  environment sharing one outbox file.
+- **Guarantees and limits:** a returned durable outcome means the
+  event is committed in SQLite and/or PostgreSQL; a crash cannot
+  strand an accepted event untracked. This is NOT transactional
+  consistency with business tables or external systems — future
+  consequential workflows need coordinated state transitions,
+  idempotency keys, and recovery design. SQLite commits depend on
+  filesystem reliability, not physical disk survival. Manual recovery:
+  inspect pending rows (`count_pending`, `pending`), fix PostgreSQL
+  or the outbox path, and let the timer drain; conflicts
+  (`pg_content_conflict`) need human comparison of the two payloads
+  before deleting either side.
 - **Schema:** one row per event (`event_id` primary key, complete
   validated/redacted JSON payload, event + enqueue timestamps,
   `pending`/`delivered` status, attempt count, last attempt/error,

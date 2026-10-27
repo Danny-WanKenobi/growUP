@@ -1,11 +1,9 @@
 """Durable SQLite outbox for permanent agent events (MVP-004C-A Phase 3A).
 
-Storage foundation only: this module persists permanent events to a
-local SQLite database so they survive application restarts when
-PostgreSQL is unavailable. It performs no delivery and is NOT yet
-connected to the live emitter -- recovery/forwarding arrives in
-Phase 3B, which will call :meth:`Outbox.pending`,
-:meth:`Outbox.mark_delivered`, and :meth:`Outbox.record_attempt`.
+This module persists permanent events to a local SQLite database
+so they survive application restarts when PostgreSQL is unavailable.
+The Phase 3B emitter uses this outbox for durable acceptance, and
+the recovery worker forwards pending events to PostgreSQL.
 
 Durability contract: :meth:`Outbox.accept` returns only after the
 event row is committed (WAL mode, ``synchronous=FULL``, explicit
@@ -27,7 +25,7 @@ import os
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.observability.events import AgentEvent, RetentionClass
@@ -40,6 +38,14 @@ MAX_PENDING_LIMIT = 1000
 DIR_MODE = 0o700
 DB_MODE = 0o600
 
+# Bounded exponential backoff for delivery retries: 30s, 60s, ... capped
+# at one hour. Timer-paced (30s) plus backoff means no retry storms.
+RETRY_BASE_SECONDS = 30
+RETRY_MAX_SECONDS = 3600
+
+DEFAULT_DELIVERED_RETENTION_DAYS = 30
+DEFAULT_PURGE_LIMIT = 1000
+
 # Release-tree locations that must never hold the production outbox:
 # releases are immutable and replaced on deploy; `current` symlinks
 # into them. Checked after symlink resolution.
@@ -48,7 +54,11 @@ PRODUCTION_FORBIDDEN_PREFIXES = (
     Path("/var/www/growup/current"),
 )
 
-_SCHEMA = """
+# Table and index DDL are separate statements on purpose: migration
+# order is table -> ADD COLUMN -> indexes, so an existing Phase 3A
+# database (no delivered_at column) upgrades instead of failing on
+# an index over a missing column.
+_SCHEMA_TABLE = """
 CREATE TABLE IF NOT EXISTS outbox_events (
     event_id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
@@ -59,10 +69,15 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     last_attempt_at TEXT NULL,
     last_error TEXT NULL,
     next_retry_at TEXT NULL,
+    delivered_at TEXT NULL,
     CONSTRAINT outbox_status_check CHECK (status IN ('pending', 'delivered'))
 );
+"""
+_SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS outbox_pending_idx
     ON outbox_events (status, enqueued_at, event_id);
+CREATE INDEX IF NOT EXISTS outbox_delivered_idx
+    ON outbox_events (status, delivered_at, event_id);
 """
 
 
@@ -80,6 +95,16 @@ class OutboxConfigError(OutboxError):
 
 class OutboxConflictError(OutboxError):
     """An event ID was resubmitted with a different payload."""
+
+
+def retry_delay_seconds(attempts: int) -> int:
+    """Bounded exponential backoff shared by emitter and worker.
+
+    ``attempts`` is the count BEFORE the upcoming wait (0 for the first
+    failure). Returns 30..3600 seconds; never zero, never unbounded.
+    """
+    attempts = max(0, int(attempts))
+    return min(RETRY_BASE_SECONDS * (2 ** min(attempts, 7)), RETRY_MAX_SECONDS)
 
 
 def validate_production_path(path: str | Path | None) -> Path:
@@ -218,6 +243,11 @@ class Outbox:
         """Create parent dirs, schema, and restrictive permissions.
 
         Idempotent: safe to call on every startup. Returns the path.
+        Upgrades existing Phase 3A databases by adding new columns
+        BEFORE creating indexes over them. Migration steps only add
+        schema (table, columns, indexes) -- they never delete or
+        rewrite event rows, so a failed migration leaves stored
+        events untouched (and raises instead of reporting success).
         """
         if self._path.exists() and not self._path.is_file():
             raise OutboxConfigError(f"outbox path is not a file: {self._path}")
@@ -239,8 +269,10 @@ class Outbox:
         except OutboxUnavailableError:
             raise
         try:
+            conn.executescript(_SCHEMA_TABLE)  # self-committing
             with conn:
-                conn.executescript(_SCHEMA)
+                self._ensure_column(conn, "delivered_at", "TEXT NULL")
+            conn.executescript(_SCHEMA_INDEXES)  # self-committing
         except sqlite3.Error as exc:
             raise OutboxUnavailableError(f"outbox schema failed: {exc}") from exc
         finally:
@@ -248,6 +280,13 @@ class Outbox:
         if not existed:
             self._secure_files()
         return self._path
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, name: str, ddl: str) -> None:
+        """ADD COLUMN for databases created before the column existed."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(outbox_events)")}
+        if name not in columns:
+            conn.execute(f"ALTER TABLE outbox_events ADD COLUMN {name} {ddl}")
 
     # -- writes (explicit transactions; failure means NOT accepted) ---
 
@@ -304,8 +343,9 @@ class Outbox:
         self._secure_files()
         return scrubbed.event_id
 
-    def mark_delivered(self, event_id: str) -> bool:
-        """Mark a pending event delivered. True if it transitioned."""
+    def mark_delivered(self, event_id: str, now: datetime | None = None) -> bool:
+        """Mark a pending event delivered (stamps confirmation time)."""
+        moment = _iso(now or _utcnow())
         try:
             conn = self._connect()
         except OutboxUnavailableError:
@@ -313,9 +353,9 @@ class Outbox:
         try:
             with conn:
                 cursor = conn.execute(
-                    "UPDATE outbox_events SET status = 'delivered' "
+                    "UPDATE outbox_events SET status = 'delivered', delivered_at = ? "
                     "WHERE event_id = ? AND status = 'pending'",
-                    (event_id,),
+                    (moment, event_id),
                 )
                 return cursor.rowcount > 0
         except sqlite3.Error as exc:
@@ -327,16 +367,62 @@ class Outbox:
         self,
         event_id: str,
         error_category: str,
-        next_retry_at: datetime,
+        next_retry_at: datetime | None = None,
         now: datetime | None = None,
     ) -> bool:
         """Record a failed delivery attempt with its next retry time.
 
-        True if a pending row was updated. The error category is a
+        True if a pending row was updated. When ``next_retry_at`` is
+        omitted, it is computed from the row's current attempt count
+        with bounded exponential backoff. The error category is a
         short code (bounded, single-line) -- never a traceback.
         """
         category = " ".join(str(error_category).split())[:64] or "unknown"
-        moment = _iso(now or _utcnow())
+        moment = now or _utcnow()
+        try:
+            conn = self._connect()
+        except OutboxUnavailableError:
+            raise
+        try:
+            with conn:
+                row = conn.execute(
+                    "SELECT attempts FROM outbox_events WHERE event_id = ? AND status = 'pending'",
+                    (event_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                retry = next_retry_at or (
+                    moment + timedelta(seconds=retry_delay_seconds(row[0]))
+                )
+                conn.execute(
+                    "UPDATE outbox_events SET attempts = attempts + 1, "
+                    "last_attempt_at = ?, last_error = ?, next_retry_at = ? "
+                    "WHERE event_id = ? AND status = 'pending'",
+                    (_iso(moment), category, _iso(retry), event_id),
+                )
+                return True
+        except sqlite3.Error as exc:
+            raise OutboxUnavailableError(f"outbox record_attempt failed: {exc}") from exc
+        finally:
+            conn.close()
+
+    def purge_delivered(
+        self,
+        older_than_days: int = DEFAULT_DELIVERED_RETENTION_DAYS,
+        limit: int = DEFAULT_PURGE_LIMIT,
+        now: datetime | None = None,
+    ) -> int:
+        """Delete delivered rows confirmed longer ago than the window.
+
+        Only rows explicitly marked delivered (with a confirmation
+        timestamp) can match: pending rows, attempted-but-pending rows,
+        and recent deliveries always survive. Bounded by ``limit``.
+        """
+        if older_than_days < 1:
+            raise ValueError("retention window must be positive")
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        cutoff = _iso((now or _utcnow()) - timedelta(days=older_than_days))
         try:
             conn = self._connect()
         except OutboxUnavailableError:
@@ -344,14 +430,15 @@ class Outbox:
         try:
             with conn:
                 cursor = conn.execute(
-                    "UPDATE outbox_events SET attempts = attempts + 1, "
-                    "last_attempt_at = ?, last_error = ?, next_retry_at = ? "
-                    "WHERE event_id = ? AND status = 'pending'",
-                    (moment, category, _iso(next_retry_at), event_id),
+                    "DELETE FROM outbox_events WHERE event_id IN ("
+                    "SELECT event_id FROM outbox_events "
+                    "WHERE status = 'delivered' AND delivered_at IS NOT NULL "
+                    "AND delivered_at < ? ORDER BY delivered_at ASC, event_id ASC LIMIT ?)",
+                    (cutoff, limit),
                 )
-                return cursor.rowcount > 0
+                return cursor.rowcount if cursor.rowcount is not None else 0
         except sqlite3.Error as exc:
-            raise OutboxUnavailableError(f"outbox record_attempt failed: {exc}") from exc
+            raise OutboxUnavailableError(f"outbox purge failed: {exc}") from exc
         finally:
             conn.close()
 

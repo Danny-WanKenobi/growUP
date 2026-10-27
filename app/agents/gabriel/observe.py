@@ -10,7 +10,12 @@ Failure policy (all Gabriel boundaries are nonfatal):
 
 - Diagnostic/activity emits never raise on sink failure.
 - Permanent emits degrade via ``emit_nonfatal`` (file copy + warning),
-  returning an outcome that distinguishes persisted from degraded.
+  returning an outcome that distinguishes persisted, degraded
+  (outbox-durable, PostgreSQL pending), and failed (nowhere durable).
+  Gabriel research takes the legacy path (no outbox): a permanent
+  PostgreSQL miss there reports ``failed=True`` without aborting the
+  run. Future consequential workflows must use ``require_durable``
+  with an outbox and fail closed.
 - Event validation errors propagate: malformed events are code bugs.
 """
 

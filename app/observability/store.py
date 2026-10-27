@@ -14,8 +14,9 @@ permanent rows can never match.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
@@ -66,22 +67,7 @@ def _row_to_event(row: dict[str, Any]) -> AgentEvent:
 
 def insert_event(event: AgentEvent, config: Any = None) -> AgentEvent:
     """Persist one event row on a dedicated short-lived connection."""
-    record = event.to_record()
-    params = {
-        "event_id": record["event_id"],
-        "occurred_at": event.timestamp,
-        "agent": record["agent"],
-        "run_id": record["run_id"],
-        "correlation_id": record["correlation_id"],
-        "property_id": str(record["property_id"]) if record["property_id"] else None,
-        "event_type": record["event_type"],
-        "severity": record["severity"],
-        "summary": record["summary"],
-        "details": json.dumps(record["details"]),
-        "evidence_refs": json.dumps(record["evidence_refs"]),
-        "parent_event_id": record["parent_event_id"],
-        "retention_class": record["retention_class"],
-    }
+    params = _insert_params(event)
     columns = ", ".join(_INSERT_COLUMNS)
     placeholders = ", ".join(f"%({name})s" for name in _INSERT_COLUMNS)
     try:
@@ -97,6 +83,80 @@ def insert_event(event: AgentEvent, config: Any = None) -> AgentEvent:
     except Exception as exc:
         raise DatabaseUnavailableError("event_insert_failed") from exc
     return event
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """Outcome of one idempotent PostgreSQL delivery attempt."""
+
+    status: Literal["inserted", "already_present", "conflict"]
+    event_id: str
+
+
+def _insert_params(event: AgentEvent) -> dict[str, Any]:
+    record = event.to_record()
+    return {
+        "event_id": record["event_id"],
+        "occurred_at": event.timestamp,
+        "agent": record["agent"],
+        "run_id": record["run_id"],
+        "correlation_id": record["correlation_id"],
+        "property_id": str(record["property_id"]) if record["property_id"] else None,
+        "event_type": record["event_type"],
+        "severity": record["severity"],
+        "summary": record["summary"],
+        "details": json.dumps(record["details"]),
+        "evidence_refs": json.dumps(record["evidence_refs"]),
+        "parent_event_id": record["parent_event_id"],
+        "retention_class": record["retention_class"],
+    }
+
+
+def _canonical_record(event: AgentEvent) -> str:
+    return json.dumps(event.to_record(), sort_keys=True)
+
+
+def deliver_event(event: AgentEvent, config: Any = None) -> DeliveryResult:
+    """Idempotently deliver one event to PostgreSQL (recovery path).
+
+    Inserts the row, or -- when the event ID already exists -- verifies
+    the stored content: identical content confirms ``already_present``,
+    while differing content reports ``conflict`` WITHOUT overwriting
+    the existing row. Dedicated short-lived connection.
+    """
+    params = _insert_params(event)
+    columns = ", ".join(_INSERT_COLUMNS)
+    placeholders = ", ".join(f"%({name})s" for name in _INSERT_COLUMNS)
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO agent_events ({columns}) VALUES ({placeholders})"
+                    " ON CONFLICT (event_id) DO NOTHING RETURNING event_id",
+                    params,
+                )
+                inserted = cur.fetchone()
+                if inserted is not None:
+                    conn.commit()
+                    return DeliveryResult(status="inserted", event_id=event.event_id)
+                cur.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM agent_events WHERE event_id = %(event_id)s",
+                    {"event_id": event.event_id},
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("event_deliver_failed") from exc
+    if row is None:
+        # Lost race: the row vanished between the conflicting insert
+        # and the verification read. Retryable, not a conflict.
+        raise DatabaseUnavailableError("event_deliver_race")
+    stored = _canonical_record(_row_to_event(row))
+    if stored == _canonical_record(event):
+        return DeliveryResult(status="already_present", event_id=event.event_id)
+    return DeliveryResult(status="conflict", event_id=event.event_id)
 
 
 def query_events(

@@ -430,7 +430,8 @@ def test_note_decision_degraded_when_disabled(monkeypatch) -> None:
     import app.agents.gabriel.observe as observe
 
     outcome = observe.note_decision("run-1", "gabriel.test.decision", "decided")
-    assert outcome.degraded is True  # ambient OBS_ENABLED=0 in tests
+    assert outcome.failed is True  # ambient OBS_ENABLED=0 in tests
+    assert outcome.degraded is False
     assert outcome.persisted_pg is False
     assert outcome.error == "observability disabled"
 

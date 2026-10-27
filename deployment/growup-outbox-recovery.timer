@@ -1,0 +1,25 @@
+# growup-outbox-recovery.timer — recovery 30s after each run completes.
+#
+# OnUnitInactiveSec schedules the next run 30 seconds after the
+# previous one-shot service became inactive (finished), NOT on a fixed
+# wall-clock cadence: slow or overrunning cycles delay the next tick
+# instead of piling up, and flock in the service guards any residual
+# overlap. Combined with the 30s retry backoff floor, this keeps
+# redelivery pressure bounded at roughly one cycle per 30s+runtime.
+#
+# TEMPLATE: copy to /etc/systemd/system/ alongside the service, then
+# daemon-reload. Activate manually AFTER deployment verification:
+#   sudo systemctl enable --now growup-outbox-recovery.timer
+# The timer alone does nothing until enabled; see
+# deployment/README-DEPLOYMENT.md for install/activate/rollback steps.
+[Unit]
+Description=Grow Up SQLite outbox recovery 30s after each run
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=growup-outbox-recovery.service
+
+[Install]
+WantedBy=timers.target

@@ -515,8 +515,10 @@ def test_emit_nonfatal_permanent_failure_reports_degraded(tmp_path, monkeypatch)
         monkeypatch.setattr(emitter, "insert_event", _down)
         event = _event(event_type="test.decision", retention_class=RetentionClass.PERMANENT)
         outcome = emit_nonfatal(event, config=config, sink=sink)
-        assert outcome.degraded is True
+        assert outcome.failed is True  # legacy path: no outbox, nowhere durable
+        assert outcome.degraded is False
         assert outcome.persisted_pg is False
+        assert outcome.persisted_outbox is False
         assert outcome.file_copy is True
         assert outcome.error
         assert outcome.event.event_id == event.event_id
@@ -531,7 +533,8 @@ def test_emit_nonfatal_permanent_failure_reports_degraded(tmp_path, monkeypatch)
         assert fallback["details"]["original_event_id"] == event.event_id
         assert fallback["details"]["original_event_type"] == "test.decision"
         assert fallback["details"]["file_copy"] is True
-        assert "connection_failed" in fallback["details"]["pg_error"]
+        assert "connection_failed" in fallback["details"]["detail"]
+        assert fallback["details"]["persisted_outbox"] is False
     finally:
         sink.close()
 
@@ -583,7 +586,8 @@ def test_emit_nonfatal_disabled_reports_honestly(tmp_path) -> None:
         _event(event_type="test.decision", retention_class=RetentionClass.PERMANENT),
         config=config,
     )
-    assert permanent.degraded is True
+    assert permanent.failed is True
+    assert permanent.degraded is False
     assert permanent.persisted_pg is False
     assert permanent.file_copy is False
     assert permanent.error == "observability disabled"
