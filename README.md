@@ -350,6 +350,107 @@ curl -X POST http://127.0.0.1:8001/discovery/runs \
 - Live Overpass research needs direct HTTPS egress; sandboxed or proxied
   networks may fail closed with `502 source_unavailable`.
 
+---
+
+## 📥 Commercial Listing Intake (MVP-004A)
+
+`POST /discovery/intake` accepts structured commercial listing information
+supplied through authorized means: manually researched listings, user-supplied
+details, permitted public datasets, and (later) licensed providers. It is an
+**intake mechanism, not autonomous web search**: it never scrapes, never
+bypasses restrictions, and never fetches submitted URLs from the server.
+
+How it differs from discovery runs: discovery (`POST /discovery/runs`)
+researches providers itself; intake receives explicit, attributable listings
+and maps them onto operational records with evidence preserved.
+
+### Supported listing fields
+
+Identity: `name`, `street_address`, `city`, `state`, `zip_code`, `category`
+(existing conventions, default `other`). At least a name or street address
+is required.
+
+Commercial: `asking_price`, `advertised_building_area_sqft`,
+`advertised_available_area_sqft` (preserved as evidence only; available space
+may still be occupied), `listing_type` (`sale`/`lease`/`auction`/
+`unknown`), `occupancy_info`, `listing_date`, `months_listed_for_sale`,
+`months_vacant` (explicit figures only), `asking_rent_monthly`,
+`owner_advertised`, `listing_notes`, `price_reductions` (up to 10), plus up
+to 10 `distress_observations`.
+
+Mapping discipline: advertised building area →
+`building_area_sqft_estimated`; explicit durations → estimated month fields.
+Asking price is evidence only (an advertised price is not necessarily a
+market-value estimate) and available area is evidence only (available space
+may still be occupied): neither populates estimated nor verified value or
+vacancy columns. Asking rent never becomes rental income; an advertised owner
+never becomes ownership. Unmappable attributes (asking price, available area,
+asking rent, advertised owner, listing type/date/history) are preserved as
+`listing_evidence` rows linked to the property -- never forced into
+unrelated columns. Unknowns stay null.
+
+### Required provenance
+
+Every listing needs `source_name` (traceable, non-placeholder),
+`listing_url` (valid HTTP/HTTPS), and `observed_at` (valid timestamp, not
+in the future). Intake builds record provenance from these and adds
+per-field evidence references for each populated estimate. Distress
+observations need an indicator type, factual description, and observation
+details (defaulting to the listing source); they enter as `preliminary`
+only -- intake rejects `verified` claims, since verification belongs to
+Raphael. Synthetic or hypothetical sources are rejected.
+
+### Illustrative example only (do not insert)
+
+```bash
+curl -X POST http://127.0.0.1:8001/discovery/intake \
+  -H 'Content-Type: application/json' \
+  -H "X-Intake-Key: $INTAKE_API_KEY" \
+  -d '{"name":"ILLUSTRATIVE Example Warehouse (fictional)",
+       "street_address":"9999 Example Way","city":"Dallas","state":"TX",
+       "category":"warehouse_industrial",
+       "source_name":"Illustrative Example Brokerage",
+       "listing_url":"https://example.com/listings/illustrative-9999",
+       "observed_at":"2026-10-20T12:00:00Z",
+       "asking_price":"1250000.00","advertised_building_area_sqft":20000,
+       "listing_type":"sale"}'
+```
+
+Response: `201` with `{"outcome":"created","property_id":"…",
+"filled_fields":["building_area_sqft_estimated"],
+"listing_evidence_id":"…","distress_observation_ids":[],
+"message":"…"}`. Enrichments and duplicate skips return `200` with
+`outcome` `enriched` or `skipped_duplicate`; invalid intake returns `422`.
+
+### Duplicates and enrichment
+
+Same normalized street address means the same property (address-less
+listings cannot dedup and always create -- a known limitation). Intake
+fills NULL estimated fields only, guarded per-column, and never touches
+verified or existing values; conflicting fills are dropped while the new
+listing evidence is still preserved. Resubmitting an identical
+property+URL pair changes nothing.
+
+### Security limitations
+
+`POST /discovery/intake` requires the `X-Intake-Key` request header matching
+the `INTAKE_API_KEY` environment variable (compared in constant time). A
+missing or empty server key fails closed with `503`; a missing or wrong
+header returns `401`. Keys never appear in logs or error responses. Set a
+long random value via your environment (see `.env.example`); never commit a
+real credential. Remaining limitations: one shared secret with no rotation,
+per-client scoping, or audit trail, and all other endpoints remain
+unauthenticated. Submitted URLs are stored, never fetched, so intake cannot
+become an SSRF mechanism.
+
+### Future provider integration
+
+Providers stay modular behind the existing source interface; licensed
+listing APIs can later submit through this same intake contract once
+credentials and terms are arranged. Trellistate is a potential future
+provider, but its public API currently returns HTTP 500 and is not
+integrated or depended upon in MVP-004A.
+
 ### Environment requirements
 
 MVP-002 adds no new environment variables. It reuses the MVP-001 PostgreSQL

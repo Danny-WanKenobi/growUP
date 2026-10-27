@@ -175,6 +175,63 @@ def find_by_address(
     return dict(row) if row is not None else None
 
 
+ENRICHABLE_ESTIMATED_FIELDS = (
+    "building_area_sqft_estimated",
+    "vacant_area_sqft_estimated",
+    "gross_monthly_rent_income_estimated",
+    "owner_monthly_costs_estimated",
+    "property_value_estimated",
+    "liens_total_estimated",
+    "months_on_market_estimated",
+    "months_vacant_estimated",
+)
+
+
+def enrich_property_estimates(
+    property_id: UUID | str,
+    fills: dict[str, Any],
+    field_evidence: dict[str, str] | None,
+    data_status: str,
+    config: DatabaseConfig | None = None,
+) -> list[str]:
+    """Fill NULL estimated columns on an existing record (all-or-nothing).
+
+    Only allowlisted estimated fields are accepted, and each is guarded
+    by ``IS NULL`` so existing values -- verified or estimated -- are
+    never overwritten. ``field_evidence`` replaces the stored evidence
+    map (callers merge it first); ``data_status`` is the caller-derived
+    status for the merged record. Returns the filled field names, or an
+    empty list when the row changed concurrently (guards failed).
+    """
+    unknown = [key for key in fills if key not in ENRICHABLE_ESTIMATED_FIELDS]
+    if unknown:
+        raise ValueError(f"enrichment supports estimated fields only: {unknown}")
+    if not fills:
+        return []
+    assignments = ", ".join(f"{col} = %({col})s" for col in fills)
+    guards = " AND ".join(f"{col} IS NULL" for col in fills)
+    sql = (
+        f"UPDATE properties SET {assignments}, "
+        "field_evidence = %(field_evidence)s, data_status = %(data_status)s, "
+        "updated_at = now() "
+        f"WHERE id = %(id)s AND {guards} "
+        "RETURNING id"
+    )
+    params = {"id": str(property_id), "field_evidence": field_evidence,
+              "data_status": data_status, **fills}
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+            conn.commit()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    return list(fills) if row is not None else []
+
+
 def get_property(property_id: UUID, config: DatabaseConfig | None = None) -> dict[str, Any] | None:
     """Return one property row by id, or None when it does not exist."""
     sql = f"SELECT {', '.join(_PROPERTY_COLUMNS)} FROM properties WHERE id = %(id)s"

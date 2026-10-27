@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.agents.gabriel.schemas import (
     DiscoveryRunRequest,
     DiscoveryRunResult,
     DiscoverySourceInfo,
 )
+from app.agents.gabriel.intake import IntakeError, IntakeResult, ListingIntakeRequest, process_intake
+from app.auth import require_intake_key
 from app.agents.gabriel.service import run_discovery
 from app.agents.gabriel.sources.base import (
     SOURCES,
@@ -66,3 +68,33 @@ def start_discovery_run(body: DiscoveryRunRequest) -> DiscoveryRunResult:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="source_unavailable"
         ) from exc
+
+@router.post("/discovery/intake", response_model=IntakeResult, status_code=status.HTTP_201_CREATED)
+def submit_listing(
+    body: ListingIntakeRequest,
+    response: Response,
+    _: None = Depends(require_intake_key),
+) -> IntakeResult:
+    """Accept one attributable commercial listing (intake, not web search).
+
+    Requires the X-Intake-Key header (see intake.SECURITY_LIMITATION).
+    Submitted URLs are stored, never fetched.
+    """
+    try:
+        result = process_intake(body)
+    except IntakeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_listing"
+        ) from exc
+    except DatabaseNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_not_configured"
+        ) from exc
+    except DatabaseUnavailableError as exc:
+        logger.warning("listing intake database failure: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc
+    if result.outcome != "created":
+        response.status_code = status.HTTP_200_OK
+    return result
