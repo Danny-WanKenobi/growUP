@@ -1020,9 +1020,37 @@ was invented for demonstration.
   altered; error categories are short codes, never tracebacks.
 - **Lifecycle:** `accept` → `pending` (retry-due, oldest first) →
   `mark_delivered` / `record_attempt` (attempt count + next retry).
-  Delivered rows are retained for audit; retention purging is future
-  work. Phase 3B will add the recovery worker that forwards pending
-  rows to PostgreSQL and marks them delivered.
+  The Phase 3B worker forwards pending rows to PostgreSQL and marks
+  them delivered; delivered rows older than the retention window are
+  purged, pending rows are never purged.
+
+### Phase 3C-1 — Operation classification and durability enforcement
+
+`app/observability/policy.py` is the enforcement contract for future
+consequential workflows. It classifies operations explicitly (enum
+members, never name matching) and routes audit events through the
+existing emitter with class-appropriate failure handling:
+
+- **PRELIMINARY** (discovery, intake, enrichment, research,
+  planning, dossiers): `emit_nonfatal` — audit failures never raise.
+  Validation, provenance, and existing persistence failures keep
+  their current behavior.
+- **CONSEQUENTIAL_INTERNAL** (approvals, commitments, deal-state
+  changes): `require_durable` — `DurabilityError` unless PostgreSQL
+  or the outbox accepts the audit event.
+- **CONSEQUENTIAL_EXTERNAL** (outreach, contracts, external
+  instructions): same fail-closed rule; durable authorization must
+  precede execution.
+
+Future agents invoke it as
+`audit_event(event, OperationClass.CONSEQUENTIAL_INTERNAL, outbox=...)`
+and abort on `DurabilityError`. The interface only requests audit
+acceptance — it executes and mutates nothing. Durable acceptance is
+NOT atomicity with a business transaction: same-transaction
+business+audit PG commits are deferred to Phase 3C-2, and the
+authorization/attempt/outcome lifecycle with idempotency for
+external actions to Phase 3C-3. No existing workflow calls this
+module; Gabriel stays on the legacy nonfatal path.
 
 ---
 

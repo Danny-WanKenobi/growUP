@@ -45,6 +45,12 @@ from app.observability.outbox import (
     retry_delay_seconds,
     validate_production_path,
 )
+from app.observability.policy import (
+    OperationClass,
+    OperationPolicy,
+    audit_event,
+    policy_for,
+)
 from app.observability.redaction import REDACTED, redact, scrub_text
 from app.observability.store import (
     DeliveryResult,
@@ -70,6 +76,8 @@ __all__ = [
     "EventPersistenceError",
     "JsonlSink",
     "ObservabilityConfig",
+    "OperationClass",
+    "OperationPolicy",
     "Outbox",
     "OutboxConfigError",
     "OutboxConflictError",
@@ -79,6 +87,7 @@ __all__ = [
     "REDACTED",
     "RetentionClass",
     "Severity",
+    "audit_event",
     "by_correlation",
     "by_property",
     "by_run",
@@ -100,6 +109,7 @@ __all__ = [
     "log_evidence",
     "log_handoff",
     "log_warning",
+    "policy_for",
     "purge_expired_events",
     "purge_old_log_files",
     "query_events",
