@@ -2,13 +2,23 @@
 
 PostgreSQL-backed authorization records for consequential external
 actions (outreach, contracts, external instructions). This module
-records durable AUTHORIZATION only -- it never executes, retries, or
-advances external actions. Execution belongs to Phase 3C-3B.
+records durable authorization and transaction-safe lifecycle
+advancement. It never executes external actions, runs workers, or
+performs network I/O; execution belongs to a future phase.
 
 Authorization vs execution: a row in ``external_actions`` proves an
-action was authorized at a point in time. It says nothing about
-whether the action ran, is running, or succeeded. No state in this
-phase implies execution; only creation (AUTHORIZED) exists.
+action was authorized at a point in time. Later states record
+lifecycle decisions (queued, claimed, outcome recorded), never
+external side effects performed by this module.
+
+Lifecycle safety (Phase 3C-3B-1, rule GRW-EXT-001): once an action
+reaches ATTEMPTING, nothing here re-executes it automatically.
+Enforced in code, not just documentation: ATTEMPTING exits only via
+recorded outcomes (SUCCEEDED/FAILED/UNKNOWN), UNKNOWN has no
+executable exits in this phase, FAILED has no requeue path, and
+PENDING claims exactly one winner per action. Reconciliation of
+UNKNOWN outcomes and retry of FAILED actions are deferred until
+verified identity and evidence infrastructure exist (3C-3B-2).
 
 Idempotency contract: every authorization carries a caller-chosen
 unique ``idempotency_key`` plus a ``request_fingerprint`` (a
@@ -75,8 +85,11 @@ MAX_IDEMPOTENCY_KEY_CHARS = 128
 MAX_ACTION_TYPE_CHARS = 128
 MAX_PRINCIPAL_CHARS = 200
 MAX_REFERENCE_CHARS = 200
+MAX_EXECUTOR_CHARS = 200
 
 _AUDIT_EVENT_TYPE = "external_action.authorized"
+_AUDIT_CLAIMED_TYPE = "external_action.claimed"
+_AUDIT_TRANSITIONED_TYPE = "external_action.transitioned"
 
 _ACTION_COLUMNS = (
     "action_id",
@@ -94,6 +107,19 @@ _ACTION_COLUMNS = (
     "updated_at",
 )
 _SELECT_COLUMNS = ", ".join(_ACTION_COLUMNS)
+
+_ATTEMPT_COLUMNS = (
+    "attempt_id",
+    "action_id",
+    "attempt_number",
+    "executor_id",
+    "claimed_at",
+    "outcome",
+    "outcome_recorded_at",
+    "created_at",
+    "updated_at",
+)
+_ATTEMPT_SELECT = ", ".join(_ATTEMPT_COLUMNS)
 
 
 class ActionState(str, Enum):
@@ -127,14 +153,14 @@ ALLOWED_TRANSITIONS: dict[ActionState, frozenset[ActionState]] = {
 def validate_transition(current: ActionState | str, new: ActionState | str) -> None:
     """Reject any lifecycle change outside the explicit policy.
 
-    Unknown states and unlisted transitions raise ValueError. Phase
-    3C-3A defines the policy only; no transition-executing function
-    exists yet (3C-3B owns execution-adjacent writes). Two exits carry
-    additional 3C-3B evidence obligations this validator cannot check:
-    UNKNOWN -> SUCCEEDED/FAILED require independently verified
-    reconciliation evidence (never a re-attempt), and FAILED ->
-    PENDING requires explicit retry authorization plus proof of
-    definitive failure.
+    Unknown states and unlisted transitions raise ValueError. Three
+    policy-listed transitions are withheld by the 3C-3B-1 executing
+    layer: PENDING -> FAILED (FAILED records an execution-attempt
+    outcome; pre-execution cancellation needs its own protocol),
+    UNKNOWN -> SUCCEEDED/FAILED (require independently verified
+    reconciliation evidence, never a re-attempt), and FAILED ->
+    PENDING (requires an explicit retry protocol with retry
+    authorization plus proof of definitive failure).
     """
     try:
         current_state = current if isinstance(current, ActionState) else ActionState(current)
@@ -349,3 +375,307 @@ def record_authorization(
             f"idempotency key {key!r} was reused for a different request"
         )
     return AuthorizationResult(action=dict(existing), created=False)
+
+
+# ---------------------------------------------------------------------------
+# Transaction-safe lifecycle (Phase 3C-3B-1, rule GRW-EXT-001).
+#
+# claim_action and transition_action advance ledger state with a
+# permanent audit event in the same PostgreSQL transaction. They never
+# perform external side effects. UNKNOWN reconciliation and FAILED
+# retry are policy-listed but deliberately unexecutable here
+# (DeferredTransitionError); see the module docstring.
+# ---------------------------------------------------------------------------
+
+
+class ActionNotFoundError(RuntimeError):
+    """No ledger action exists for the supplied action ID."""
+
+
+class StaleAttemptError(ValueError):
+    """An attempt ID is unknown, mismatched, superseded, or already closed."""
+
+
+class DeferredTransitionError(RuntimeError):
+    """A policy-listed transition withheld until later-phase safeguards exist."""
+
+
+@dataclass(frozen=True)
+class ClaimResult:
+    """Outcome of one claim attempt (claimed vs lost contention)."""
+
+    action: dict[str, Any] | None
+    attempt: dict[str, Any] | None
+    claimed: bool
+
+
+def _coerce_uuid(value: UUID | str, name: str) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(f"invalid {name}: {value!r}") from exc
+
+
+def _lifecycle_audit(
+    action: dict[str, Any],
+    event_type: str,
+    summary: str,
+    details: dict[str, Any],
+) -> AgentEvent:
+    """Build a permanent lifecycle audit event from a locked ledger row."""
+    return AgentEvent(
+        agent=AgentId(action["agent"]),
+        run_id=str(action["action_id"]),
+        event_type=event_type,
+        summary=summary,
+        severity=Severity.INFO,
+        retention_class=RetentionClass.PERMANENT,
+        details=details,
+        correlation_id=action["idempotency_key"],
+        property_id=action["property_id"],
+    )
+
+
+def claim_action(
+    *,
+    action_id: UUID | str,
+    executor_id: str,
+    config: DatabaseConfig | None = None,
+) -> ClaimResult:
+    """Atomically claim one PENDING action (PENDING -> ATTEMPTING).
+
+    The claim is a single conditional UPDATE, so concurrent workers
+    serialize on the row: exactly one sees PENDING and wins; losers
+    get ``claimed=False`` and no authorization to proceed. The win
+    path inserts the execution-attempt row (numbered from the
+    atomically incremented attempt_count) and a permanent claim audit
+    event in the same transaction.
+
+    A claim authorizes proceeding to a FUTURE execution phase. It
+    performs no external request. ``executor_id`` is caller-claimed
+    bookkeeping, not an authenticated identity (verified binding is
+    3C-3B-2 work). Lost claims write nothing and raise nothing.
+    """
+    aid = _coerce_uuid(action_id, "action_id")
+    executor = _require_text(executor_id, "executor_id", MAX_EXECUTOR_CHARS)
+    conn = get_connection(config)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE external_actions SET state = 'ATTEMPTING',"
+                " attempt_count = attempt_count + 1, updated_at = now()"
+                " WHERE action_id = %(action_id)s AND state = 'PENDING'"
+                f" RETURNING {_SELECT_COLUMNS}",
+                {"action_id": aid},
+            )
+            row = cur.fetchone()
+            current = None
+            if row is None:
+                cur.execute(
+                    f"SELECT {_SELECT_COLUMNS} FROM external_actions"
+                    " WHERE action_id = %(action_id)s",
+                    {"action_id": aid},
+                )
+                current = cur.fetchone()
+        if row is None:
+            _quiet_rollback(conn)
+            _quiet_close(conn)
+            return ClaimResult(
+                action=dict(current) if current is not None else None,
+                attempt=None,
+                claimed=False,
+            )
+        action = dict(row)
+        attempt_id = uuid4()
+        attempt_number = action["attempt_count"]
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO external_action_attempts (attempt_id, action_id,"
+                " attempt_number, executor_id, claimed_at)"
+                " VALUES (%(attempt_id)s, %(action_id)s, %(attempt_number)s,"
+                " %(executor_id)s, now())"
+                f" RETURNING {_ATTEMPT_SELECT}",
+                {
+                    "attempt_id": attempt_id,
+                    "action_id": aid,
+                    "attempt_number": attempt_number,
+                    "executor_id": executor,
+                },
+            )
+            attempt = dict(cur.fetchone())
+        audit = _lifecycle_audit(
+            action,
+            _AUDIT_CLAIMED_TYPE,
+            f"Claimed {action['action_type']} action {aid}"
+            f" (attempt {attempt_number}) by {executor}",
+            {
+                "action_id": str(aid),
+                "attempt_id": str(attempt_id),
+                "attempt_number": attempt_number,
+                "executor_id": executor,
+                "from_state": ActionState.PENDING.value,
+                "to_state": ActionState.ATTEMPTING.value,
+            },
+        )
+        insert_event_in_transaction(conn, audit)
+        conn.commit()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError, ValueError, TypeError):
+        _quiet_rollback(conn)
+        _quiet_close(conn)
+        raise
+    except Exception as exc:
+        _quiet_rollback(conn)
+        _quiet_close(conn)
+        raise DatabaseUnavailableError("claim_failed") from exc
+    _quiet_close(conn)
+    return ClaimResult(action=action, attempt=attempt, claimed=True)
+
+
+def _reject_deferred(current: ActionState, target: ActionState) -> None:
+    """Withhold policy-listed transitions deferred past Phase 3C-3B-1."""
+    if current is ActionState.PENDING and target is ActionState.ATTEMPTING:
+        raise ValueError("PENDING -> ATTEMPTING requires claim_action (attempt creation)")
+    if current is ActionState.PENDING and target is ActionState.FAILED:
+        raise DeferredTransitionError(
+            "PENDING -> FAILED is withheld: FAILED records an execution-attempt"
+            " outcome, and pre-execution cancellation/rejection requires a"
+            " separately designed protocol (deferred)"
+        )
+    if current is ActionState.UNKNOWN:
+        raise DeferredTransitionError(
+            "UNKNOWN reconciliation requires independently verified evidence"
+            " (deferred to 3C-3B-2)"
+        )
+    if current is ActionState.FAILED and target is ActionState.PENDING:
+        raise DeferredTransitionError(
+            "FAILED retry requires an explicit retry protocol with retry"
+            " authorization and proof of definitive failure (deferred)"
+        )
+
+
+def _load_open_attempt(
+    conn: Any, action_id: UUID, attempt_id: UUID, latest_number: int
+) -> dict[str, Any]:
+    """Fetch the attempt row, rejecting stale/mismatched/closed attempts."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_ATTEMPT_SELECT} FROM external_action_attempts"
+            " WHERE attempt_id = %(attempt_id)s FOR UPDATE",
+            {"attempt_id": attempt_id},
+        )
+        attempt = cur.fetchone()
+    if attempt is None or attempt["action_id"] != action_id:
+        raise StaleAttemptError(f"attempt {attempt_id} does not belong to action {action_id}")
+    if attempt["outcome"] is not None:
+        raise StaleAttemptError(f"attempt {attempt_id} already recorded {attempt['outcome']}")
+    if attempt["attempt_number"] != latest_number:
+        raise StaleAttemptError(
+            f"attempt {attempt_id} is superseded (latest is #{latest_number})"
+        )
+    return dict(attempt)
+
+
+def transition_action(
+    *,
+    action_id: UUID | str,
+    to_state: ActionState | str,
+    attempt_id: UUID | str | None = None,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any]:
+    """Transition one action between permitted states, atomically audited.
+
+    Locks the action row, validates the policy transition, applies the
+    state change with its permanent audit event in one transaction,
+    and returns the updated row. ATTEMPTING exits require the
+    currently open attempt ID and record the outcome on that attempt
+    row; stale, mismatched, or already-closed attempts raise
+    :class:`StaleAttemptError`. A timeout is never interpreted here:
+    callers record the outcome they actually observed, including
+    UNKNOWN, and UNKNOWN is left for later reconciliation.
+
+    Executable in this phase: AUTHORIZED -> PENDING and ATTEMPTING
+    -> SUCCEEDED/FAILED/UNKNOWN. PENDING -> ATTEMPTING must go
+    through :func:`claim_action`. PENDING -> FAILED, UNKNOWN exits,
+    and FAILED -> PENDING raise :class:`DeferredTransitionError`:
+    FAILED records an execution-attempt outcome, and pre-execution
+    cancellation, reconciliation, and retry each need a separately
+    designed protocol.
+    """
+    aid = _coerce_uuid(action_id, "action_id")
+    try:
+        target = to_state if isinstance(to_state, ActionState) else ActionState(to_state)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"invalid target state: {to_state!r}") from exc
+    att_id = _coerce_uuid(attempt_id, "attempt_id") if attempt_id is not None else None
+    conn = get_connection(config)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_COLUMNS} FROM external_actions"
+                " WHERE action_id = %(action_id)s FOR UPDATE",
+                {"action_id": aid},
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise ActionNotFoundError(f"unknown action_id: {aid}")
+        current = ActionState(row["state"])
+        validate_transition(current, target)
+        _reject_deferred(current, target)
+        attempt_number: int | None = None
+        if current is ActionState.ATTEMPTING:
+            if att_id is None:
+                raise ValueError("attempt_id is required to record an ATTEMPTING outcome")
+            attempt = _load_open_attempt(conn, aid, att_id, row["attempt_count"])
+            attempt_number = attempt["attempt_number"]
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE external_action_attempts SET outcome = %(outcome)s,"
+                    " outcome_recorded_at = now(), updated_at = now()"
+                    " WHERE attempt_id = %(attempt_id)s",
+                    {"outcome": target.value, "attempt_id": att_id},
+                )
+        elif att_id is not None:
+            raise ValueError("attempt_id applies only to ATTEMPTING outcomes")
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE external_actions SET state = %(state)s, updated_at = now()"
+                " WHERE action_id = %(action_id)s"
+                f" RETURNING {_SELECT_COLUMNS}",
+                {"state": target.value, "action_id": aid},
+            )
+            updated = dict(cur.fetchone())
+        audit = _lifecycle_audit(
+            updated,
+            _AUDIT_TRANSITIONED_TYPE,
+            f"Transitioned {updated['action_type']} action {aid}"
+            f" from {current.value} to {target.value}",
+            {
+                "action_id": str(aid),
+                "from_state": current.value,
+                "to_state": target.value,
+                "attempt_id": str(att_id) if att_id is not None else None,
+                "attempt_number": attempt_number,
+            },
+        )
+        insert_event_in_transaction(conn, audit)
+        conn.commit()
+    except (
+        ActionNotFoundError,
+        StaleAttemptError,
+        DeferredTransitionError,
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        ValueError,
+        TypeError,
+    ):
+        _quiet_rollback(conn)
+        _quiet_close(conn)
+        raise
+    except Exception as exc:
+        _quiet_rollback(conn)
+        _quiet_close(conn)
+        raise DatabaseUnavailableError("transition_failed") from exc
+    _quiet_close(conn)
+    return updated

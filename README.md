@@ -1143,6 +1143,52 @@ conflict, rollback, CHECK constraints, property-delete history
 preservation) skip unless `GROWUP_PG_INTEGRATION=1` with migration
 005 applied.
 
+### Phase 3C-3B-1 — Transaction-safe external-action lifecycle
+
+`app/external_actions_db.py` gains `claim_action` and
+`transition_action`; `migrations/006_external_action_lifecycle.sql`
+adds the append-oriented `external_action_attempts` table (one row
+per claim: attempt id, action, 1-based number, claimed-at,
+executor, outcome + recorded-at with a pairing CHECK, unique
+per action). This phase is database safety infrastructure only —
+no external requests, workers, retries, or routes.
+
+- **Atomic transitions:** every state change locks its action row,
+  validates the policy transition, updates the ledger, and inserts
+  a permanent audit event in one PostgreSQL transaction; either
+  side failing rolls both back. No SQLite/JSONL fallback.
+- **Atomic claiming:** `claim_action` is one conditional
+  `UPDATE … WHERE state = 'PENDING'`, so concurrent workers
+  serialize on the row and exactly one wins. The winner gets its
+  attempt row (numbered from the atomically incremented
+  `attempt_count`) and claim audit in the same commit; losers get
+  `claimed=False` and no authorization. A claim permits a FUTURE
+  execution phase — nothing executes here.
+- **Outcomes:** `ATTEMPTING → SUCCEEDED/FAILED/UNKNOWN` requires
+  the currently open attempt id; unknown, mismatched, superseded,
+  or already-closed attempts raise `StaleAttemptError`. Timeouts
+  are never interpreted — callers record what they observed.
+- **GRW-EXT-001 (no automatic re-execution):** enforced in code.
+  `ATTEMPTING` exits only via recorded outcomes, `UNKNOWN` has no
+  executable exits, `FAILED` has no requeue path, and
+  `PENDING → ATTEMPTING` exists only through `claim_action`.
+- **Reconciliation boundary:** the policy still lists
+  `PENDING → FAILED`, `UNKNOWN → SUCCEEDED/FAILED`, and
+  `FAILED → PENDING`, but the executing layer withholds them
+  (`DeferredTransitionError`). `FAILED` records an
+  execution-attempt outcome only, so pre-execution
+  cancellation/rejection needs a separately designed protocol;
+  UNKNOWN exits will require independently verified reconciliation
+  evidence; FAILED retry will require an explicit retry protocol.
+- **Deferred:** verified executor/principal binding, reconciliation
+  execution, the retry and cancellation protocols, actual external
+  execution, and any worker or scheduler.
+
+Five PostgreSQL-backed integration tests (full lifecycle, threaded
+single-winner claim, claim rollback, UNKNOWN freeze, attempt
+constraints) skip unless `GROWUP_PG_INTEGRATION=1` with migrations
+005–006 applied.
+
 ---
 
 ## 🎥 Demonstration
