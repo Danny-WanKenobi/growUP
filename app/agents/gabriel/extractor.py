@@ -129,6 +129,7 @@ class ResultIntelligence(BaseModel):
     result_url: str
     domain: str
     title: str
+    retrieved_at: str = ""
     classification: ResultClassification = ResultClassification.UNKNOWN
     classification_reason: str = ""
     extraction_method: str = EXTRACTION_METHOD
@@ -138,6 +139,9 @@ class ResultIntelligence(BaseModel):
     availability: list[AvailabilityObservation] = []
     distress: list[SignalObservation] = []
     underuse: list[SignalObservation] = []
+    structure: list[SignalObservation] = []
+    county_mentions: list[str] = []
+    mentions_downtown: bool = False
     temporal: TemporalAssessment = TemporalAssessment()
     status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
 
@@ -337,15 +341,29 @@ def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
     zip_code = zip_match.group(1) if zip_match else None
     category = _guess_category(combined)
 
+    unique_names = list(dict.fromkeys(names))
+    unique_addresses = list(dict.fromkeys(addresses))
+    # Exactly one name and at most one address describe a single building
+    # and merge; anything else stays separate so attribution stays safe.
+    if len(unique_names) == 1 and len(unique_addresses) <= 1:
+        address = unique_addresses[0] if unique_addresses else None
+        return [
+            ExtractedProperty(
+                name=unique_names[0], street_address=address, city=city,
+                state=state, zip_code=zip_code, category=category,
+                evidence=f"named building '{unique_names[0]}'"
+                + (f" at '{address}'" if address else ""),
+            )
+        ]
     properties: list[ExtractedProperty] = []
-    for name in dict.fromkeys(names):  # de-duplicated, order preserved
+    for name in unique_names:
         properties.append(
             ExtractedProperty(
                 name=name, city=city, state=state, zip_code=zip_code,
                 category=category, evidence=f"named building '{name}'",
             )
         )
-    for address in dict.fromkeys(addresses):
+    for address in unique_addresses:
         properties.append(
             ExtractedProperty(
                 street_address=address, city=city, state=state, zip_code=zip_code,
@@ -472,6 +490,34 @@ def extract_distress(text: str) -> list[SignalObservation]:
 
 def extract_underuse(text: str) -> list[SignalObservation]:
     return _extract_signals(text, _UNDERUSE_PATTERNS)
+
+
+_STRUCTURE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("demolished", r"\b(demolished|torn down|razed|has been demolished)\b"),
+    ("proposed", r"\b(proposed\s+(?:tower|building|development|project|office)|"
+                 r"planned\s+(?:tower|building)|yet to be built|to be constructed|never built)\b"),
+    ("land_vacant", r"\b(vacant land|empty lot|vacant lot|land for sale)\b"),
+    ("land_parcel", r"(?<!and )\b(parcel|acreage|pad site)\b"),
+    ("incompatible_use", r"\b(single-family\s+(?:home|house|residence)|single family home)\b"),
+)
+
+_COUNTY_RE = re.compile(r"\b(?:[Tt]he\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+County\b")
+_DOWNTOWN_RE = re.compile(r"\bdowntown\b", re.IGNORECASE)
+
+
+def extract_structure(text: str) -> list[SignalObservation]:
+    """Detect explicit physical-status signals (demolished/proposed/land/use)."""
+    return _extract_signals(text, _STRUCTURE_PATTERNS)
+
+
+def extract_county_mentions(text: str) -> list[str]:
+    """Collect '<Name> County' mentions (evidence, not a lookup)."""
+    return [f"{match.group(1)} County" for match in _COUNTY_RE.finditer(text)]
+
+
+def mentions_downtown(text: str) -> bool:
+    """Whether the text explicitly references a downtown area."""
+    return bool(_DOWNTOWN_RE.search(text))
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +777,7 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
     money = extract_money(combined)
     availability = extract_availability(combined)
     distress = extract_distress(combined)
+    structure = extract_structure(combined)
     observed = bool(properties or money or occupancy or availability or distress or underuse)
     status = (
         ObservationStatus.REPORTED_UNVERIFIED
@@ -743,6 +790,7 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
         result_url=result.url,
         domain=result.domain or _domain_of_url(result.url),
         title=title,
+        retrieved_at=result.retrieved_at,
         classification=classification,
         classification_reason=reason,
         properties=properties,
@@ -751,6 +799,9 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
         availability=availability,
         distress=distress,
         underuse=underuse,
+        structure=structure,
+        county_mentions=extract_county_mentions(combined),
+        mentions_downtown=mentions_downtown(combined),
         temporal=temporal,
         status=status,
     )
@@ -804,6 +855,16 @@ def group_by_property(items: list[ResultIntelligence]) -> list[PropertyGroup]:
             if name and city:
                 name_keys.append((f"name:{name}|{city}", "name_plus_city"))
         keys = addr_keys + name_keys  # exact addresses take precedence
+        name_only = False
+        if not keys:
+            # Fallback: exact normalized name alone. Weaker than an address,
+            # so groups created this way are always flagged for review.
+            for prop in item.properties:
+                name = _normalize_identity(prop.name)
+                if name:
+                    keys.append((f"name-only:{name}", "name_only"))
+                    name_only = True
+                    break
         if not keys:
             key = f"ungrouped:{index}"
             groups[key] = PropertyGroup(key=key, basis="no_identity", needs_review=True, members=[index])
@@ -818,7 +879,7 @@ def group_by_property(items: list[ResultIntelligence]) -> list[PropertyGroup]:
             key, basis = keys[0]
             groups[key] = PropertyGroup(key=key, basis=basis, members=[index])
             order.append(key)
-            if len(keys) > 1:
+            if len(keys) > 1 or name_only:
                 groups[key].needs_review = True
     return [groups[key] for key in order]
 

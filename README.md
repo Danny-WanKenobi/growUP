@@ -652,6 +652,66 @@ unchanged existing fields. Extraction runs over already-retrieved
 results: zero additional Brave calls, zero property writes, zero intake
 submissions. No migration required; off-market discovery is explicitly
 out of scope but the intelligence model is sale-status independent.
+
+---
+
+## 🏆 Gabriel Ranking & Quality Control (MVP-004B-4)
+
+The ranking engine (`app/agents/gabriel/ranking.py`) turns extractor
+intelligence into two independent, explainable rankings plus preliminary
+quality control. Pure deterministic logic: no API calls, no database
+writes, no AI calls.
+
+### Two independent ranking systems
+
+- **Property value ranking** orders candidates by attributed current
+  asking price, largest first. Asking price is never a market valuation;
+  historical, proposed, and per-square-foot figures never qualify;
+  unpriced candidates are listed as unpriced, never scored.
+- **Grow Up opportunity ranking** prioritizes conversion-research
+  candidates with weighted factors: property value 30%, financial
+  distress 25%, underutilization 20%, building characteristics 15%,
+  evidence quality 10% (initial heuristics, not investment criteria).
+  Sale availability is not required, so the engine reuses cleanly for
+  future off-market discovery.
+
+### Dallas County requirement and downtown preference
+
+The research territory is all of Dallas County, not the City of Dallas.
+County eligibility (`inside_county`/`outside_county`/`county_unknown`)
+rests on explicit county evidence only: no municipality lookup, no ZIP
+inference, no fabrication. A small transparent downtown bonus (+0.05,
+any county municipality, evidence-backed or unknown) breaks ties but
+never overwhelms stronger opportunity evidence.
+
+### Quality control and missing data
+
+Gates (not scores) exclude only clear cases: outside-county, demolished,
+vacant-land-without-structure, and incompatible-use — each with an
+auditable rule, evidence, source, and date. Everything uncertain becomes
+RESEARCH_REQUIRED with agent-routed next steps; high occupancy, missing
+prices, and off-market status never exclude. Unknown factors are left
+unevaluated (reducing a reported completeness score) instead of scoring
+zero; candidates below 50% completeness are listed as insufficient data
+rather than ranked.
+
+### Attribution and temporal rules
+
+Price, occupancy, distress, and county facts attach to a property only
+from single-property results; multi-property observations stay
+unresolved and force further research. Repeated sources never count as
+independent corroboration (distinct domains do). Historical evidence
+never establishes current status.
+
+### API fields
+
+`POST /discovery/research-runs` accepts `include_ranking` (default
+false) and returns an additive `ranking` section with candidates,
+value/opportunity orders, unpriced and insufficient-data lists, screened
+leads, factor explanations, and exclusions. Ranking requires
+`include_intelligence`; existing fields and behavior are unchanged.
+Raphael (inspection), Onesimus (engineering), and Priscilla (finance)
+conclusions are never fabricated — only routed as next steps.
 ```
 
 ### Environment requirements

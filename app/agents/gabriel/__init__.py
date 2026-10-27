@@ -19,6 +19,7 @@ from app.agents.gabriel.planner import (
     plan_followups,
     plan_initial_searches,
 )
+from app.agents.gabriel.ranking import PropertyRanking, rank_intelligence
 from app.agents.gabriel.schemas import DiscoveryRunRequest, DiscoveryRunResult
 from app.agents.gabriel.service import run_discovery
 
@@ -26,10 +27,12 @@ __all__ = [
     "DiscoveryRunRequest",
     "DiscoveryRunResult",
     "PlannerConfig",
+    "PropertyRanking",
     "ResearchIntelligence",
     "SearchAssignment",
     "extract_research_intelligence",
     "plan_followups",
     "plan_initial_searches",
+    "rank_intelligence",
     "run_discovery",
 ]

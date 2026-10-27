@@ -51,7 +51,7 @@ rollback() {
 if ! systemctl restart "$SERVICE"; then rollback; exit 1; fi
 HEALTHY=0
 for i in $(seq 1 15); do
-    if systemctl is-active --quiet "$SERVICE" && curl -fsS --max-time 2 http://127.0.0.1:8001/health >/dev/null; then
+    if systemctl is-active --quiet "$SERVICE" && curl -fsS --max-time 2 http://127.0.0.1:8001/health >/dev/null 2>&1; then
         HEALTHY=1; break
     fi
     sleep 2
