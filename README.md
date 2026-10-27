@@ -527,6 +527,78 @@ Later phases will cover provider execution adapters, listing-result
 ingestion through the intake contract, and property ranking in
 MVP-004B-4.
 
+---
+
+## 🔎 Gabriel Brave Research (MVP-004B-2)
+
+Gabriel executes planner assignments against the Brave Search Web API
+and returns attributable results (title, URL, snippet, domain, rank,
+timestamps). No valuation, no distress verification, and no operational
+property writes in this phase.
+
+### Brave API configuration
+
+Set `BRAVE_SEARCH_API_KEY` in the environment (see `.env.example`); the
+server sends it as the `X-Subscription-Token` header to
+`https://api.search.brave.com/res/v1/web/search`. Requests to the
+research endpoint itself require the `X-Research-Key` header matching
+`RESEARCH_API_KEY`. Never commit real credentials; keys never appear in
+logs, errors, or responses.
+
+### Research execution workflow
+
+1. Generate assignments with `GET /discovery/search-plan`.
+2. Submit them to `POST /discovery/research-runs` with the research key.
+3. The service selects the first assignment per primary category in
+   priority order (max 3), reserves budget, executes in order, and
+   returns normalized results with per-assignment errors.
+
+Only planner-issued assignments (matching planner version) are accepted;
+arbitrary caller queries are rejected.
+
+### Request limits and monthly budget
+
+- Max 3 Brave requests per run; no recursion.
+- Monthly ceiling from `BRAVE_MONTHLY_CEILING` (default 100), tracked per
+  UTC calendar month in the `research_budget` table.
+- Exactly one request is reserved atomically immediately before each Brave
+  call; attempts count even on timeout or provider error. Skipped
+  assignments consume nothing, and the run stops immediately with a
+  `budget_exhausted` error entry when the month is spent.
+- Rate limits (429) and auth failures (401/403) abort the rest of the run.
+
+### Security considerations
+
+Brave calls use bounded timeouts and no scraping. Missing Brave or
+research credentials fail closed (`503`); bad research headers return
+`401`. No credits are ever purchased automatically.
+
+### Known limitations
+
+- Results are web snippets, not verified listings; prices, vacancy, and
+  distress must still flow through intake evidence and Raphael review.
+- Budget rows record the ceiling in effect at creation for audit, while
+  enforcement uses the live configured ceiling.
+- True concurrent-reservation proof needs live PostgreSQL (guaranteed by
+  single-statement conditional UPDATE under row locking).
+
+### Live testing instructions
+
+With `BRAVE_SEARCH_API_KEY`, `RESEARCH_API_KEY`, and `DATABASE_*` set and
+migrations applied:
+
+```bash
+# 1. Preview the plan, then submit it for a 3-request research run.
+curl "http://127.0.0.1:8001/discovery/search-plan?total=3&per_category=1" > plan.json
+curl -X POST http://127.0.0.1:8001/discovery/research-runs \
+  -H 'Content-Type: application/json' \
+  -H "X-Research-Key: $RESEARCH_API_KEY" \
+  -d "{\"assignments\": $(cat plan.json)}"
+
+# 2. Confirm budget accounting decreased by the reported request_count.
+# 3. Confirm no new rows in properties, listing_evidence, or distress_observations.
+```
+
 ### Environment requirements
 
 MVP-002 adds no new environment variables. It reuses the MVP-001 PostgreSQL

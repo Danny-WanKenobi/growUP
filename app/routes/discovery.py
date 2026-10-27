@@ -18,7 +18,10 @@ from app.agents.gabriel.planner import (
     SearchAssignment,
     plan_initial_searches,
 )
-from app.auth import require_intake_key
+from app.agents.gabriel.research import ResearchRunRequest, ResearchRunResult, ResearchError, run_research
+from app.agents.gabriel.sources.brave import BraveConfigError
+from app.auth import require_intake_key, require_research_key
+from app.research_budget_db import BudgetConfigError, BudgetExhausted
 from app.agents.gabriel.service import run_discovery
 from app.agents.gabriel.sources.base import (
     SOURCES,
@@ -127,3 +130,37 @@ def preview_search_plan(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_plan_config"
         ) from exc
     return plan_initial_searches(config)
+
+@router.post("/discovery/research-runs", response_model=ResearchRunResult)
+def start_research_run(
+    body: ResearchRunRequest,
+    _: None = Depends(require_research_key),
+) -> ResearchRunResult:
+    """Execute a bounded Brave research run over planner assignments.
+
+    At most 3 external requests, budgeted in PostgreSQL before any call.
+    Writes no operational property records.
+    """
+    try:
+        return run_research(body)
+    except ResearchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_research_request"
+        ) from exc
+    except (BraveConfigError, BudgetConfigError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="research_not_configured"
+        ) from exc
+    except BudgetExhausted as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="budget_exhausted"
+        ) from exc
+    except DatabaseNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_not_configured"
+        ) from exc
+    except DatabaseUnavailableError as exc:
+        logger.warning("research run database failure: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc

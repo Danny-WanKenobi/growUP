@@ -1,10 +1,9 @@
-"""Minimal API-key authentication (MVP-004A intake only).
+"""Minimal API-key authentication (intake and research only).
 
-Protects ``POST /discovery/intake`` with a shared secret: the client
-sends ``X-Intake-Key`` and the server compares it against the
-``INTAKE_API_KEY`` environment variable using ``hmac.compare_digest``.
-Missing configuration fails closed (503); missing or wrong credentials
-return 401. Keys never appear in logs or error responses.
+Each protected endpoint requires its own shared secret header, compared
+with ``hmac.compare_digest`` against an environment variable. Missing
+configuration fails closed (503); missing or wrong credentials return
+401. Keys never appear in logs or error responses.
 """
 
 from __future__ import annotations
@@ -16,17 +15,18 @@ from fastapi import HTTPException, Request, status
 
 INTAKE_KEY_ENV_VAR = "INTAKE_API_KEY"
 INTAKE_KEY_HEADER = "X-Intake-Key"
+RESEARCH_KEY_ENV_VAR = "RESEARCH_API_KEY"
+RESEARCH_KEY_HEADER = "X-Research-Key"
 
 
-def require_intake_key(request: Request) -> None:
-    """FastAPI dependency enforcing the intake API key."""
-    expected = os.getenv(INTAKE_KEY_ENV_VAR, "")
+def _require_key(request: Request, env_var: str, header: str, config_detail: str) -> None:
+    expected = os.getenv(env_var, "")
     if not expected or not expected.strip():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="intake_not_configured",
+            detail=config_detail,
         )
-    provided = request.headers.get(INTAKE_KEY_HEADER)
+    provided = request.headers.get(header)
     if not provided or not hmac.compare_digest(
         provided.encode("utf-8"), expected.encode("utf-8")
     ):
@@ -34,3 +34,13 @@ def require_intake_key(request: Request) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         )
     return None
+
+
+def require_intake_key(request: Request) -> None:
+    """FastAPI dependency enforcing the intake API key."""
+    _require_key(request, INTAKE_KEY_ENV_VAR, INTAKE_KEY_HEADER, "intake_not_configured")
+
+
+def require_research_key(request: Request) -> None:
+    """FastAPI dependency enforcing the research API key."""
+    _require_key(request, RESEARCH_KEY_ENV_VAR, RESEARCH_KEY_HEADER, "research_not_configured")
