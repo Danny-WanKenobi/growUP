@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from app.observability.config import ObservabilityConfig, get_observability_config
 from app.observability.emitter import (
+    EmitOutcome,
     EventPersistenceError,
     emit,
+    emit_nonfatal,
     get_pg_status,
     get_status,
     log_activity,
@@ -47,6 +49,7 @@ __all__ = [
     "AgentEvent",
     "AgentId",
     "EvidenceRef",
+    "EmitOutcome",
     "EventPersistenceError",
     "JsonlSink",
     "ObservabilityConfig",
@@ -58,6 +61,7 @@ __all__ = [
     "by_run",
     "decisions",
     "emit",
+    "emit_nonfatal",
     "get_observability_config",
     "get_pg_status",
     "get_sink",

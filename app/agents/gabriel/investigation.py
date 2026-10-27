@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -32,6 +33,12 @@ from app.agents.gabriel.extractor import (
     ResultIntelligence,
     extract_research_intelligence,
     group_by_property,
+)
+from app.agents.gabriel.observe import (
+    new_run_id,
+    note_activity,
+    note_diagnostic,
+    note_warning,
 )
 from app.agents.gabriel.ranking import (
     CountyEligibility,
@@ -163,6 +170,8 @@ class InvestigationPlan(BaseModel):
     total_queries: int = 0
     depth: int = 0
     iteration: int = 1
+    run_id: str = ""
+    correlation_id: str = ""
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -537,6 +546,7 @@ class InvestigationPlanRequest(BaseModel):
     config: InvestigationConfig = InvestigationConfig()
     depth: int = Field(default=0, ge=0, le=MAX_DEPTH_CAP)
     iteration: int = Field(default=1, ge=1, le=MAX_ITERATIONS_CAP)
+    correlation_id: str = Field(default="", max_length=128)
 
     @model_validator(mode="after")
     def _bound_results(self):
@@ -661,6 +671,7 @@ class InvestigationRunRequest(BaseModel):
     config: InvestigationConfig = InvestigationConfig()
     query_ids: list[str] | None = Field(default=None, max_length=25)
     timeout_seconds: float = Field(default=15.0, ge=5.0, le=60.0)
+    correlation_id: str = Field(default="", max_length=128)
 
 
 class ExecutedQuery(BaseModel):
@@ -688,6 +699,8 @@ class InvestigationRunResult(BaseModel):
     errors: list[InvestigationQueryError] = []
     retrieved_at: str = ""
     intelligence: ResearchIntelligence | None = None
+    run_id: str = ""
+    correlation_id: str = ""
 
 
 def _select_queries(
@@ -730,17 +743,60 @@ def run_investigation(request: InvestigationRunRequest) -> InvestigationRunResul
     each external call; attempts count even when they fail. No recursion:
     this run never plans follow-ups of its own results.
     """
+    run_id = new_run_id()
+    correlation_id = request.correlation_id or ""
+    started = time.perf_counter()
+    note_activity(
+        run_id, "gabriel.investigation.execution_started",
+        "investigation execution started",
+        details={
+            "intelligence_results": len(request.intelligence.results),
+            "query_ids_requested": list(request.query_ids) if request.query_ids else None,
+            "timeout_seconds": request.timeout_seconds,
+        },
+        correlation_id=correlation_id,
+    )
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
     ranking = rank_intelligence(request.intelligence)
     plan = plan_investigations(request.intelligence, ranking, request.config)
-    selected = _select_queries(plan, request.query_ids)
+    try:
+        selected = _select_queries(plan, request.query_ids)
+    except InvestigationError:
+        note_warning(
+            run_id, "gabriel.investigation.selection_failed",
+            "investigation rejected: unknown or unexecutable planned queries",
+            correlation_id=correlation_id,
+        )
+        raise
+    note_activity(
+        run_id, "gabriel.investigation.plan_resolved",
+        f"investigation plan resolved: {len(plan.investigations)} properties, "
+        f"{len(selected)} queries approved for execution",
+        details={
+            "properties": len(plan.investigations),
+            "questions": sum(len(inv.questions) for inv in plan.investigations),
+            "queries_planned": plan.total_queries,
+            "queries_approved": [
+                {
+                    "query_id": item.id,
+                    "candidate_key": item.candidate_key,
+                    "template": item.template,
+                }
+                for item in selected
+            ],
+            "unplanned": len(plan.unplanned),
+        },
+        correlation_id=correlation_id,
+    )
     if not selected:
         raise InvestigationError("no executable queries in plan")
     get_brave_api_key()  # fail fast before spending budget
     get_monthly_ceiling()  # fail fast on misconfigured ceiling
     result = InvestigationRunResult(
-        retrieved_at=datetime.now(timezone.utc).isoformat(timespec="seconds")
+        retrieved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        run_id=run_id,
+        correlation_id=correlation_id,
     )
     remaining = list(selected)
     while remaining:
@@ -751,6 +807,18 @@ def run_investigation(request: InvestigationRunRequest) -> InvestigationRunResul
             if not result.request_count:
                 budget = read_budget()
             _apply_investigation_budget(result, budget)
+            note_warning(
+                run_id, "gabriel.budget.exhausted",
+                f"investigation stopped: monthly Brave budget exhausted at "
+                f"{budget['used']}/{budget['ceiling']}",
+                details={
+                    "query_id": item.id,
+                    "budget_used": budget["used"],
+                    "budget_ceiling": budget["ceiling"],
+                    "skipped": len(remaining),
+                },
+                correlation_id=correlation_id,
+            )
             result.errors.append(
                 InvestigationQueryError(query_id=item.id, error="budget_exhausted")
             )
@@ -769,12 +837,31 @@ def run_investigation(request: InvestigationRunRequest) -> InvestigationRunResul
                 template=item.template,
             )
         )
+        note_diagnostic(
+            run_id, "gabriel.brave.request_attempted",
+            f"Brave investigation query attempted for {item.id}",
+            details={"query_id": item.id, "template": item.template},
+            correlation_id=correlation_id,
+        )
+        call_started = time.perf_counter()
         try:
             found = execute_query(item.query, item.id, request.timeout_seconds)
         except (BraveRateLimited, BraveUnauthorized) as exc:
             logger.warning("investigation aborting: %s", type(exc).__name__)
+            code = _investigation_error_code(exc)
+            note_warning(
+                run_id, "gabriel.investigation.interrupted",
+                f"investigation interrupted by provider {code}; remaining queries skipped",
+                details={
+                    "query_id": item.id,
+                    "error": code,
+                    "duration_ms": round((time.perf_counter() - call_started) * 1000, 1),
+                    "skipped": len(remaining),
+                },
+                correlation_id=correlation_id,
+            )
             result.errors.append(
-                InvestigationQueryError(query_id=item.id, error=_investigation_error_code(exc))
+                InvestigationQueryError(query_id=item.id, error=code)
             )
             for skipped in remaining:
                 result.errors.append(
@@ -783,12 +870,49 @@ def run_investigation(request: InvestigationRunRequest) -> InvestigationRunResul
             break
         except BraveError as exc:
             logger.warning("investigation query failed: %s", type(exc).__name__)
+            code = _investigation_error_code(exc)
+            note_diagnostic(
+                run_id, "gabriel.brave.request_failed",
+                f"Brave investigation query for {item.id} failed ({code}); run continues",
+                details={
+                    "query_id": item.id,
+                    "error": code,
+                    "duration_ms": round((time.perf_counter() - call_started) * 1000, 1),
+                },
+                correlation_id=correlation_id,
+            )
             result.errors.append(
-                InvestigationQueryError(query_id=item.id, error=_investigation_error_code(exc))
+                InvestigationQueryError(query_id=item.id, error=code)
             )
             continue
+        note_diagnostic(
+            run_id, "gabriel.brave.request_completed",
+            f"Brave investigation query for {item.id} returned {len(found)} result(s)",
+            details={
+                "query_id": item.id,
+                "result_count": len(found),
+                "duration_ms": round((time.perf_counter() - call_started) * 1000, 1),
+            },
+            correlation_id=correlation_id,
+        )
         result.results.extend(found)
     # Pure local extraction over already-retrieved results: no extra Brave
     # calls, no property writes, no intake submissions.
     result.intelligence = extract_research_intelligence(result.results)
+    unresolved = sum(len(inv.questions) for inv in plan.investigations)
+    note_activity(
+        run_id, "gabriel.investigation.completed",
+        f"investigation completed: {result.request_count} request(s), "
+        f"{len(result.results)} result(s), {unresolved} question(s) still open",
+        details={
+            "request_count": result.request_count,
+            "result_count": len(result.results),
+            "error_count": len(result.errors),
+            "questions_open": unresolved,
+            "budget_used": result.budget_used,
+            "budget_remaining": result.budget_remaining,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+        correlation_id=correlation_id,
+    )
     return result

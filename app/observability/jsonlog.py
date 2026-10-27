@@ -6,9 +6,18 @@ sink never raises and never emits observability events itself, so
 logging failures cannot recurse: they are counted, stored, and echoed
 to stderr instead.
 
-Multi-process note: rotation assumes a single writer process (the
-current deployment runs one service worker). Multi-worker setups must
-use separate log files per worker.
+Retention is a maximum age, NOT a guaranteed minimum: the 90-day
+default bounds how long a record may be kept, but size-based rotation
+may remove records earlier under heavy logging. Durable history lives
+in PostgreSQL (activity 365 days, permanent until authorized removal).
+
+Concurrency: multiple threads within one process are safe (logging
+locks keep each JSONL record intact). Multiple independent processes
+must NOT write to the same rotating file; the deployment runs a single
+Uvicorn worker, and that architecture is preserved.
+
+Newly created files are chmodded to 0o640 (owner rw, group r); log
+confidentiality never relies on the directory alone.
 """
 
 from __future__ import annotations
@@ -16,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
+import os
 import re
 import sys
 import threading
@@ -27,6 +37,9 @@ from app.observability.config import ObservabilityConfig, get_observability_conf
 
 LOG_BASENAME = "agent-events.jsonl"
 
+# Restrictive mode for newly created log files (owner rw, group r, other none).
+LOG_FILE_MODE = 0o640
+
 _SEVERITY_LEVELS = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
 
 _ROTATED_RE = re.compile(r"^agent-events\.jsonl(?:\.(\d+))?$")
@@ -36,6 +49,28 @@ class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = record.msg if isinstance(record.msg, dict) else {"message": str(record.msg)}
         return json.dumps(payload, default=str, ensure_ascii=True)
+
+
+class _RestrictiveRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Size-rotating handler that chmods every newly created file to 0o640.
+
+    Pre-existing files are left untouched (never loosen an admin-set
+    mode); rotated siblings are renames, so they keep their mode, and the
+    fresh base file after each rollover is chmodded again.
+    """
+
+    def _open(self):  # type: ignore[no-untyped-def]
+        existed = os.path.exists(self.baseFilename)
+        stream = super()._open()
+        if not existed:
+            try:
+                os.chmod(self.baseFilename, LOG_FILE_MODE)
+            except OSError as exc:
+                print(
+                    f"observability log chmod failed: {self.baseFilename}: {exc}",
+                    file=sys.stderr,
+                )
+        return stream
 
 
 class JsonlSink:
@@ -66,7 +101,7 @@ class JsonlSink:
             logger = logging.getLogger(f"growup.observability.{id(self)}")
             logger.setLevel(self._config.log_level)
             logger.propagate = False
-            handler = logging.handlers.RotatingFileHandler(
+            handler = _RestrictiveRotatingFileHandler(
                 str(path),
                 maxBytes=self._config.log_max_bytes,
                 backupCount=self._config.log_backup_count,

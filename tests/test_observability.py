@@ -504,6 +504,94 @@ def test_failure_behavior_and_no_recursion(monkeypatch, tmp_path, capsys) -> Non
         sink.close()
 
 
+def test_emit_nonfatal_permanent_failure_reports_degraded(tmp_path, monkeypatch) -> None:
+    from app.observability import emit_nonfatal
+
+    sink, config = _sink(tmp_path)
+    try:
+        def _down(*args, **kwargs):
+            raise DatabaseUnavailableError("connection_failed")
+
+        monkeypatch.setattr(emitter, "insert_event", _down)
+        event = _event(event_type="test.decision", retention_class=RetentionClass.PERMANENT)
+        outcome = emit_nonfatal(event, config=config, sink=sink)
+        assert outcome.degraded is True
+        assert outcome.persisted_pg is False
+        assert outcome.file_copy is True
+        assert outcome.error
+        assert outcome.event.event_id == event.event_id
+        assert outcome.event.retention_class is RetentionClass.PERMANENT
+        records = _lines(tmp_path)
+        assert len(records) == 2
+        original, fallback = records
+        assert original["event_id"] == event.event_id
+        assert fallback["event_type"] == "observability.persistence_degraded"
+        assert fallback["parent_event_id"] == event.event_id
+        assert "NOT durably recorded" in fallback["summary"]
+        assert fallback["details"]["original_event_id"] == event.event_id
+        assert fallback["details"]["original_event_type"] == "test.decision"
+        assert fallback["details"]["file_copy"] is True
+        assert "connection_failed" in fallback["details"]["pg_error"]
+    finally:
+        sink.close()
+
+
+def test_emit_nonfatal_permanent_success_reports_persisted(tmp_path, monkeypatch) -> None:
+    from app.observability import emit_nonfatal
+
+    sink, config = _sink(tmp_path)
+    try:
+        calls: list = []
+        monkeypatch.setattr(
+            emitter, "insert_event", lambda event, config=None: calls.append(event)
+        )
+        event = _event(event_type="test.decision", retention_class=RetentionClass.PERMANENT)
+        outcome = emit_nonfatal(event, config=config, sink=sink)
+        assert outcome.degraded is False
+        assert outcome.persisted_pg is True
+        assert outcome.file_copy is True
+        assert outcome.error is None
+        assert len(calls) == 1
+        assert len(_lines(tmp_path)) == 1  # no degradation warning on success
+    finally:
+        sink.close()
+
+
+def test_emit_nonfatal_activity_failure_is_not_degraded(tmp_path, monkeypatch) -> None:
+    from app.observability import emit_nonfatal
+
+    sink, config = _sink(tmp_path)
+    try:
+        def _down(*args, **kwargs):
+            raise DatabaseUnavailableError("connection_failed")
+
+        monkeypatch.setattr(emitter, "insert_event", _down)
+        outcome = emit_nonfatal(_event(), config=config, sink=sink)
+        assert outcome.degraded is False  # activity degradation is the contract
+        assert outcome.persisted_pg is False
+        assert outcome.file_copy is True
+        assert len(_lines(tmp_path)) == 1  # no fallback warning for activity
+    finally:
+        sink.close()
+
+
+def test_emit_nonfatal_disabled_reports_honestly(tmp_path) -> None:
+    from app.observability import ObservabilityConfig, emit_nonfatal
+
+    config = ObservabilityConfig(log_dir=str(tmp_path), enabled=False)
+    permanent = emit_nonfatal(
+        _event(event_type="test.decision", retention_class=RetentionClass.PERMANENT),
+        config=config,
+    )
+    assert permanent.degraded is True
+    assert permanent.persisted_pg is False
+    assert permanent.file_copy is False
+    assert permanent.error == "observability disabled"
+    activity = emit_nonfatal(_event(), config=config)
+    assert activity.degraded is False
+    assert not (tmp_path / "agent-events.jsonl").exists()  # no sink touched
+
+
 def test_unwritable_sink_degrades_without_raising(tmp_path, monkeypatch) -> None:
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory", encoding="utf-8")

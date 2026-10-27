@@ -46,6 +46,7 @@ class DossierRequest(BaseModel):
     rounds: list[ResearchIntelligence] = Field(min_length=1, max_length=MAX_ROUNDS)
     prior_ranking: PropertyRanking | None = None
     executed_queries: list[str] = Field(default_factory=list, max_length=MAX_EXECUTED_QUERIES)
+    correlation_id: str = Field(default="", max_length=128)
 
     @model_validator(mode="after")
     def _bound_total_results(self):
@@ -135,6 +136,8 @@ class DossierSet(BaseModel):
     dossier_version: str = DOSSIER_VERSION
     rounds_executed: int = 0
     total_results: int = 0
+    run_id: str = ""
+    correlation_id: str = ""
 
 
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")

@@ -861,12 +861,26 @@ business transactions.
 
 ### Retention
 
-Diagnostic trace: 90 days default (`OBS_DIAGNOSTIC_RETENTION_DAYS`).
-Activity rows: 365 days default (`OBS_ACTIVITY_RETENTION_DAYS`).
-Permanent rows are never auto-deleted; cleanup SQL carries an explicit
-`retention_class != 'permanent'` guard. Trace files rotate at 10MB × 10
-backups (`OBS_LOG_MAX_BYTES`, `OBS_LOG_BACKUP_COUNT`); only the sink's
-own rotated filenames are ever purged.
+Diagnostic retention is a **maximum age, not a guaranteed minimum**:
+records older than `OBS_DIAGNOSTIC_RETENTION_DAYS` (default 90) may be
+purged, but size-based rotation (10MB × 10 backups by default) can
+remove records earlier under heavy logging — 90 days of history is
+never promised. Durable history lives in PostgreSQL: routine activity
+rows default to 365 days (`OBS_ACTIVITY_RETENTION_DAYS`), while
+permanent rows (decisions, evidence references, actual handoffs) are
+never auto-deleted; cleanup SQL carries an explicit
+`retention_class != 'permanent'` guard. File purge only matches the
+sink's own rotated filenames. No automated cleanup scheduler exists;
+purges are explicit function calls.
+
+### Concurrency and permissions
+
+Multiple threads within the one application process are safe (logging
+locks keep each JSONL record intact). Multiple independent processes
+must not share one rotating file; the deployment runs a single Uvicorn
+worker and that architecture is preserved. Newly created log files are
+chmodded to `640` (owner rw, group r); pre-existing files are never
+loosened, and rotated siblings keep their mode via rename.
 
 ### Security
 
@@ -885,10 +899,42 @@ read-only interface (`recent_by_agent`, `by_property`, `by_run`,
 All `OBS_*` variables are optional (see `.env.example`); invalid values
 fail closed to defaults. Migration `004_agent_events.sql` applies via
 `python -m app.migrate`. Ubuntu prerequisite: set
-`OBS_LOG_DIR=/var/www/growup/logs` in `/etc/growup/growup.env` and
-pre-create that directory owned by `growup` (releases are immutable, so
-logs live outside them). Research payload capture/replay is deferred to
-MVP-004C-B; Gabriel workflow instrumentation is future work.
+`OBS_LOG_DIR=/var/www/growup/logs` in `/var/www/growup/shared/growup.env`
+(the authoritative environment file) and pre-create that directory owned
+by `growup` (releases are immutable, so logs live outside them).
+Research payload capture/replay is deferred to MVP-004C-B.
+
+### Phase 2 — Gabriel instrumentation
+
+Gabriel's research, investigation, ranking, dossier, and intake flows
+emit through `app/agents/gabriel/observe.py`, a preset over the shared
+emitter (agent fixed to `gabriel`, decisions via `emit_nonfatal`).
+Requests accept an optional `correlation_id`; every execution mints a
+`run_id`, echoed back on the response. Event types:
+
+- Research: `gabriel.research.started/selection_failed/assignments_selected/results_received/completed`,
+  `gabriel.brave.request_attempted/completed/failed`, `gabriel.budget.exhausted`,
+  `gabriel.extraction.completed` (counts only), `gabriel.ranking.completed`
+  (heuristic summary), `gabriel.ranking.excluded` (permanent).
+- Investigation: `gabriel.investigation.plan_created/plan_resolved/execution_started/completed/interrupted/selection_failed`.
+- Dossier: `gabriel.dossier.started/completed/handoff_ready/excluded`
+  (`handoff_ready` explicitly means suggested, not sent; no
+  `handoff_sent` exists yet because no agent messaging does).
+- Intake: `gabriel.intake.accepted/rejected` (field names, counts, and
+  listing URL only — never the full submission).
+
+`property_id` appears only when reliably known (intake outcomes);
+research candidates use identity keys, never invented UUIDs. All
+Gabriel boundaries are nonfatal: diagnostic/activity sink failures
+degrade silently-safe, permanent failures downgrade to a file-traced
+warning via `emit_nonfatal`, and validation errors propagate as code
+bugs. `emit_nonfatal` returns an `EmitOutcome`
+(`persisted_pg`/`file_copy`/`degraded`/`error`) so callers can
+distinguish PostgreSQL-persisted permanent events from degraded ones;
+a degraded permanent event is explicitly not durably recorded, and no
+retry queue exists yet — guaranteed eventual persistence would require
+a follow-up outbox design. No extra Brave calls, no ranking/geography
+changes, no new endpoints or migrations.
 
 ---
 

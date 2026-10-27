@@ -14,7 +14,7 @@ These scripts are **not yet configured for unattended use**. Nothing is executed
 3. Create the dedicated Linux user `growup` and give it ownership of `/var/www/growup` only; do not change permissions or ownership of `/var/www` or any sibling application directory.
 4. Copy `remote-install-release.sh` to `/var/www/growup/deployment/remote-install-release.sh` and `setup-postgres.sh` to a temporary administrator-only location.
 5. Run `setup-postgres.sh` in dry-run mode; review, then use `--apply` to create separate DB/role.
-6. Store `DATABASE_URL` and future Meta API credentials in `/etc/growup/growup.env` with root-owned restricted permissions; never commit them.
+6. Store `DATABASE_URL` and future Meta API credentials in `/var/www/growup/shared/growup.env` with root-owned restricted permissions; never commit them.
 7. Install `growup.service` after inspecting template and allow only a narrowly scoped sudoers rule for restarting this specific service (if using `deploy-dev.ps1`).
 8. Once Muse creates `app/main.py`, `requirements.txt`, and `deployment/growup_server.py`, run a local smoke test first.
 9. Place deployment files under the project's `deployment/` directory, commit and push approved changes, then run `deploy-dev.ps1` from Windows.

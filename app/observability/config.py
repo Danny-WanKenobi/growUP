@@ -26,6 +26,7 @@ _VALID_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 class ObservabilityConfig:
     """File sink, retention, and payload-bound settings (no secrets)."""
 
+    enabled: bool = True
     log_dir: str = DEFAULT_LOG_DIR
     log_level: str = DEFAULT_LOG_LEVEL
     diagnostic_retention_days: int = DEFAULT_DIAGNOSTIC_RETENTION_DAYS
@@ -47,7 +48,9 @@ def _positive_int(raw: str | None, default: int) -> int:
 def get_observability_config() -> ObservabilityConfig:
     """Build observability settings from the current environment."""
     level = (os.getenv("OBS_LOG_LEVEL", DEFAULT_LOG_LEVEL) or "").strip().upper()
+    enabled_raw = (os.getenv("OBS_ENABLED", "1") or "").strip().lower()
     return ObservabilityConfig(
+        enabled=enabled_raw not in ("0", "false", "no", "off"),
         log_dir=os.getenv("OBS_LOG_DIR", DEFAULT_LOG_DIR) or DEFAULT_LOG_DIR,
         log_level=level if level in _VALID_LEVELS else DEFAULT_LOG_LEVEL,
         diagnostic_retention_days=_positive_int(

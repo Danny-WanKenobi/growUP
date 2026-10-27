@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
@@ -28,6 +29,7 @@ from app.agents.gabriel.investigation import (
     plan_investigations,
     run_investigation,
 )
+from app.agents.gabriel.observe import new_run_id, note_activity, note_decision
 from app.agents.gabriel.dossier import DossierRequest, DossierSet, build_dossiers
 from app.agents.gabriel.sources.brave import BraveConfigError
 from app.auth import require_intake_key, require_research_key
@@ -185,8 +187,11 @@ def create_investigation_plan(body: InvestigationPlanRequest) -> InvestigationPl
     Deterministic transform of submitted intelligence: no provider calls,
     no budget consumption, no database access, no property changes.
     """
+    run_id = new_run_id()
+    correlation_id = body.correlation_id or ""
+    started = time.perf_counter()
     try:
-        return plan_investigations(
+        plan = plan_investigations(
             body.intelligence,
             body.ranking,
             body.config,
@@ -197,6 +202,24 @@ def create_investigation_plan(body: InvestigationPlanRequest) -> InvestigationPl
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_plan_request"
         ) from exc
+    plan.run_id = run_id
+    plan.correlation_id = correlation_id
+    note_activity(
+        run_id, "gabriel.investigation.plan_created",
+        f"investigation plan created: {len(plan.investigations)} properties, "
+        f"{plan.total_queries} queries",
+        details={
+            "properties": len(plan.investigations),
+            "questions": sum(len(inv.questions) for inv in plan.investigations),
+            "total_queries": plan.total_queries,
+            "unplanned": len(plan.unplanned),
+            "depth": plan.depth,
+            "iteration": plan.iteration,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+        correlation_id=correlation_id,
+    )
+    return plan
 
 
 @router.post("/discovery/investigations", response_model=InvestigationRunResult)
@@ -243,9 +266,64 @@ def create_dossiers(body: DossierRequest) -> DossierSet:
     database access, no property changes. Ranking reassessment reuses
     the existing ranking engine.
     """
+    run_id = new_run_id()
+    correlation_id = body.correlation_id or ""
+    started = time.perf_counter()
+    total_results = sum(len(item.results) for item in body.rounds)
+    note_activity(
+        run_id, "gabriel.dossier.started",
+        f"dossier construction started: {len(body.rounds)} round(s), {total_results} result(s)",
+        details={"rounds": len(body.rounds), "total_results": total_results},
+        correlation_id=correlation_id,
+    )
     try:
-        return build_dossiers(body)
+        dossier_set = build_dossiers(body)
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_dossier_request"
         ) from exc
+    dossier_set.run_id = run_id
+    dossier_set.correlation_id = correlation_id
+    qc_histogram: dict[str, int] = {}
+    for dossier in dossier_set.dossiers:
+        qc_histogram[dossier.qc_status.value] = qc_histogram.get(dossier.qc_status.value, 0) + 1
+        if dossier.qc_status.value == "exclude":
+            for exclusion in dossier.exclusions:
+                note_decision(
+                    run_id, "gabriel.dossier.excluded",
+                    f"dossier {dossier.key} excluded: {exclusion.rule}",
+                    details={
+                        "dossier_key": dossier.key,
+                        "rule": exclusion.rule,
+                        "evidence": exclusion.evidence[:300],
+                    },
+                    correlation_id=correlation_id,
+                    evidence_refs=[{"kind": "source_url", "ref": exclusion.source_url}],
+                )
+        else:
+            note_activity(
+                run_id, "gabriel.dossier.handoff_ready",
+                f"dossier {dossier.key} handoff ready, not sent "
+                f"({dossier.qc_status.value})",
+                details={
+                    "dossier_key": dossier.key,
+                    "qc_status": dossier.qc_status.value,
+                    "agents": [handoff.agent for handoff in dossier.handoffs],
+                    "remaining_questions": len(dossier.remaining_questions),
+                    "conflicts": len(dossier.conflicts),
+                },
+                correlation_id=correlation_id,
+            )
+    note_activity(
+        run_id, "gabriel.dossier.completed",
+        f"dossier construction completed: {len(dossier_set.dossiers)} dossier(s)",
+        details={
+            "dossiers": len(dossier_set.dossiers),
+            "qc_status": qc_histogram,
+            "conflicts": sum(len(dossier.conflicts) for dossier in dossier_set.dossiers),
+            "comparisons": len(dossier_set.comparison),
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+        correlation_id=correlation_id,
+    )
+    return dossier_set

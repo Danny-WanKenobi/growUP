@@ -16,6 +16,11 @@ Durability contract:
   after a best-effort file copy, so they are never silently reported
   as successful. Callers performing significant decisions must handle
   that failure explicitly.
+- :func:`emit_nonfatal` never raises on durability errors; instead it
+  returns an :class:`EmitOutcome` whose ``persisted_pg``/``degraded``
+  flags tell the caller exactly what was durably recorded. A degraded
+  permanent event is explicitly NOT durably recorded -- the file copy
+  is a trace, not a substitute, and a linked warning records the gap.
 - Internal error paths use stderr and counters only; they never emit
   events, so logging cannot recurse on itself.
 - PostgreSQL writes use dedicated short-lived connections, never
@@ -29,6 +34,8 @@ import sys
 import threading
 from typing import Any
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.observability.config import ObservabilityConfig, get_observability_config
@@ -123,30 +130,128 @@ def _prepare(event: AgentEvent, config: ObservabilityConfig) -> AgentEvent:
     )
 
 
+class EmitOutcome(BaseModel):
+    """Honest record of what one emit actually persisted.
+
+    ``persisted_pg`` is True only when PostgreSQL acknowledged the
+    write; ``file_copy`` only when the JSONL trace accepted it.
+    ``degraded`` is True only for permanent events that did NOT reach
+    PostgreSQL -- a degraded permanent event is explicitly NOT durably
+    recorded, and the caller must treat it as unpersisted.
+    """
+
+    event: AgentEvent
+    persisted_pg: bool = False
+    file_copy: bool = False
+    degraded: bool = False
+    error: str | None = None
+
+
+def _persist(
+    prepared: AgentEvent,
+    config: ObservabilityConfig,
+    sink: JsonlSink | None,
+) -> tuple[bool, bool, Exception | None]:
+    """Write one prepared event to its sinks. Never raises.
+
+    Returns ``(file_copy, persisted_pg, pg_error)``. Diagnostic events
+    never attempt PostgreSQL. Counters and stderr observe failures.
+    """
+    writer = sink if sink is not None else get_sink(config)
+    file_ok = writer.write(prepared.to_record())
+    if prepared.retention_class is RetentionClass.DIAGNOSTIC:
+        return file_ok, False, None
+    try:
+        insert_event(prepared)
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
+        _record_pg_error(f"{type(exc).__name__}: {exc}")
+        return file_ok, False, exc
+    _record_pg_write()
+    return file_ok, True, None
+
+
 def emit(
     event: AgentEvent,
     config: ObservabilityConfig | None = None,
     sink: JsonlSink | None = None,
 ) -> AgentEvent:
-    """Validate, scrub, route, and persist one event. See module contract."""
+    """Validate, scrub, route, and persist one event. See module contract.
+
+    When the resolved config is disabled (``OBS_ENABLED=0``), the event
+    is still validated and scrubbed, but no sink is touched. Explicitly
+    passed configs default to enabled, so tests with their own sinks are
+    unaffected by the ambient switch.
+
+    A permanent PostgreSQL failure raises :class:`EventPersistenceError`;
+    callers that must not abort on durability errors use
+    :func:`emit_nonfatal` and inspect the returned outcome instead.
+    """
     cfg = config or get_observability_config()
     prepared = _prepare(event, cfg)
-    record = prepared.to_record()
-    writer = sink if sink is not None else get_sink(cfg)
-    writer.write(record)
-    if prepared.retention_class is RetentionClass.DIAGNOSTIC:
+    if not cfg.enabled:
         return prepared
-    try:
-        insert_event(prepared)
-    except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
-        _record_pg_error(f"{type(exc).__name__}: {exc}")
-        if prepared.retention_class is RetentionClass.PERMANENT:
-            raise EventPersistenceError(
-                f"permanent event {prepared.event_id} not persisted"
-            ) from exc
-    else:
-        _record_pg_write()
+    _, pg_ok, pg_error = _persist(prepared, cfg, sink)
+    if prepared.retention_class is RetentionClass.PERMANENT and not pg_ok:
+        raise EventPersistenceError(
+            f"permanent event {prepared.event_id} not persisted"
+        ) from pg_error
     return prepared
+
+
+def emit_nonfatal(
+    event: AgentEvent,
+    config: ObservabilityConfig | None = None,
+    sink: JsonlSink | None = None,
+) -> EmitOutcome:
+    """Emit without ever failing the caller on durability errors.
+
+    Used at business-operation boundaries (research, intake): a
+    permanent-event persistence failure is downgraded to a file-traced
+    activity warning instead of aborting the operation -- but the
+    returned :class:`EmitOutcome` reports ``degraded=True`` and
+    ``persisted_pg=False``, so degraded permanence is never mistaken
+    for durable recording. Validation errors still propagate --
+    malformed events are code bugs that must fail fast in development
+    and testing.
+    """
+    cfg = config or get_observability_config()
+    prepared = _prepare(event, cfg)
+    if not cfg.enabled:
+        return EmitOutcome(
+            event=prepared,
+            degraded=prepared.retention_class is RetentionClass.PERMANENT,
+            error="observability disabled",
+        )
+    file_ok, pg_ok, pg_error = _persist(prepared, cfg, sink)
+    degraded = prepared.retention_class is RetentionClass.PERMANENT and not pg_ok
+    if degraded:
+        fallback = AgentEvent(
+            agent=prepared.agent,
+            run_id=prepared.run_id,
+            event_type="observability.persistence_degraded",
+            summary=(
+                f"permanent event {prepared.event_id} NOT durably recorded; "
+                "file trace copy only"
+            ),
+            severity=Severity.WARNING,
+            retention_class=RetentionClass.ACTIVITY,
+            details={
+                "original_event_id": prepared.event_id,
+                "original_event_type": prepared.event_type,
+                "pg_error": str(pg_error)[:300] if pg_error else "unknown",
+                "file_copy": file_ok,
+            },
+            correlation_id=prepared.correlation_id,
+            parent_event_id=prepared.event_id,
+        )
+        emit(fallback, config=cfg, sink=sink)  # activity: degrades, never raises
+    return EmitOutcome(
+        event=prepared,
+        persisted_pg=pg_ok,
+        file_copy=file_ok,
+        degraded=degraded,
+        error=str(pg_error)[:500] if pg_error else None,
+    )
 
 
 def _build(

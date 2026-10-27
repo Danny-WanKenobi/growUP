@@ -27,6 +27,7 @@ The server never fetches submitted URLs (no SSRF surface).
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -36,6 +37,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from app.agents.gabriel.dedup import find_existing_id
+from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError
 from app.listings_db import (
@@ -180,6 +182,7 @@ class ListingIntakeRequest(BaseModel):
     distress_observations: list[DistressObservationInput] = Field(
         default_factory=list, max_length=MAX_DISTRESS_OBSERVATIONS
     )
+    correlation_id: str = Field(default="", max_length=128)
 
     @field_validator("asking_price", "asking_rent_monthly", mode="before")
     @classmethod
@@ -228,6 +231,8 @@ class IntakeResult(BaseModel):
     listing_evidence_id: str | None = None
     distress_observation_ids: list[str] = []
     message: str
+    run_id: str = ""
+    correlation_id: str = ""
 
 
 def _display_name(body: ListingIntakeRequest) -> str:
@@ -350,6 +355,56 @@ def build_distress_rows(body: ListingIntakeRequest) -> list[dict[str, Any]]:
 
 
 def process_intake(body: ListingIntakeRequest) -> IntakeResult:
+    """Validate, dedup, and persist one listing (instrumented, nonfatal).
+
+    Emits one accepted (activity) or rejected (warning) event per call.
+    The event carries field names, counts, and the listing URL only --
+    never the complete submission, credentials, or personal details.
+    """
+    run_id = new_run_id()
+    correlation_id = body.correlation_id or ""
+    started = time.perf_counter()
+    try:
+        result = _process_intake(body)
+    except IntakeError as exc:
+        note_warning(
+            run_id, "gabriel.intake.rejected",
+            f"listing rejected: {exc}"[:300],
+            details={
+                "reason": str(exc)[:300],
+                "source_name": body.source_name,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
+            correlation_id=correlation_id,
+        )
+        raise
+    result.run_id = run_id
+    result.correlation_id = correlation_id
+    try:
+        known_property: UUID | None = UUID(str(result.property_id))
+    except ValueError:
+        known_property = None
+    note_activity(
+        run_id, "gabriel.intake.accepted",
+        f"listing accepted: {result.outcome.value} property {result.property_id}",
+        details={
+            "outcome": result.outcome.value,
+            "filled_fields": list(result.filled_fields),
+            "listing_evidence_id": result.listing_evidence_id,
+            "distress_observations": len(result.distress_observation_ids),
+            "category": body.category,
+            "listing_type": body.listing_type.value,
+            "source_name": body.source_name,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+        correlation_id=correlation_id,
+        property_id=known_property,
+        evidence_refs=[{"kind": "listing_url", "ref": str(body.listing_url)[:500]}],
+    )
+    return result
+
+
+def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
     """Validate, dedup, and persist one listing (create, enrich, or skip)."""
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
