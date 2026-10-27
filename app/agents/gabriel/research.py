@@ -56,6 +56,12 @@ class ResearchRunRequest(BaseModel):
     timeout_seconds: float = Field(default=15.0, ge=5.0, le=60.0)
     include_intelligence: bool = True
     include_ranking: bool = False
+    rotation: int = Field(
+        default=0,
+        ge=0,
+        description="Per-category sweep offset; later explicit runs pass 1, 2, ... "
+        "to reach counties beyond the first assignment per category.",
+    )
 
 
 class ExecutedAssignment(BaseModel):
@@ -86,21 +92,33 @@ class ResearchRunResult(BaseModel):
     ranking: PropertyRanking | None = None
 
 
-def select_assignments(assignments: list[SearchAssignment]) -> list[SearchAssignment]:
-    """Select the first assignment per primary category, priority order.
+def select_assignments(
+    assignments: list[SearchAssignment], rotation: int = 0
+) -> list[SearchAssignment]:
+    """Select one assignment per primary category, priority order.
 
-    Rejects non-planner input (wrong planner version) and caps the
-    selection at MAX_PER_RUN. Deterministic for identical inputs.
+    Rotation 0 (the default) keeps the legacy behavior: the first
+    assignment per category. A later explicitly requested run passes a
+    higher rotation to execute the next assignment per category instead
+    (modulo each category's group size), sweeping counties and strategies
+    across runs without widening any single run. Rejects non-planner
+    input (wrong planner version) and caps the selection at MAX_PER_RUN.
+    Deterministic for identical inputs.
     """
+    if rotation < 0:
+        raise ResearchError("rotation must be non-negative")
     for assignment in assignments:
         if assignment.planner_version != PLANNER_VERSION:
             raise ResearchError(f"unsupported planner version: {assignment.planner_version}")
     planned = set(PLANNED_CATEGORIES)
-    first_per_category: dict[object, SearchAssignment] = {}
+    grouped: dict[object, list[SearchAssignment]] = {}
     for assignment in sorted(assignments, key=lambda item: item.priority):
-        if assignment.category in planned and assignment.category not in first_per_category:
-            first_per_category[assignment.category] = assignment
-    selected = sorted(first_per_category.values(), key=lambda item: item.priority)
+        if assignment.category in planned:
+            grouped.setdefault(assignment.category, []).append(assignment)
+    selected = sorted(
+        (group[rotation % len(group)] for group in grouped.values()),
+        key=lambda item: item.priority,
+    )
     if not selected:
         raise ResearchError("no primary-category assignments to research")
     return selected[:MAX_PER_RUN]
@@ -127,7 +145,7 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
     """Execute one bounded, budgeted research run."""
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
-    selected = select_assignments(request.assignments)
+    selected = select_assignments(request.assignments, request.rotation)
     get_brave_api_key()  # fail fast before spending budget
     get_monthly_ceiling()  # fail fast on misconfigured ceiling
     result = ResearchRunResult(

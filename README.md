@@ -456,25 +456,27 @@ integrated or depended upon in MVP-004A.
 ## 🗺️ Gabriel Search Planner (MVP-004B-1)
 
 The planner generates structured commercial real estate research
-assignments for Dallas, Texas. **Listings first. Value driven. Distress
-focused.** It produces assignments only: no searches executed, no scraping,
-no AI calls, no database writes, no network requests.
+assignments across the seven-county operating area. **Listings first.
+Value driven. Distress focused.** It produces assignments only: no
+searches executed, no scraping, no AI calls, no database writes, no
+network requests.
 
 ### Architecture
 
 `app/agents/gabriel/planner.py` exposes a narrow Python interface:
 
-- `plan_initial_searches(config)` — balanced city-wide assignment set.
+- `plan_initial_searches(config)` — balanced county-wide assignment set.
 - `plan_followups(parent, feedback, config)` — bounded single-step
-  adaptation from structured research feedback.
+  adaptation from structured research feedback (stays in the parent's
+  county).
 
 `GET /discovery/search-plan` previews the initial plan (read-only;
-`total`, `per_category`, and `downtown` query parameters). It performs
-no live research and changes no data.
+`total`, `per_category`, `downtown`, and `secondary_counties` query
+parameters). It performs no live research and changes no data.
 
 Each assignment carries a stable content-derived id, query, market,
-category, strategy, priority, research intent, planner version
-(`004B-1.0`), downtown flag, depth, and parent id. Same inputs always
+county, category, strategy, priority, research intent, planner version
+(`004B-1.1`), downtown flag, depth, and parent id. Same inputs always
 yield the same assignments in the same order.
 
 ### Supported search strategies
@@ -485,18 +487,37 @@ yield the same assignments in the same order.
 seeks actual sale opportunities across the three primary categories in
 balanced round-robin allocation (4 each by default, 12 total). A query's
 wording is never evidence that a property is distressed; intents say so
-explicitly. Downtown Dallas appears only as a bounded secondary
-refinement (every fourth slot); city-wide Dallas dominates.
+explicitly.
+
+### Seven-county coverage (MVP-004B-5 integration)
+
+County markets derive from the shared `geography.py` constants used by
+the ranking engine, so planner territory can never drift from ranking
+eligibility. Dallas County holds primary priority (every other slot,
+starting first — half the plan); the six adjacent counties rotate
+through the remaining slots, so the default 12-assignment plan names
+all seven counties at no extra search cost. Set
+`include_secondary_counties=false` for a Dallas-only plan. Downtown
+stays a bounded secondary refinement (every fourth slot, plus a
+Dallas-county downtown every eighth slot so downtown Dallas is covered);
+Dallas downtowns use the city anchor (`Downtown Dallas, TX`), other
+counties use county anchors (`Downtown Tarrant County, TX`).
+
+Because each research run executes one assignment per category, later
+explicitly requested runs pass `rotation: 1, 2, 3` in
+`POST /discovery/research-runs` to sweep the remaining counties and
+strategies — four rotations cover all seven counties with no run wider
+than 3 Brave calls and no automatic recursion.
 
 ### Example research assignments
 
 ```json
 [
-  {"query": "high-rise office building for sale in Dallas, TX",
+  {"query": "high-rise office building for sale in Dallas County, TX",
    "category": "high_rise", "strategy": "for_sale", "priority": 1},
-  {"query": "price-reduced commercial office building for sale in Dallas, TX",
+  {"query": "price-reduced commercial office building for sale in Dallas County, TX",
    "category": "downtown_commercial", "strategy": "price_reduced"},
-  {"query": "distressed industrial warehouse property for sale in Downtown Dallas, TX",
+  {"query": "distressed industrial warehouse property for sale in Downtown Tarrant County, TX",
    "category": "warehouse_industrial", "strategy": "distressed"}
 ]
 ```
@@ -505,7 +526,8 @@ refinement (every fourth slot); city-wide Dallas dominates.
 
 `PlannerConfig`: `total_max_queries` (1–54, default 12),
 `per_category_max` (1–18, default 4), `followup_max` (0–50, default 6),
-`max_depth` (0–5, default 2), `downtown_refinement` (default true).
+`max_depth` (0–5, default 2), `downtown_refinement` (default true),
+`include_secondary_counties` (default true).
 Invalid budgets are rejected. Follow-ups derive deterministically from
 feedback outcomes (`no_results`, `duplicates_heavy`, `promising`,
 `provider_failure`, `missing_pricing`, `missing_distress_evidence`):
@@ -516,10 +538,8 @@ follow-up caps bound growth, and known queries are never repeated.
 
 - No property values are invented and no minimum price is imposed; the
   planner ranks nothing because it has seen no listings.
-- No provider adapter exists yet; assignments name no endpoints or
-  credentials and assume no website HTML access.
-- Geographic scope is Dallas only, with no grids, radius expansion, or
-  boundary processing.
+- Geographic scope is the seven-county operating area, with no grids,
+  radius expansion, or boundary processing.
 
 ### Remaining MVP-004B phases
 
@@ -549,9 +569,12 @@ logs, errors, or responses.
 
 1. Generate assignments with `GET /discovery/search-plan`.
 2. Submit them to `POST /discovery/research-runs` with the research key.
-3. The service selects the first assignment per primary category in
-   priority order (max 3), reserves budget, executes in order, and
-   returns normalized results with per-assignment errors.
+3. The service selects one assignment per primary category in priority
+   order (max 3), reserves budget, executes in order, and returns
+   normalized results with per-assignment errors.
+4. For broader coverage, resubmit the same plan with `rotation: 1`
+   (then `2`, `3`) to execute the next assignment per category —
+   sweeping all seven counties across explicitly requested runs.
 
 Only planner-issued assignments (matching planner version) are accepted;
 arbitrary caller queries are rejected.
@@ -675,20 +698,24 @@ writes, no AI calls.
   Sale availability is not required, so the engine reuses cleanly for
   future off-market discovery.
 
-### Dallas County requirement and downtown preference
+### Seven-county operating area and downtown preference (corrected in MVP-004B-5)
 
-The research territory is all of Dallas County, not the City of Dallas.
-County eligibility (`inside_county`/`outside_county`/`county_unknown`)
+The research territory is Dallas County (primary) plus six adjacent
+counties — Collin, Denton, Tarrant, Ellis, Kaufman, Rockwall
+(secondary). County classification
+(`primary_area`/`secondary_area`/`county_unknown`/`outside_operating_area`)
 rests on explicit county evidence only: no municipality lookup, no ZIP
 inference, no fabrication. A small transparent downtown bonus (+0.05,
-any county municipality, evidence-backed or unknown) breaks ties but
-never overwhelms stronger opportunity evidence.
+any operating-area municipality, evidence-backed or unknown) breaks
+ties but never overwhelms stronger opportunity evidence.
 
 ### Quality control and missing data
 
-Gates (not scores) exclude only clear cases: outside-county, demolished,
+Gates (not scores) exclude only clear cases: demolished,
 vacant-land-without-structure, and incompatible-use — each with an
-auditable rule, evidence, source, and date. Everything uncertain becomes
+auditable rule, evidence, source, and date. Properties reliably outside
+all seven counties are deferred (evidence retained, out of the active
+queue), not discarded. Everything uncertain becomes
 RESEARCH_REQUIRED with agent-routed next steps; high occupancy, missing
 prices, and off-market status never exclude. Unknown factors are left
 unevaluated (reducing a reported completeness score) instead of scoring
@@ -730,6 +757,79 @@ backstop. A client-provided "verified" label or evidence reference does not
 independently establish truth: the gate cannot confirm cited facts against
 external sources. A human review workflow, trusted-source registry, and
 separate hypothetical-scenario storage are deferred to future milestones.
+
+---
+
+## 🕵️ Gabriel Investigative Research (MVP-004B-5)
+
+MVP-004B-5 extends Gabriel from discovery and ranking into coordinated
+investigation: plan targeted follow-ups, execute them within budget,
+and consolidate multi-round evidence into property dossiers.
+
+**Pipeline:** Search Planner → Brave Search → Intelligence Extractor →
+Quality Control → Value & Opportunity Ranking → Investigation Planner →
+Bounded Executor → Evidence Dossier Builder → Ranking Reassessment →
+Agent Handoff Recommendations.
+
+### Geographic correction
+
+MVP-004B-4 excluded everything outside Dallas County. That logic is
+corrected: all seven operating-area counties are eligible, unknown
+county stays eligible, and confirmed out-of-area leads are deferred
+with evidence retained. **Compatibility note:** the public
+`county` values `inside_county`/`outside_county` were replaced by
+`primary_area`/`secondary_area`/`outside_operating_area`
+(`county_unknown` unchanged), and a `deferred` QC status plus
+`deferrals` records were added. Ranking version is now `004B-5.0`.
+
+### 5A — Investigation planner (pure)
+
+`app/agents/gabriel/investigation.py` (`plan_investigations`) derives
+research questions (identity, geography, transaction, distress,
+underuse, building, evidence) and targeted Brave-compatible queries
+from ranked intelligence. Prioritization blends opportunity score with
+a small primary-territory weight. Queries use supported names or
+addresses only — weak identity yields questions, never blind searches —
+with sanitized, length-capped, deduplicated templates. Defaults: 3
+properties, 2 queries each, 6 total, depth 2, 1 iteration. No provider
+calls, no database writes.
+
+### 5B — Investigation executor (budgeted)
+
+`run_investigation` regenerates the plan server-side from submitted
+intelligence (deterministic reconstruction), so forged query text has
+no path to the provider. It reuses the existing Brave provider,
+`RESEARCH_API_KEY` authentication, and PostgreSQL monthly budget: one
+reservation immediately before each call, max 3 queries per run,
+attempts count even on failure, 429/401 abort remaining queries, no
+recursion, no property writes.
+
+### 5C — Evidence dossier builder (pure)
+
+`app/agents/gabriel/dossier.py` (`build_dossiers`) merges
+initial + follow-up rounds into one dossier per conservatively
+identified property: supported vs. historical facts, distress/underuse
+findings, independent-vs-repeated corroboration, temporal-aware
+contradictions (same-period conflicts flagged; cross-year changes
+noted, not flagged), missing information, actions performed, remaining
+questions, Raphael/Onesimus/Priscilla handoffs, and a deterministic
+summary built only from supported evidence. Reassessment reuses the
+existing ranking engine; optional prior-ranking comparison explains
+score changes without inventing priors.
+
+### API endpoints
+
+- `POST /discovery/investigation-plans` — pure planning (no auth; spends
+  nothing). Body: `{intelligence, ranking?, config?, depth?, iteration?}`.
+- `POST /discovery/investigations` — authenticated (`X-Research-Key`),
+  budgeted follow-up execution. Body: `{intelligence, config?,
+  query_ids?, timeout_seconds?}`; unknown query IDs are rejected.
+- `POST /discovery/dossiers` — pure consolidation (no auth; spends
+  nothing). Body: `{rounds[1..10], prior_ranking?, executed_queries?}`
+  (≤200 results).
+
+No database migration required. No live Brave calls during tests; all
+provider and budget interactions are mocked.
 
 ---
 

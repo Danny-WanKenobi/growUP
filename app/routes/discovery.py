@@ -19,6 +19,16 @@ from app.agents.gabriel.planner import (
     plan_initial_searches,
 )
 from app.agents.gabriel.research import ResearchRunRequest, ResearchRunResult, ResearchError, run_research
+from app.agents.gabriel.investigation import (
+    InvestigationError,
+    InvestigationPlan,
+    InvestigationPlanRequest,
+    InvestigationRunRequest,
+    InvestigationRunResult,
+    plan_investigations,
+    run_investigation,
+)
+from app.agents.gabriel.dossier import DossierRequest, DossierSet, build_dossiers
 from app.agents.gabriel.sources.brave import BraveConfigError
 from app.auth import require_intake_key, require_research_key
 from app.research_budget_db import BudgetConfigError, BudgetExhausted
@@ -113,6 +123,7 @@ def preview_search_plan(
     total: int = 12,
     per_category: int = 4,
     downtown: bool = True,
+    secondary_counties: bool = True,
 ) -> list:
     """Preview Gabriel research assignments (read-only, no execution).
 
@@ -124,6 +135,7 @@ def preview_search_plan(
             total_max_queries=total,
             per_category_max=per_category,
             downtown_refinement=downtown,
+            include_secondary_counties=secondary_counties,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -163,4 +175,77 @@ def start_research_run(
         logger.warning("research run database failure: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc
+
+
+@router.post("/discovery/investigation-plans", response_model=InvestigationPlan)
+def create_investigation_plan(body: InvestigationPlanRequest) -> InvestigationPlan:
+    """Plan targeted follow-up research (pure; executes nothing).
+
+    Deterministic transform of submitted intelligence: no provider calls,
+    no budget consumption, no database access, no property changes.
+    """
+    try:
+        return plan_investigations(
+            body.intelligence,
+            body.ranking,
+            body.config,
+            body.depth,
+            body.iteration,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_plan_request"
+        ) from exc
+
+
+@router.post("/discovery/investigations", response_model=InvestigationRunResult)
+def start_investigation(
+    body: InvestigationRunRequest,
+    _: None = Depends(require_research_key),
+) -> InvestigationRunResult:
+    """Execute a bounded investigation run over a regenerated plan.
+
+    Every query is regenerated server-side from the submitted
+    intelligence; at most 3 external requests, budgeted in PostgreSQL
+    before any call. Writes no operational property records.
+    """
+    try:
+        return run_investigation(body)
+    except InvestigationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_investigation"
+        ) from exc
+    except (BraveConfigError, BudgetConfigError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="research_not_configured"
+        ) from exc
+    except BudgetExhausted as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="budget_exhausted"
+        ) from exc
+    except DatabaseNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_not_configured"
+        ) from exc
+    except DatabaseUnavailableError as exc:
+        logger.warning("investigation database failure: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc
+
+
+@router.post("/discovery/dossiers", response_model=DossierSet)
+def create_dossiers(body: DossierRequest) -> DossierSet:
+    """Consolidate multi-round intelligence into property dossiers.
+
+    Pure transform: no provider calls, no budget consumption, no
+    database access, no property changes. Ranking reassessment reuses
+    the existing ranking engine.
+    """
+    try:
+        return build_dossiers(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_dossier_request"
         ) from exc

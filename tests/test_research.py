@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import app.agents.gabriel.research as research
 from app.agents.gabriel.planner import plan_initial_searches
@@ -374,6 +375,53 @@ def test_selection_picks_first_per_category_in_priority_order() -> None:
     assert len({a.category for a in selected}) == 3
 
 
+def test_selection_rotation_zero_matches_legacy() -> None:
+    from app.agents.gabriel.planner import SearchAssignment
+
+    assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
+    assert research.select_assignments(assignments, 0) == research.select_assignments(assignments)
+
+
+def test_selection_rotation_picks_nth_per_category() -> None:
+    from app.agents.gabriel.planner import SearchAssignment
+
+    assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
+    first = research.select_assignments(assignments, 0)
+    second = research.select_assignments(assignments, 1)
+    assert len(second) == 3
+    assert len({a.category for a in second}) == 3
+    assert [a.priority for a in second] == sorted(a.priority for a in second)
+    assert {a.id for a in first} != {a.id for a in second}
+
+
+def test_rotations_sweep_all_counties() -> None:
+    from app.agents.gabriel.geography import (
+        PRIMARY_COUNTY_DISPLAY,
+        secondary_county_names,
+    )
+    from app.agents.gabriel.planner import SearchAssignment
+
+    assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
+    covered = {
+        a.county
+        for rotation in range(4)
+        for a in research.select_assignments(assignments, rotation)
+    }
+    assert covered == {PRIMARY_COUNTY_DISPLAY, *secondary_county_names()}
+
+
+def test_selection_rejects_negative_rotation() -> None:
+    from app.agents.gabriel.planner import SearchAssignment
+
+    assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
+    with pytest.raises(research.ResearchError):
+        research.select_assignments(assignments, -1)
+    with pytest.raises(ValidationError):
+        research.ResearchRunRequest.model_validate(
+            {"assignments": _plan_assignments(), "rotation": -1}
+        )
+
+
 def test_selection_rejects_non_planner_input() -> None:
     from app.agents.gabriel.planner import SearchAssignment
 
@@ -422,6 +470,48 @@ def test_run_research_success(monkeypatch) -> None:
     assert len(result.results) == 3
     assert result.errors == []
     assert [e["query"] if isinstance(e, dict) else e.query for e in result.executed]
+
+
+def test_run_research_honors_rotation(monkeypatch) -> None:
+    _env(monkeypatch)
+    calls: list = []
+
+    def _execute(query, assignment_id, timeout):
+        from app.agents.gabriel.sources.brave import BraveSearchResult
+
+        calls.append(query)
+        return [
+            BraveSearchResult.model_validate(
+                {
+                    "assignment_id": assignment_id, "query": query, "title": "T",
+                    "url": "https://example.com/x", "snippet": "S", "domain": "example.com",
+                    "provider": "brave", "retrieved_at": "2026-10-27T00:00:00+00:00",
+                    "published_at": None, "rank": 1,
+                }
+            )
+        ]
+
+    monkeypatch.setattr(research, "execute_query", _execute)
+    spent = {"used": 0}
+
+    def _reserve(n):
+        spent["used"] += n
+        return {"used": spent["used"], "ceiling": 100,
+                "remaining": 100 - spent["used"], "month": "2026-10"}
+
+    monkeypatch.setattr(research, "reserve_requests", _reserve)
+    first = research.run_research(
+        research.ResearchRunRequest.model_validate({"assignments": _plan_assignments()})
+    )
+    rotated = research.run_research(
+        research.ResearchRunRequest.model_validate(
+            {"assignments": _plan_assignments(), "rotation": 1}
+        )
+    )
+    assert first.request_count == rotated.request_count == 3
+    assert [e.query for e in first.executed] != [e.query for e in rotated.executed]
+    assert any("Denton County" in query for query in calls)
+    assert any("Ellis County" in query for query in calls)
 
 
 def test_run_research_requires_database_first(monkeypatch) -> None:

@@ -14,11 +14,17 @@ Pipeline: planner assignments -> Brave results -> extractor intelligence
   explanations. Unknown evidence reduces completeness instead of scoring
   zero, and thin candidates are marked insufficient rather than ranked.
 
-Quality control screens out only obviously invalid leads (outside Dallas
-County, demolished, unsuitable structure, incompatible use, unidentifiable
-results) with auditable rules. Everything uncertain stays eligible as
-RESEARCH_REQUIRED with explicit next steps for Raphael, Onesimus, and
-Priscilla -- whose conclusions Gabriel never fabricates.
+Quality control screens out only obviously invalid leads (demolished,
+unsuitable structure, incompatible use, unidentifiable results) with
+auditable rules. Everything uncertain stays eligible as RESEARCH_REQUIRED
+with explicit next steps for Raphael, Onesimus, and Priscilla -- whose
+conclusions Gabriel never fabricates.
+
+Geography (MVP-004B-5 correction): the operating area is Dallas County
+(primary territory) plus six adjacent counties (secondary territory).
+Properties reliably outside all seven counties are DEFERRED from the
+active queue with evidence retained -- never silently discarded. Unknown
+county is never a disqualification.
 """
 
 from __future__ import annotations
@@ -35,8 +41,9 @@ from app.agents.gabriel.extractor import (
     TemporalStatus,
     group_by_property,
 )
+from app.agents.gabriel.geography import DALLAS_COUNTY, SECONDARY_COUNTIES
 
-RANKING_VERSION = "004B-4.1.0"
+RANKING_VERSION = "004B-5.0"
 
 # Initial product heuristics (not validated investment criteria).
 WEIGHT_VALUE = 0.30
@@ -56,21 +63,28 @@ COMPLETENESS_FLOOR = 0.50
 HIGH_VALUE_THRESHOLD = Decimal("10000000")
 MID_VALUE_THRESHOLD = Decimal("1000000")
 
-DALLAS_COUNTY = "dallas county"
-
 _SEVERE_DISTRESS = {"bankruptcy", "foreclosure", "receivership"}
 
 
 class CountyEligibility(str, Enum):
-    INSIDE_COUNTY = "inside_county"
-    OUTSIDE_COUNTY = "outside_county"
+    """Geographic research priority (MVP-004B-5 seven-county model).
+
+    Compatibility note: ``inside_county``/``outside_county`` from
+    MVP-004B-4 were replaced by ``primary_area``/``secondary_area``/
+    ``outside_operating_area``. ``county_unknown`` is unchanged.
+    """
+
+    PRIMARY_AREA = "primary_area"
+    SECONDARY_AREA = "secondary_area"
     COUNTY_UNKNOWN = "county_unknown"
+    OUTSIDE_OPERATING_AREA = "outside_operating_area"
 
 
 class QCStatus(str, Enum):
     PASS = "pass"
     RESEARCH_REQUIRED = "research_required"
     EXCLUDE = "exclude"
+    DEFERRED = "deferred"  # outside the operating area; evidence retained
 
 
 class FactorEvidence(BaseModel):
@@ -131,6 +145,7 @@ class RankedCandidate(BaseModel):
     county_evidence: str = ""
     qc_status: QCStatus = QCStatus.RESEARCH_REQUIRED
     exclusions: list[ExclusionRecord] = []
+    deferrals: list[ExclusionRecord] = []
     unresolved: list[str] = []
     next_steps: list[str] = []
     value_rank: int | None = None
@@ -306,13 +321,28 @@ def _assess_county(evidence: _CandidateEvidence) -> tuple[CountyEligibility, str
     if not distinct:
         return CountyEligibility.COUNTY_UNKNOWN, "no county evidence; municipality alone never assigns county"
     if distinct == [DALLAS_COUNTY]:
-        return CountyEligibility.INSIDE_COUNTY, "explicit 'Dallas County' evidence"
+        return CountyEligibility.PRIMARY_AREA, "explicit 'Dallas County' evidence (primary territory)"
     if len(distinct) == 1:
-        return CountyEligibility.OUTSIDE_COUNTY, f"explicit '{distinct[0]}' evidence"
+        only = distinct[0]
+        if only in SECONDARY_COUNTIES:
+            return CountyEligibility.SECONDARY_AREA, f"explicit '{only}' evidence (secondary territory)"
+        return CountyEligibility.OUTSIDE_OPERATING_AREA, f"explicit '{only}' evidence (outside operating area)"
+    evidence.contradictions.append(
+        f"conflicting county evidence ({', '.join(distinct)}); Raphael must determine which county holds the property"
+    )
     return (
         CountyEligibility.COUNTY_UNKNOWN,
         f"multiple counties mentioned ({', '.join(distinct)}); attribution ambiguous",
     )
+
+
+def _geo_priority(county: CountyEligibility) -> int:
+    """Deterministic ordering tiebreak only; never a score penalty."""
+    if county is CountyEligibility.PRIMARY_AREA:
+        return 2
+    if county is CountyEligibility.SECONDARY_AREA:
+        return 1
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -334,18 +364,6 @@ def _evaluate_qc(
     candidate: RankedCandidate, evidence: _CandidateEvidence, items: list[ResultIntelligence]
 ) -> None:
     identity = _identity_label(items, evidence.members)
-    if candidate.county is CountyEligibility.OUTSIDE_COUNTY:
-        county, item = evidence.counties[0]
-        candidate.exclusions.append(
-            ExclusionRecord(
-                rule="outside_dallas_county",
-                evidence=f"explicit county evidence '{county}'",
-                source_url=item.result_url,
-                why_sufficient="reliable county evidence places the property outside the research territory",
-                identity=identity,
-                date=_item_date(item),
-            )
-        )
     if "demolished" in evidence.structure:
         item, excerpt = evidence.structure["demolished"]
         candidate.exclusions.append(
@@ -387,6 +405,20 @@ def _evaluate_qc(
     if candidate.exclusions:
         candidate.qc_status = QCStatus.EXCLUDE
         return
+    if candidate.county is CountyEligibility.OUTSIDE_OPERATING_AREA:
+        county, item = evidence.counties[0]
+        candidate.deferrals.append(
+            ExclusionRecord(
+                rule="outside_operating_area",
+                evidence=f"explicit county evidence '{county}'",
+                source_url=item.result_url,
+                why_sufficient="reliable county evidence places the property outside the seven-county operating area",
+                identity=identity,
+                date=_item_date(item),
+            )
+        )
+        candidate.qc_status = QCStatus.DEFERRED
+        return
     candidate.unresolved.extend(evidence.unresolved)
     candidate.unresolved.extend(f"contradiction: {text}" for text in evidence.contradictions)
     if "proposed" in evidence.structure:
@@ -401,9 +433,13 @@ def _evaluate_qc(
 
 
 def _next_steps(candidate: RankedCandidate, evidence: _CandidateEvidence) -> list[str]:
+    if candidate.qc_status is QCStatus.DEFERRED:
+        return [
+            "Gabriel: retain as a deferred out-of-area lead; advance only if the operating area expands"
+        ]
     steps: list[str] = []
     if candidate.county is CountyEligibility.COUNTY_UNKNOWN:
-        steps.append("Raphael: verify Dallas County location via appraisal district or parcel records")
+        steps.append("Raphael: verify county location within the seven-county operating area via appraisal district or parcel records")
     if not evidence.asking:
         steps.append("Gabriel: seek a current advertised asking price from listing sources")
     if not evidence.occupancy:
@@ -674,30 +710,32 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
             )
         candidate.opportunity = _score_opportunity(evidence, items, downtown)
         ranking.candidates.append(candidate)
-    # Value ranking: priced, non-excluded candidates by asking price.
-    priced = [
+    # Value ranking: priced candidates in the active queue, by asking price.
+    # Deferred out-of-area leads keep their evidence but leave the queue.
+    queued = [
         candidate for candidate in ranking.candidates
-        if candidate.value_detail is not None and candidate.qc_status is not QCStatus.EXCLUDE
+        if candidate.qc_status not in (QCStatus.EXCLUDE, QCStatus.DEFERRED)
     ]
+    priced = [candidate for candidate in queued if candidate.value_detail is not None]
     priced.sort(key=lambda candidate: (Decimal(candidate.value_detail.amount), candidate.key), reverse=True)  # type: ignore[union-attr]
     for rank, candidate in enumerate(priced, start=1):
         candidate.value_rank = rank
         ranking.value_order.append(candidate.key)
     ranking.unpriced = sorted(
-        candidate.key for candidate in ranking.candidates
-        if candidate.value_detail is None and candidate.qc_status is not QCStatus.EXCLUDE
+        candidate.key for candidate in queued if candidate.value_detail is None
     )
-    # Opportunity ranking: sufficient, non-excluded candidates by score.
+    # Opportunity ranking: sufficient queued candidates by score, with a
+    # geographic tiebreak only (primary > secondary > unknown).
     scored = [
-        candidate for candidate in ranking.candidates
-        if candidate.opportunity.sufficient
-        and candidate.opportunity.score is not None
-        and candidate.qc_status is not QCStatus.EXCLUDE
+        candidate for candidate in queued
+        if candidate.opportunity.sufficient and candidate.opportunity.score is not None
     ]
-    scored.sort(key=lambda candidate: (candidate.opportunity.score, candidate.key), reverse=True)  # type: ignore[misc]
+    scored.sort(
+        key=lambda candidate: (candidate.opportunity.score, _geo_priority(candidate.county), candidate.key),  # type: ignore[misc]
+        reverse=True,
+    )
     ranking.opportunity_order = [candidate.key for candidate in scored]
     ranking.insufficient_data = sorted(
-        candidate.key for candidate in ranking.candidates
-        if not candidate.opportunity.sufficient and candidate.qc_status is not QCStatus.EXCLUDE
+        candidate.key for candidate in queued if not candidate.opportunity.sufficient
     )
     return ranking

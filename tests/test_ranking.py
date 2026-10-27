@@ -69,7 +69,7 @@ def test_a_high_value_listing_ranked_by_asking_price() -> None:
     )
     candidate = _only_candidate(ranking)
     assert candidate.qc_status is QCStatus.PASS
-    assert candidate.county is CountyEligibility.INSIDE_COUNTY
+    assert candidate.county is CountyEligibility.PRIMARY_AREA
     assert candidate.value_rank == 1
     assert candidate.value_detail is not None
     assert candidate.value_detail.amount == "40000000"
@@ -145,10 +145,10 @@ def test_d_vacancy_without_distress() -> None:
     assert "unknown" in " ".join(distress_factor.unknowns).lower()
 
 
-# --- Test E: outside Dallas County excluded ---
+# --- Test E: adjacent-county property stays eligible (MVP-004B-5 correction) ---
 
 
-def test_e_outside_county_excluded() -> None:
+def test_e_adjacent_county_eligible_secondary_area() -> None:
     ranking = _rank(
         _result(
             "Ridgmar Mall offices listed",
@@ -158,16 +158,10 @@ def test_e_outside_county_excluded() -> None:
         )
     )
     candidate = _only_candidate(ranking)
-    assert candidate.county is CountyEligibility.OUTSIDE_COUNTY
-    assert candidate.qc_status is QCStatus.EXCLUDE
-    assert len(candidate.exclusions) == 1
-    exclusion = candidate.exclusions[0]
-    assert exclusion.rule == "outside_dallas_county"
-    assert "Tarrant" in exclusion.evidence
-    assert exclusion.source_url == "https://example.com/ridgmar"
-    assert exclusion.why_sufficient
-    assert exclusion.identity
-    assert candidate.key not in ranking.opportunity_order
+    assert candidate.county is CountyEligibility.SECONDARY_AREA
+    assert candidate.qc_status is not QCStatus.EXCLUDE
+    assert candidate.exclusions == []
+    assert "secondary territory" in candidate.county_evidence
 
 
 # --- Test F: multi-county municipality stays unknown ---
@@ -464,7 +458,7 @@ def test_o_ranking_endpoint_additive(monkeypatch) -> None:
     )
     assert ranked.status_code == 200
     assert ranked.json()["ranking"] is not None
-    assert ranked.json()["ranking"]["ranking_version"] == "004B-4.1.0"
+    assert ranked.json()["ranking"]["ranking_version"] == "004B-5.0"
     assert len(brave_calls) == before + 3
     # Ranking without intelligence is rejected, not silently triggered.
     conflict = client.post(

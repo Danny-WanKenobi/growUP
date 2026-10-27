@@ -30,8 +30,8 @@ def _feedback(parent, outcome: FeedbackOutcome) -> ResearchFeedback:
 def test_default_plan_is_dallas_wide_and_balanced() -> None:
     plan = plan_initial_searches()
     assert len(plan) == 12
-    assert all(a.market.endswith("Dallas, TX") for a in plan)
-    assert sum(1 for a in plan if not a.downtown) == 9  # city-wide dominates
+    assert all(a.market.endswith(", TX") for a in plan)
+    assert sum(1 for a in plan if not a.downtown) == 8  # county-wide dominates
     for category in (
         PropertyCategory.HIGH_RISE,
         PropertyCategory.DOWNTOWN_COMMERCIAL,
@@ -203,3 +203,94 @@ def test_search_plan_rejects_invalid_budgets() -> None:
     assert client.get("/discovery/search-plan?per_category=0").status_code == 422
     response = client.get("/discovery/search-plan?total=9999")
     assert response.json() == {"detail": "invalid_plan_config"}
+
+
+# --- Seven-county coverage (MVP-004B-5 integration) ---
+
+
+def _all_counties() -> set:
+    from app.agents.gabriel.geography import (
+        PRIMARY_COUNTY_DISPLAY,
+        secondary_county_names,
+    )
+
+    return {PRIMARY_COUNTY_DISPLAY, *secondary_county_names()}
+
+
+def test_default_plan_covers_all_seven_counties() -> None:
+    plan = plan_initial_searches()
+    assert {a.county for a in plan} == _all_counties()
+    assert len(plan) == 12  # full coverage at no extra search cost
+    for assignment in plan:
+        if assignment.downtown and assignment.county == "Dallas County":
+            assert assignment.market == "Downtown Dallas, TX"
+        else:
+            assert assignment.county in assignment.market
+        assert assignment.market in assignment.query
+
+
+def test_dallas_county_holds_primary_priority() -> None:
+    from app.agents.gabriel.geography import PRIMARY_COUNTY_DISPLAY
+
+    plan = plan_initial_searches()
+    assert plan[0].county == PRIMARY_COUNTY_DISPLAY
+    dallas = [a for a in plan if a.county == PRIMARY_COUNTY_DISPLAY]
+    assert len(dallas) >= len(plan) // 2
+    for category in (
+        PropertyCategory.HIGH_RISE,
+        PropertyCategory.DOWNTOWN_COMMERCIAL,
+        PropertyCategory.WAREHOUSE_INDUSTRIAL,
+    ):
+        assert any(
+            a.category is category and a.county == PRIMARY_COUNTY_DISPLAY for a in plan
+        )
+
+
+def test_county_coverage_matches_ranking_territory() -> None:
+    from app.agents.gabriel.geography import secondary_county_names
+    from app.agents.gabriel.ranking import SECONDARY_COUNTIES
+
+    # Planner rotation derives from the shared constants: no drift possible.
+    assert {name.lower() for name in secondary_county_names()} == set(SECONDARY_COUNTIES)
+    plan = plan_initial_searches(PlannerConfig(total_max_queries=24, per_category_max=8))
+    assert {a.county for a in plan} == _all_counties()
+
+
+def test_dallas_only_mode_available() -> None:
+    from app.agents.gabriel.geography import PRIMARY_COUNTY_DISPLAY
+
+    plan = plan_initial_searches(PlannerConfig(include_secondary_counties=False))
+    assert len(plan) == 12
+    assert {a.county for a in plan} == {PRIMARY_COUNTY_DISPLAY}
+
+
+def test_downtown_secondary_across_counties() -> None:
+    plan = plan_initial_searches(PlannerConfig(total_max_queries=24, per_category_max=8))
+    downtown = [a for a in plan if a.downtown]
+    assert 0 < len(downtown) < len(plan) / 2
+    assert all(a.market.startswith("Downtown ") for a in downtown)
+    assert len({a.county for a in downtown}) >= 2
+    dallas_downtown = [a for a in downtown if a.county == "Dallas County"]
+    assert dallas_downtown
+    assert all(a.market == "Downtown Dallas, TX" for a in dallas_downtown)
+
+
+def test_followups_stay_in_parent_county() -> None:
+    plan = plan_initial_searches()
+    secondary_parent = next(a for a in plan if a.county == "Tarrant County")
+    children = plan_followups(secondary_parent, _feedback(secondary_parent, FeedbackOutcome.PROMISING))
+    assert children
+    assert all(child.county == "Tarrant County" for child in children)
+    assert all("Tarrant County" in child.query for child in children)
+    legacy = secondary_parent.model_copy(update={"county": ""})
+    assert plan_followups(legacy, _feedback(legacy, FeedbackOutcome.NO_RESULTS))[0].county == "Dallas County"
+
+
+def test_search_plan_endpoint_secondary_toggle() -> None:
+    response = client.get("/discovery/search-plan?secondary_counties=false")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 12
+    assert {item["county"] for item in body} == {"Dallas County"}
+    default = client.get("/discovery/search-plan")
+    assert {item["county"] for item in default.json()} == _all_counties()
