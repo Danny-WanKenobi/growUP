@@ -11,13 +11,18 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 
 import app.external_actions_db as ledger
 from app.db import DatabaseUnavailableError
+from app.identity import (
+    AuthenticationFailedError,
+    canonical_identity_name,
+    sign_approval,
+)
 from app.observability import AgentId
 
 _T0 = datetime(2026, 10, 27, 12, 0, 0, tzinfo=timezone.utc)
@@ -25,18 +30,98 @@ _T0 = datetime(2026, 10, 27, 12, 0, 0, tzinfo=timezone.utc)
 _LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
 needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
 
+_TEST_OPERATORS = ("operator-alice", "operator-bob")
+_TEST_CREDS: dict[str, str] = {}  # canonical name -> private hex, per-test only
 
-def _auth(**overrides):
+# Test-only executor secrets (clearly fake, never production). Every
+# executor id used below must appear here; unknown ids fail closed.
+_TEST_EXECUTORS = {
+    "w-1": "test-only-executor-secret-w-1-aaaabbbbcccc",
+    "w-2": "test-only-executor-secret-w-2-aaaabbbbcccc",
+    "w-9": "test-only-executor-secret-w-9-aaaabbbbcccc",
+    "worker-1": "test-only-executor-secret-worker-1-aaaa",
+    "live-w-1": "test-only-executor-secret-live-w-1-aa",
+    **{f"worker-{n}": f"test-only-executor-secret-w{n:02d}-aaaaaaaa"
+       for n in range(8)},
+}
+
+
+def _generate_keypair():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private = Ed25519PrivateKey.generate()
+    return private.private_bytes_raw().hex(), private.public_key().public_bytes_raw().hex()
+
+
+@pytest.fixture(autouse=True)
+def _enrolled_test_identities(monkeypatch):
+    """Enroll fresh operator keys + executor map for every test.
+
+    Operator private keys are runtime-generated and confined to the
+    calling test. ``_auth()`` signs with them and ``_claim()`` proves
+    with the executor map; tests needing no enrollment delete env vars.
+    """
+    _TEST_CREDS.clear()
+    entries = []
+    for name in _TEST_OPERATORS:
+        priv, pub = _generate_keypair()
+        _TEST_CREDS[name] = priv
+        entries.append(f"{name}:{pub}")
+    monkeypatch.setenv("AUTHORIZER_PUBLIC_KEYS", ",".join(entries))
+    monkeypatch.setenv(
+        "EXECUTOR_KEYS",
+        ",".join(f"{i}:{s}" for i, s in _TEST_EXECUTORS.items()),
+    )
+    yield
+    _TEST_CREDS.clear()
+
+
+def _auth(name="operator-alice", sign=True, **overrides):
     base = {
         "idempotency_key": f"key-{uuid4().hex}",
         "action_type": "outreach_email",
         "agent": AgentId.MICHAEL,
         "request": {"template": "owner_intro"},
-        "authorized_by": "operator:alice",
+        "authorized_by": name,
         "authorization_reference": "ticket-123",
     }
     base.update(overrides)
+    issued = base.pop("issued_at", None) or datetime.now(timezone.utc)
+    expires = base.pop("expires_at", None) or (issued + timedelta(hours=1))
+    if sign:
+        canonical = canonical_identity_name(base["authorized_by"])
+        fingerprint = ledger.canonical_request_fingerprint(
+            base["action_type"],
+            base["agent"],
+            base.get("property_id"),
+            base["request"],
+            canonical,
+            base["authorization_reference"],
+        )
+        signature = sign_approval(
+            private_key_hex=_TEST_CREDS[canonical],
+            idempotency_key=base["idempotency_key"],
+            request_fingerprint=fingerprint,
+            authorized_by=canonical,
+            authorization_reference=base["authorization_reference"],
+            issued_at=issued,
+            expires_at=expires,
+        )
+    else:
+        signature = "00" * 64  # never inspected: shape errors precede verification
+    base["authorization_signature"] = signature
+    base["authorization_issued_at"] = issued
+    base["authorization_expires_at"] = expires
     return base
+
+
+def _claim(action_id, executor="w-1", proof=None):
+    """Claim through the real API with this file's enrolled proofs."""
+    return ledger.claim_action(
+        action_id=action_id,
+        executor_id=executor,
+        executor_proof=_TEST_EXECUTORS[executor] if proof is None else proof,
+    )
 
 
 class _LifeTables:
@@ -253,9 +338,7 @@ def test_claim_success_creates_attempt_and_audit(monkeypatch) -> None:
     conn = _LifeConn(tables)
     monkeypatch.setattr(ledger, "get_connection", lambda config=None: conn)
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
-    result = ledger.claim_action(
-        action_id=action["action_id"], executor_id="worker-1"
-    )
+    result = _claim(action["action_id"], "worker-1")
     assert result.claimed is True
     assert result.action["state"] == "ATTEMPTING"
     assert result.action["attempt_count"] == 1
@@ -276,7 +359,7 @@ def test_claim_loses_quietly_when_not_pending(monkeypatch) -> None:
     conn = _LifeConn(tables)
     monkeypatch.setattr(ledger, "get_connection", lambda config=None: conn)
     before = len(_audits(conn))
-    lost = ledger.claim_action(action_id=action["action_id"], executor_id="worker-1")
+    lost = _claim(action["action_id"], "worker-1")
     assert lost.claimed is False
     assert lost.attempt is None
     assert lost.action["state"] == "AUTHORIZED"  # context, not authorization
@@ -289,7 +372,7 @@ def test_claim_unknown_action_loses_with_no_row(monkeypatch) -> None:
     monkeypatch.setattr(
         ledger, "get_connection", lambda config=None: _LifeConn(tables)
     )
-    lost = ledger.claim_action(action_id=uuid4(), executor_id="worker-1")
+    lost = _claim(uuid4(), "worker-1")
     assert (lost.claimed, lost.action, lost.attempt) == (False, None, None)
 
 
@@ -299,8 +382,8 @@ def test_repeated_claim_second_loses(monkeypatch) -> None:
         ledger, "get_connection", lambda config=None: _LifeConn(tables)
     )
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
-    first = ledger.claim_action(action_id=action["action_id"], executor_id="w-1")
-    second = ledger.claim_action(action_id=action["action_id"], executor_id="w-2")
+    first = _claim(action["action_id"], "w-1")
+    second = _claim(action["action_id"], "w-2")
     assert (first.claimed, second.claimed) == (True, False)
     assert second.action["state"] == "ATTEMPTING"
     assert len(tables.attempts) == 1
@@ -318,9 +401,7 @@ def test_concurrent_claims_single_winner(monkeypatch) -> None:
     def _race(n):
         try:
             results.append(
-                ledger.claim_action(
-                    action_id=action["action_id"], executor_id=f"worker-{n}"
-                )
+                _claim(action["action_id"], f"worker-{n}")
             )
         except Exception as exc:  # pragma: no cover - must not happen
             errors.append(exc)
@@ -339,9 +420,11 @@ def test_concurrent_claims_single_winner(monkeypatch) -> None:
 def test_claim_validates_before_io(monkeypatch) -> None:
     _, made = _factory(monkeypatch)
     with pytest.raises(ValueError):
-        ledger.claim_action(action_id="not-a-uuid", executor_id="w-1")
+        _claim("not-a-uuid", "w-1")
     with pytest.raises(ValueError):
-        ledger.claim_action(action_id=uuid4(), executor_id="  ")
+        ledger.claim_action(
+            action_id=uuid4(), executor_id="  ", executor_proof="unused-proof"
+        )
     assert made == []
 
 
@@ -352,7 +435,7 @@ def test_claim_audit_failure_rolls_back(monkeypatch) -> None:
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
     conn.audit_fails = DatabaseUnavailableError("event_insert_failed")
     with pytest.raises(DatabaseUnavailableError):
-        ledger.claim_action(action_id=action["action_id"], executor_id="w-1")
+        _claim(action["action_id"])
     assert conn.commits == 1 and conn.rollbacks == 1  # enqueue kept, claim rolled back
 
 
@@ -363,7 +446,7 @@ def test_claim_commit_failure_reports_failure(monkeypatch) -> None:
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
     conn.commit_fails = True
     with pytest.raises(DatabaseUnavailableError, match="claim_failed"):
-        ledger.claim_action(action_id=action["action_id"], executor_id="w-1")
+        _claim(action["action_id"])
 
 
 # --- Outcomes ---
@@ -375,7 +458,7 @@ def _setup_attempting(monkeypatch):
         ledger, "get_connection", lambda config=None: _LifeConn(tables)
     )
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
-    claim = ledger.claim_action(action_id=action["action_id"], executor_id="w-1")
+    claim = _claim(action["action_id"])
     return tables, action, claim
 
 
@@ -442,7 +525,7 @@ def test_stale_attempt_ids_rejected(monkeypatch) -> None:
     other_auth = ledger.record_authorization(**_auth())
     other_id = other_auth.action["action_id"]
     ledger.transition_action(action_id=other_id, to_state="PENDING")
-    other_claim = ledger.claim_action(action_id=other_id, executor_id="w-9")
+    other_claim = _claim(other_id, "w-9")
     with pytest.raises(ledger.StaleAttemptError):
         ledger.transition_action(
             action_id=action["action_id"],
@@ -503,7 +586,7 @@ def test_transition_audit_failure_rolls_back(monkeypatch) -> None:
 
 def test_no_automatic_retry_after_attempting(monkeypatch) -> None:
     tables, action, claim = _setup_attempting(monkeypatch)
-    lost = ledger.claim_action(action_id=action["action_id"], executor_id="w-2")
+    lost = _claim(action["action_id"], "w-2")
     assert lost.claimed is False  # ATTEMPTING actions are never re-claimed
     assert len(tables.attempts) == 1
     with pytest.raises(ValueError):
@@ -579,7 +662,7 @@ def test_full_lifecycle_four_audits(monkeypatch) -> None:
     conn = _LifeConn(tables)
     monkeypatch.setattr(ledger, "get_connection", lambda config=None: conn)
     ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
-    claim = ledger.claim_action(action_id=action["action_id"], executor_id="w-1")
+    claim = _claim(action["action_id"])
     ledger.transition_action(
         action_id=action["action_id"],
         to_state="SUCCEEDED",
@@ -611,7 +694,7 @@ def test_postgresql_unavailable_fails_closed(monkeypatch) -> None:
         monkeypatch, exc=DatabaseUnavailableError("connection_failed")
     )
     with pytest.raises(DatabaseUnavailableError, match="connection_failed"):
-        ledger.claim_action(action_id=uuid4(), executor_id="w-1")
+        _claim(uuid4())
     with pytest.raises(DatabaseUnavailableError, match="connection_failed"):
         ledger.transition_action(action_id=uuid4(), to_state="PENDING")
 
@@ -646,6 +729,95 @@ def test_module_defines_no_execution_or_retry_surface() -> None:
             for stem in ("retry", "worker", "execut", "send", "perform", "outreach",
                          "deliver", "publish", "background", "schedul", "poll", "reconcile")
         ), name
+
+
+# --- Claim identity boundary (3C-3B-2A) ---
+
+
+def test_claim_bad_proof_denied_before_connection(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    conn = _LifeConn(tables)
+    _, made = _factory(monkeypatch, tables=tables, conn=conn)
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    calls_before = len(made)
+    with pytest.raises(AuthenticationFailedError, match="mismatch"):
+        ledger.claim_action(
+            action_id=action["action_id"],
+            executor_id="w-1",
+            executor_proof="wrong-proof-0000000000000000",
+        )
+    assert len(made) == calls_before  # denied before any connection opened
+    assert tables.by_id[action["action_id"]]["state"] == "PENDING"
+    assert tables.attempts == {}
+
+
+def test_claim_unknown_executor_denied_without_mutation(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    monkeypatch.setattr(
+        ledger, "get_connection", lambda config=None: _LifeConn(tables)
+    )
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    with pytest.raises(AuthenticationFailedError, match="unknown executor"):
+        ledger.claim_action(
+            action_id=action["action_id"],
+            executor_id="ghost-9",
+            executor_proof="test-only-ghost-proof-00000000",
+        )
+    assert tables.by_id[action["action_id"]]["state"] == "PENDING"
+    assert tables.attempts == {}
+
+
+def test_claim_missing_enrollment_denied(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    monkeypatch.setattr(
+        ledger, "get_connection", lambda config=None: _LifeConn(tables)
+    )
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    monkeypatch.delenv("EXECUTOR_KEYS", raising=False)
+    with pytest.raises(AuthenticationFailedError, match="unknown executor"):
+        _claim(action["action_id"], "w-1")
+    assert tables.by_id[action["action_id"]]["state"] == "PENDING"
+
+
+def test_claim_cross_role_human_signature_denied(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    monkeypatch.setattr(
+        ledger, "get_connection", lambda config=None: _LifeConn(tables)
+    )
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    args = _auth()  # a valid human approval signature is not executor proof
+    with pytest.raises(AuthenticationFailedError, match="unknown executor"):
+        ledger.claim_action(
+            action_id=action["action_id"],
+            executor_id="operator-alice",
+            executor_proof=args["authorization_signature"],
+        )
+    assert tables.by_id[action["action_id"]]["state"] == "PENDING"
+
+
+def test_claim_proof_never_persisted(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    conn = _LifeConn(tables)
+    monkeypatch.setattr(ledger, "get_connection", lambda config=None: conn)
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    _claim(action["action_id"], "w-1")
+    blob = json.dumps(conn.statements, default=str)
+    assert _TEST_EXECUTORS["w-1"] not in blob
+
+
+def test_claim_canonicalizes_executor(monkeypatch) -> None:
+    tables, action = _setup_authorized(monkeypatch)
+    monkeypatch.setattr(
+        ledger, "get_connection", lambda config=None: _LifeConn(tables)
+    )
+    ledger.transition_action(action_id=action["action_id"], to_state="PENDING")
+    result = ledger.claim_action(
+        action_id=action["action_id"],
+        executor_id="W-1",
+        executor_proof=_TEST_EXECUTORS["w-1"],
+    )
+    assert result.claimed is True
+    assert result.attempt["executor_id"] == "w-1"  # stored canonical
 
 
 # --- Gated PostgreSQL-backed integration ---
@@ -691,7 +863,7 @@ def test_live_full_lifecycle_to_succeeded() -> None:
         assert ledger.transition_action(
             action_id=action_id, to_state="PENDING"
         )["state"] == "PENDING"
-        claim = ledger.claim_action(action_id=action_id, executor_id="live-w-1")
+        claim = _claim(action_id, "live-w-1")
         assert claim.claimed is True
         assert claim.attempt["attempt_number"] == 1
         assert ledger.transition_action(
@@ -736,9 +908,7 @@ def test_live_concurrent_claims_single_winner() -> None:
         def _race(n):
             try:
                 results.append(
-                    ledger.claim_action(
-                        action_id=action_id, executor_id=f"live-w-{n}"
-                    )
+                    _claim(action_id, "live-w-1")
                 )
             except Exception as exc:
                 errors.append(exc)
@@ -779,9 +949,43 @@ def test_live_claim_rollback_leaves_pending_without_attempt() -> None:
                 DatabaseUnavailableError("event_insert_failed")
             )
             with pytest.raises(DatabaseUnavailableError):
-                ledger.claim_action(action_id=action_id, executor_id="live-w-1")
+                _claim(action_id, "live-w-1")
         finally:
             ledger.insert_event_in_transaction = real_insert
+        from app.properties_db import get_connection
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT state, attempt_count FROM external_actions WHERE action_id = %(id)s",
+                    {"id": action_id},
+                )
+                row = cur.fetchone()
+                assert (row["state"], row["attempt_count"]) == ("PENDING", 0)
+                cur.execute(
+                    "SELECT count(*) AS n FROM external_action_attempts WHERE action_id = %(id)s",
+                    {"id": action_id},
+                )
+                assert cur.fetchone()["n"] == 0
+    finally:
+        _live_cleanup([action_id] if action_id else [], [key])
+
+
+@needs_live_pg
+def test_live_wrong_proof_claim_leaves_pending_without_attempt() -> None:
+    _live_config()
+    key = f"live-3cb1-{uuid4().hex}"
+    action_id = None
+    try:
+        created = ledger.record_authorization(**_auth(idempotency_key=key))
+        action_id = created.action["action_id"]
+        ledger.transition_action(action_id=action_id, to_state="PENDING")
+        with pytest.raises(AuthenticationFailedError, match="mismatch"):
+            ledger.claim_action(
+                action_id=action_id,
+                executor_id="live-w-1",
+                executor_proof="wrong-proof-0000000000000000",
+            )
         from app.properties_db import get_connection
 
         with get_connection() as conn:
@@ -810,7 +1014,7 @@ def test_live_stale_replay_and_unknown_freeze() -> None:
         created = ledger.record_authorization(**_auth(idempotency_key=key))
         action_id = created.action["action_id"]
         ledger.transition_action(action_id=action_id, to_state="PENDING")
-        claim = ledger.claim_action(action_id=action_id, executor_id="live-w-1")
+        claim = _claim(action_id, "live-w-1")
         assert ledger.transition_action(
             action_id=action_id,
             to_state="UNKNOWN",

@@ -44,18 +44,28 @@ fails closed: the SQLite observability outbox can preserve an audit
 trail, but an outbox row can never authorize an external action,
 because it cannot join the PostgreSQL authorization transaction.
 
-Principal-verification LIMITATION (read before exposing this): the
-``authorized_by`` value is a CLAIMED principal string. No
-authenticated-principal verification exists yet, so a caller-supplied
-string is recorded as claimed, never as proven. This interface is
-internal-only: it must not be exposed through an API route or
-represented as a fully secure authorization system until verified
-principal binding exists. The claimed principal is bound into the
-idempotency fingerprint, so a submission under a different principal
-conflicts loudly instead of replaying another principal's row -- but
-unpredictable per-authorization keys (e.g. UUIDs) remain required,
-since key squatting can still force a victim's submission to
-conflict.
+Verified identity (Phase 3C-3B-2A): ``authorized_by`` and
+``executor_id`` are server-resolved from verification, never echoed
+from caller claims. Human authorization requires an Ed25519 approval
+signature over the exact approval, verified against enrolled
+operator public keys; executor claims require the enrolled service
+credential. Forged names, constructed principal objects, and bare
+strings confer nothing -- the ledger verifies proofs itself before
+any database mutation. Authentication (who) and authorization policy
+(may a human authorize / may an executor claim) are explicit,
+separate steps in :mod:`app.identity`.
+
+LIMITATIONS (read before exposing this): this interface is
+internal-only and must not be exposed through an API route. Human
+private keys never enter this process, so human approvals are
+unforgeable even in-process; executor service secrets live in the
+process environment (like all service secrets here), so executor
+verification holds against external and credential-less callers but
+not against arbitrary malicious code inside this same process --
+service-process separation is the documented future hardening (see
+:mod:`app.identity`). Unpredictable per-authorization idempotency
+keys (e.g. UUIDs) remain required, since key squatting can still
+force a victim's submission to conflict.
 
 Security: the raw ``request`` details are NEVER stored -- only the
 fingerprint hash. Audit details carry validated identifiers and the
@@ -69,12 +79,22 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
 from app.config import DatabaseConfig
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
+from app.identity import (
+    AuthenticationFailedError,
+    AuthorizationDeniedError,
+    canonical_identity_name,
+    ensure_may_authorize,
+    ensure_may_claim,
+    verify_executor,
+    verify_human_approval,
+)
 from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
 from app.observability.store import insert_event_in_transaction
 from app.properties_db import get_connection
@@ -260,6 +280,9 @@ def record_authorization(
     request: dict[str, Any],
     authorized_by: str,
     authorization_reference: str,
+    authorization_signature: str,
+    authorization_issued_at: datetime,
+    authorization_expires_at: datetime,
     property_id: UUID | str | None = None,
     config: DatabaseConfig | None = None,
 ) -> AuthorizationResult:
@@ -273,17 +296,20 @@ def record_authorization(
     reuse with a different request, principal, or reference:
     raises :class:`IdempotencyConflictError`.
 
-    All validation (identities, references, fingerprint, audit event)
-    completes BEFORE any connection opens. If PostgreSQL is
-    unavailable the call fails closed -- no SQLite authorization
-    fallback exists, by design. The ``authorized_by`` principal is
-    recorded as CLAIMED (see module docstring): this function must
-    not be exposed through an API route until verified principal
-    binding exists.
+    Identity is verified, not claimed: ``authorized_by`` is only the
+    claimed handle -- the Ed25519 ``authorization_signature`` over
+    this exact approval (including its ``authorization_issued_at`` /
+    ``authorization_expires_at`` lifetime) must verify against an
+    enrolled authorizer public key, and the STORED principal is the
+    server-resolved canonical name. Constructing a principal object
+    or supplying a bare name confers nothing; verification happens
+    here, before any connection opens. Authentication or policy
+    denial raises before any ledger or audit mutation. This function
+    must not be exposed through an API route (see module docstring).
     """
     key = _require_text(idempotency_key, "idempotency_key", MAX_IDEMPOTENCY_KEY_CHARS)
     kind = _require_text(action_type, "action_type", MAX_ACTION_TYPE_CHARS)
-    principal = _require_text(authorized_by, "authorized_by", MAX_PRINCIPAL_CHARS)
+    _require_text(authorized_by, "authorized_by", MAX_PRINCIPAL_CHARS)
     reference = _require_text(
         authorization_reference, "authorization_reference", MAX_REFERENCE_CHARS
     )
@@ -292,9 +318,21 @@ def record_authorization(
     except ValueError as exc:
         raise ValueError(f"unknown agent: {agent!r}") from exc
     prop_id = _coerce_property_id(property_id)
+    claimed_name = canonical_identity_name(authorized_by)
     fingerprint = canonical_request_fingerprint(
-        kind, agent_id, prop_id, request, principal, reference
+        kind, agent_id, prop_id, request, claimed_name, reference
     )
+    verified = verify_human_approval(
+        claimed_name=claimed_name,
+        idempotency_key=key,
+        request_fingerprint=fingerprint,
+        authorization_reference=reference,
+        issued_at=authorization_issued_at,
+        expires_at=authorization_expires_at,
+        signature_hex=authorization_signature,
+    )
+    ensure_may_authorize(verified)
+    principal = verified.name
     action_id = uuid4()
     audit = AgentEvent(
         agent=agent_id,
@@ -311,6 +349,8 @@ def record_authorization(
             "authorized_by": principal,
             "authorization_reference": reference,
             "state": ActionState.AUTHORIZED.value,
+            "principal_type": "human",
+            "auth_method": verified.method,
         },
         correlation_id=key,
         property_id=prop_id,
@@ -355,7 +395,12 @@ def record_authorization(
             conn.commit()
             _quiet_close(conn)
             return AuthorizationResult(action=action, created=True)
-    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+    except (
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
+    ):
         _quiet_rollback(conn)
         _quiet_close(conn)
         raise
@@ -442,6 +487,7 @@ def claim_action(
     *,
     action_id: UUID | str,
     executor_id: str,
+    executor_proof: str,
     config: DatabaseConfig | None = None,
 ) -> ClaimResult:
     """Atomically claim one PENDING action (PENDING -> ATTEMPTING).
@@ -454,12 +500,19 @@ def claim_action(
     event in the same transaction.
 
     A claim authorizes proceeding to a FUTURE execution phase. It
-    performs no external request. ``executor_id`` is caller-claimed
-    bookkeeping, not an authenticated identity (verified binding is
-    3C-3B-2 work). Lost claims write nothing and raise nothing.
+    performs no external request. ``executor_id`` is only the claimed
+    handle -- ``executor_proof`` must verify against the enrolled
+    executor credential, and the STORED id is the server-resolved
+    canonical value. Verification runs before any connection opens;
+    denial raises before any ledger or audit mutation. Lost claims
+    write nothing and raise nothing.
     """
     aid = _coerce_uuid(action_id, "action_id")
-    executor = _require_text(executor_id, "executor_id", MAX_EXECUTOR_CHARS)
+    _require_text(executor_id, "executor_id", MAX_EXECUTOR_CHARS)
+    claimed_id = canonical_identity_name(executor_id)
+    verified = verify_executor(executor_id=claimed_id, proof=executor_proof)
+    ensure_may_claim(verified)
+    executor = verified.executor_id
     conn = get_connection(config)
     try:
         with conn.cursor() as cur:
@@ -517,11 +570,20 @@ def claim_action(
                 "executor_id": executor,
                 "from_state": ActionState.PENDING.value,
                 "to_state": ActionState.ATTEMPTING.value,
+                "principal_type": "executor",
+                "auth_method": verified.method,
             },
         )
         insert_event_in_transaction(conn, audit)
         conn.commit()
-    except (DatabaseNotConfiguredError, DatabaseUnavailableError, ValueError, TypeError):
+    except (
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
+        ValueError,
+        TypeError,
+    ):
         _quiet_rollback(conn)
         _quiet_close(conn)
         raise

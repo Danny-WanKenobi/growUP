@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 
 import app.external_actions_db as ledger
 from app.db import DatabaseUnavailableError
+from app.identity import (
+    AuthenticationFailedError,
+    canonical_identity_name,
+    sign_approval,
+)
 from app.observability import AgentId
 
 _T0 = datetime(2026, 10, 27, 12, 0, 0, tzinfo=timezone.utc)
@@ -25,17 +30,72 @@ _T0 = datetime(2026, 10, 27, 12, 0, 0, tzinfo=timezone.utc)
 _LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
 needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
 
+_TEST_OPERATORS = ("operator-alice", "operator-bob")
+_TEST_CREDS: dict[str, str] = {}  # canonical name -> private hex, per-test only
 
-def _auth(**overrides):
+
+def _generate_keypair():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private = Ed25519PrivateKey.generate()
+    return private.private_bytes_raw().hex(), private.public_key().public_bytes_raw().hex()
+
+
+@pytest.fixture(autouse=True)
+def _enrolled_test_operators(monkeypatch):
+    """Enroll fresh runtime-generated operator keys for every test.
+
+    Private keys exist only in this process and only for the calling
+    test (monkeypatch-confined enrollment + cleared dict). ``_auth()``
+    signs with them; tests needing no enrollment delete the env vars.
+    """
+    _TEST_CREDS.clear()
+    entries = []
+    for name in _TEST_OPERATORS:
+        priv, pub = _generate_keypair()
+        _TEST_CREDS[name] = priv
+        entries.append(f"{name}:{pub}")
+    monkeypatch.setenv("AUTHORIZER_PUBLIC_KEYS", ",".join(entries))
+    yield
+    _TEST_CREDS.clear()
+
+
+def _auth(name="operator-alice", sign=True, **overrides):
     base = {
         "idempotency_key": f"key-{uuid4().hex}",
         "action_type": "outreach_email",
         "agent": AgentId.MICHAEL,
         "request": {"template": "owner_intro", "property_ref": "prop-1"},
-        "authorized_by": "operator:alice",
+        "authorized_by": name,
         "authorization_reference": "ticket-123",
     }
     base.update(overrides)
+    issued = base.pop("issued_at", None) or datetime.now(timezone.utc)
+    expires = base.pop("expires_at", None) or (issued + timedelta(hours=1))
+    if sign:
+        canonical = canonical_identity_name(base["authorized_by"])
+        fingerprint = ledger.canonical_request_fingerprint(
+            base["action_type"],
+            base["agent"],
+            base.get("property_id"),
+            base["request"],
+            canonical,
+            base["authorization_reference"],
+        )
+        signature = sign_approval(
+            private_key_hex=_TEST_CREDS[canonical],
+            idempotency_key=base["idempotency_key"],
+            request_fingerprint=fingerprint,
+            authorized_by=canonical,
+            authorization_reference=base["authorization_reference"],
+            issued_at=issued,
+            expires_at=expires,
+        )
+    else:
+        signature = "00" * 64  # never inspected: shape errors precede verification
+    base["authorization_signature"] = signature
+    base["authorization_issued_at"] = issued
+    base["authorization_expires_at"] = expires
     return base
 
 
@@ -155,7 +215,7 @@ def test_successful_authorization_creation(monkeypatch) -> None:
     assert action["action_type"] == "outreach_email"
     assert action["agent"] == "michael"
     assert action["property_id"] == prop
-    assert action["authorized_by"] == "operator:alice"
+    assert action["authorized_by"] == "operator-alice"
     assert action["authorization_reference"] == "ticket-123"
     assert action["state"] == "AUTHORIZED"
     assert action["attempt_count"] == 0
@@ -241,9 +301,12 @@ def test_duplicate_key_conflicting_request_rejected(monkeypatch) -> None:
     conn, _ = _factory(monkeypatch)
     args = _auth()
     ledger.record_authorization(**args)
-    args["request"] = {"template": "different_template"}
+    clash = _auth(
+        idempotency_key=args["idempotency_key"],
+        request={"template": "different_template"},
+    )
     with pytest.raises(ledger.IdempotencyConflictError, match="different request"):
-        ledger.record_authorization(**args)
+        ledger.record_authorization(**clash)
     assert len(_audit_inserts(conn)) == 1
     assert (conn.commits, conn.rollbacks) == (1, 1)
 
@@ -252,20 +315,22 @@ def test_duplicate_key_different_principal_rejected(monkeypatch) -> None:
     conn, _ = _factory(monkeypatch)
     args = _auth()
     first = ledger.record_authorization(**args)
-    args["authorized_by"] = "operator:bob"  # same key, same request
+    clash = _auth("operator-bob", idempotency_key=args["idempotency_key"])
     with pytest.raises(ledger.IdempotencyConflictError, match="different request"):
-        ledger.record_authorization(**args)
+        ledger.record_authorization(**clash)
     assert len(_audit_inserts(conn)) == 1  # no audit for the rejected claim
-    assert first.action["authorized_by"] == "operator:alice"  # original untouched
+    assert first.action["authorized_by"] == "operator-alice"  # original untouched
 
 
 def test_duplicate_key_different_reference_rejected(monkeypatch) -> None:
     conn, _ = _factory(monkeypatch)
     args = _auth()
     ledger.record_authorization(**args)
-    args["authorization_reference"] = "ticket-999"  # same key, request, principal
+    clash = _auth(
+        idempotency_key=args["idempotency_key"], authorization_reference="ticket-999"
+    )
     with pytest.raises(ledger.IdempotencyConflictError, match="different request"):
-        ledger.record_authorization(**args)
+        ledger.record_authorization(**clash)
     assert len(_audit_inserts(conn)) == 1
 
 
@@ -340,7 +405,7 @@ def test_missing_authorization_identity_rejected(monkeypatch) -> None:
     _, made = _factory(monkeypatch)
     for field in ("authorized_by", "authorization_reference", "idempotency_key", "action_type"):
         for bad in (None, "", "   "):
-            args = _auth(**{field: bad})
+            args = _auth(sign=False, **{field: bad})
             with pytest.raises(ValueError):
                 ledger.record_authorization(**args)
     assert made == []
@@ -349,17 +414,17 @@ def test_missing_authorization_identity_rejected(monkeypatch) -> None:
 def test_oversized_and_mistyped_inputs_rejected(monkeypatch) -> None:
     _, made = _factory(monkeypatch)
     with pytest.raises(ValueError):
-        ledger.record_authorization(**_auth(idempotency_key="k" * 129))
+        ledger.record_authorization(**_auth(sign=False, idempotency_key="k" * 129))
     with pytest.raises(ValueError):
-        ledger.record_authorization(**_auth(authorized_by="p" * 201))
+        ledger.record_authorization(**_auth(sign=False, authorized_by="p" * 201))
     with pytest.raises(ValueError):
-        ledger.record_authorization(**_auth(agent="mallory"))
+        ledger.record_authorization(**_auth(sign=False, agent="mallory"))
     with pytest.raises(ValueError):
-        ledger.record_authorization(**_auth(agent=None))
+        ledger.record_authorization(**_auth(sign=False, agent=None))
     with pytest.raises(ValueError):
-        ledger.record_authorization(**_auth(property_id="not-a-uuid"))
+        ledger.record_authorization(**_auth(sign=False, property_id="not-a-uuid"))
     with pytest.raises(TypeError):
-        ledger.record_authorization(**_auth(request="not-a-dict"))
+        ledger.record_authorization(**_auth(sign=False, request="not-a-dict"))
     assert made == []
 
 
@@ -483,6 +548,116 @@ def test_no_execution_or_route_surface() -> None:
     assert offenders == [], offenders
 
 
+# --- Verified-identity boundary (3C-3B-2A) ---
+
+
+def test_forged_signature_rejected_before_connection(monkeypatch) -> None:
+    conn, made = _factory(monkeypatch)
+    args = _auth()
+    donor = _auth()  # transplant a signature bound to a different key
+    args["authorization_signature"] = donor["authorization_signature"]
+    with pytest.raises(AuthenticationFailedError, match="mismatch"):
+        ledger.record_authorization(**args)
+    assert made == [] and conn.statements == []
+
+
+def test_unknown_authorizer_rejected_without_mutation(monkeypatch) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    alice_pub = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(_TEST_CREDS["operator-alice"])
+    ).public_key().public_bytes_raw().hex()
+    monkeypatch.setenv("AUTHORIZER_PUBLIC_KEYS", f"operator-alice:{alice_pub}")
+    conn, made = _factory(monkeypatch)
+    args = _auth("operator-bob")  # validly signed, but bob is not enrolled
+    with pytest.raises(AuthenticationFailedError, match="unknown authorizer"):
+        ledger.record_authorization(**args)
+    assert made == [] and conn.statements == []
+
+
+def test_expired_and_overlong_approvals_rejected(monkeypatch) -> None:
+    conn, made = _factory(monkeypatch)
+    now = datetime.now(timezone.utc)
+    with pytest.raises(AuthenticationFailedError, match="expired"):
+        ledger.record_authorization(
+            **_auth(issued_at=now - timedelta(hours=2),
+                    expires_at=now - timedelta(hours=1))
+        )
+    with pytest.raises(AuthenticationFailedError, match="maximum TTL"):
+        ledger.record_authorization(
+            **_auth(issued_at=now, expires_at=now + timedelta(hours=25))
+        )
+    with pytest.raises(AuthenticationFailedError, match="later than issued"):
+        ledger.record_authorization(
+            **_auth(issued_at=now, expires_at=now - timedelta(hours=1))
+        )
+    assert made == [] and conn.statements == []
+
+
+def test_missing_enrollment_fails_closed(monkeypatch) -> None:
+    monkeypatch.delenv("AUTHORIZER_PUBLIC_KEYS", raising=False)
+    conn, made = _factory(monkeypatch)
+    with pytest.raises(AuthenticationFailedError, match="unknown authorizer"):
+        ledger.record_authorization(**_auth())
+    assert made == [] and conn.statements == []
+
+
+def test_cross_role_executor_credential_denied(monkeypatch) -> None:
+    monkeypatch.setenv("EXECUTOR_KEYS", "w-1:test-only-cross-role-secret-0000")
+    conn, made = _factory(monkeypatch)
+    args = _auth(sign=False, authorized_by="w-1")
+    args["authorization_signature"] = "00" * 64
+    with pytest.raises(AuthenticationFailedError, match="unknown authorizer"):
+        ledger.record_authorization(**args)
+    assert made == [] and conn.statements == []
+
+
+def test_canonical_replay_across_case_variants(monkeypatch) -> None:
+    conn, _ = _factory(monkeypatch)
+    key = f"key-{uuid4().hex}"
+    first = ledger.record_authorization(
+        **_auth(idempotency_key=key, authorized_by="Operator-Alice")
+    )
+    assert first.action["authorized_by"] == "operator-alice"  # stored canonical
+    second = ledger.record_authorization(
+        **_auth(idempotency_key=key, authorized_by="operator-alice")
+    )
+    assert second.created is False
+    assert second.action["action_id"] == first.action["action_id"]
+    assert len(_audit_inserts(conn)) == 1
+
+
+def test_identical_approval_replay_returns_existing(monkeypatch) -> None:
+    conn, _ = _factory(monkeypatch)
+    args = _auth()
+    first = ledger.record_authorization(**args)
+    second = ledger.record_authorization(**dict(args))  # byte-identical resubmission
+    assert second.created is False
+    assert second.action["action_id"] == first.action["action_id"]
+    assert len(_audit_inserts(conn)) == 1  # replay writes no duplicate audit
+
+
+def test_future_issued_approval_rejected(monkeypatch) -> None:
+    conn, made = _factory(monkeypatch)
+    now = datetime.now(timezone.utc)
+    args = _auth(
+        issued_at=now + timedelta(hours=1),
+        expires_at=now + timedelta(hours=2),
+    )
+    with pytest.raises(AuthenticationFailedError, match="issued in the future"):
+        ledger.record_authorization(**args)
+    assert made == [] and conn.statements == []
+
+
+def test_proof_material_never_persisted(monkeypatch) -> None:
+    conn, _ = _factory(monkeypatch)
+    args = _auth()
+    ledger.record_authorization(**args)
+    blob = json.dumps(conn.statements, default=str)
+    assert args["authorization_signature"] not in blob
+    assert _TEST_CREDS["operator-alice"] not in blob
+
+
 # --- Gated PostgreSQL-backed integration ---
 
 
@@ -517,6 +692,28 @@ def _live_audit_cleanup(correlation_ids):
                 {"ids": list(correlation_ids)},
             )
         conn.commit()
+
+
+@needs_live_pg
+def test_live_expired_approval_leaves_no_row() -> None:
+    from app.properties_db import get_connection
+
+    _live_table_ready()
+    key = f"live-3c3a-{uuid4().hex}"
+    now = datetime.now(timezone.utc)
+    with pytest.raises(AuthenticationFailedError, match="expired"):
+        ledger.record_authorization(
+            **_auth(idempotency_key=key,
+                    issued_at=now - timedelta(hours=2),
+                    expires_at=now - timedelta(hours=1))
+        )
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) AS n FROM external_actions WHERE idempotency_key = %(key)s",
+                {"key": key},
+            )
+            assert cur.fetchone()["n"] == 0  # denied before any write; nothing to clean
 
 
 @needs_live_pg

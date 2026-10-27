@@ -1189,6 +1189,66 @@ single-winner claim, claim rollback, UNKNOWN freeze, attempt
 constraints) skip unless `GROWUP_PG_INTEGRATION=1` with migrations
 005–006 applied.
 
+### Phase 3C-3B-2A — Verified authorization and executor identity
+
+`app/identity.py` is the authentication + policy boundary in front of
+the ledger. Bare identity strings no longer confer anything:
+`record_authorization` and `claim_action` verify proofs themselves
+and derive the stored `authorized_by` / `executor_id` server-side
+before any database mutation. No migration, no routes, no workers.
+
+- **Humans (asymmetric):** each approval carries an Ed25519
+  signature over the exact idempotency key, request fingerprint,
+  principal, reference, issuance, and expiry. Operator private keys
+  live offline with the human — never in the app environment —
+  while `AUTHORIZER_PUBLIC_KEYS` holds enrolled `name:hex-pubkey`
+  verification material (not secret). Because minting needs a key
+  the process never holds, human approvals are unforgeable even
+  in-process. Lifetime rules: both timestamps timezone-aware,
+  expiry strictly after issuance, signed lifetime ≤ 24h, issuance
+  no more than 60s in the future, expiry enforced with a 60s skew
+  allowance for signer/verifier clock difference (not scheduling).
+  Tampering with either timestamp invalidates the signature, and a
+  grant binds a single authorization, so capture buys nothing else.
+- **Executors (symmetric service credentials):** `EXECUTOR_KEYS`
+  holds `id:secret` pairs verified with constant-time compare
+  (dummy compare for unknown ids). These are reusable bearer
+  secrets: they prove which enrolled service calls, but do not
+  independently authorize any specific action type — action scopes,
+  executor isolation, and execution safety remain prerequisites
+  for real external actions.
+- **Policy separation:** authentication answers *who*
+  (`AuthenticationFailedError`); `ensure_may_authorize` /
+  `ensure_may_claim` answer *may* (`AuthorizationDeniedError`) —
+  humans authorize, executors claim, agents (credential-less) do
+  neither. Principal objects are data representations, not
+  credentials: `isinstance` checks establish type only, policy
+  functions must receive verifier-produced instances, and the
+  ledger verifies proofs itself — constructing a principal object
+  cannot reach any ledger path.
+- **Preserved:** idempotency (canonical lowercase identities keep
+  fingerprint replays stable; a different verified principal still
+  conflicts), atomic audit transactions, GRW-EXT-001, lifecycle
+  restrictions, and the internal-only posture (tests fail if any
+  route references the ledger or identity surface). Proofs and
+  signatures never appear in audit details.
+- **Trust-boundary honesty:** executor secrets live in the process
+  environment like all service secrets here, so executor
+  verification holds against external and credential-less callers
+  but not against arbitrary malicious code inside this same
+  process. Service-process separation (executor runs with its own
+  env, app verifies) is the documented future hardening, alongside
+  Wondrue-mediated human approvals replacing direct signature
+  submission. Rotation is per-entry (replace key/secret + restart);
+  revocation is entry removal.
+- **Operator recipe (offline):** generate Ed25519 (`cryptography`;
+  32-byte raw keys, hex), keep the private key in operator-only
+  storage (0600 file or prompter — never the app env), enroll
+  `name:hex-pubkey` in `AUTHORIZER_PUBLIC_KEYS`, and sign each
+  approval with `sign_approval()` over the exact authorization
+  fields. Tests generate throwaway keys at runtime; no real key
+  material is committed anywhere.
+
 ---
 
 ## 🎥 Demonstration
