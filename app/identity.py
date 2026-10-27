@@ -20,22 +20,38 @@ Two identity kinds, two mechanisms -- the asymmetry is deliberate:
 - EXECUTOR services use env-held shared secrets (``EXECUTOR_KEYS``),
   following the existing ``auth.py`` shared-secret pattern. These are
   reusable service BEARER secrets: presenting one proves which
-  enrolled service is calling, but it does NOT independently
-  authorize any specific action type. Action-specific authorization,
+  enrolled service is calling; a separate scope map
+  (``EXECUTOR_SCOPES``, Phase 3C-3B-2B) authorizes specific action
+  types by exact match. Executor isolation,
   executor isolation, and execution safety remain prerequisites for
-  enabling real external actions -- this phase authenticates the
-  claimant only. Proportionate for service credentials, with the
-  honest in-process limit below.
+  enabling real external actions -- executor identity is now
+  authenticated (who) AND scoped per action type (may claim what).
+  Proportionate for service credentials, with the honest
+  in-process limit below.
+- ORCHESTRATOR services (Phase 3C-3B-2B) use a SEPARATE env-held
+  credential namespace (``ORCHESTRATOR_KEYS``) plus their own scope
+  map (``ORCHESTRATOR_SCOPES``). Orchestrators schedule -- they move
+  AUTHORIZED actions to PENDING -- but never claim or record
+  outcomes; executors claim and record but never enqueue. The
+  namespaces never mix: an orchestrator credential cannot verify
+  as an executor and vice versa, and each role's policy accepts
+  only its own principal type. The separation is by secret VALUE,
+  not by name: any value enrolled in both maps is rejected
+  outright (``ensure_credential_namespaces_disjoint``), so one
+  bearer can never authenticate as both roles even under
+  different names -- while identical names with distinct
+  secrets remain permitted.
 
 SINGLE-PROCESS LIMITATION (read carefully): this module genuinely
 stops credential-less forgery -- fabricating a principal object or
 string confers nothing, because the ledger verifies proofs itself
 and derives stored identities server-side. It does NOT create a
 security boundary against arbitrary malicious code running inside
-this same process: such code could read ``EXECUTOR_KEYS`` from the
-process environment as easily as this module does. Human approvals
-are immune (no private key material exists in-process); executor
-credentials await service-process separation for full isolation.
+this same process: such code could read ``EXECUTOR_KEYS`` /
+``ORCHESTRATOR_KEYS`` from the process environment as easily as
+this module does. Human approvals are immune (no private key
+material exists in-process); executor and orchestrator credentials
+await service-process separation for full isolation.
 No production route accepts ledger credentials in this phase, which
 keeps the credential exposure surface to operator tooling and tests.
 
@@ -43,8 +59,9 @@ Replacement path: human verification can later move to sessions,
 OAuth/OIDC, or Wondrue-mediated approvals, and executors to
 service-identity providers, by swapping the ``verify_*`` functions.
 Ledger entry points only consume ``HumanPrincipal`` /
-``ExecutorPrincipal`` plus the ``ensure_may_*`` policy checks, so the
-boundary shape survives that migration.
+``ExecutorPrincipal`` / ``OrchestratorPrincipal`` plus the
+``ensure_may_*`` policy checks, so the boundary shape survives
+that migration.
 """
 
 from __future__ import annotations
@@ -58,6 +75,9 @@ from datetime import datetime, timedelta, timezone
 
 AUTHORIZER_PUBLIC_KEYS_ENV_VAR = "AUTHORIZER_PUBLIC_KEYS"
 EXECUTOR_KEYS_ENV_VAR = "EXECUTOR_KEYS"
+ORCHESTRATOR_KEYS_ENV_VAR = "ORCHESTRATOR_KEYS"
+EXECUTOR_SCOPES_ENV_VAR = "EXECUTOR_SCOPES"
+ORCHESTRATOR_SCOPES_ENV_VAR = "ORCHESTRATOR_SCOPES"
 
 # Approval signature domain separator: binds signatures to this exact
 # protocol so they cannot be transplanted from any other signed flow.
@@ -78,7 +98,14 @@ CLOCK_SKEW_SECONDS = 60
 MIN_EXECUTOR_SECRET_CHARS = 16
 MAX_EXECUTOR_SECRET_CHARS = 1024
 
-_DUMMY_EXECUTOR_SECRET = "dummy-secret-for-unknown-executor-comparison-only"
+# Scope maps: bounded grants of exact action-type strings per
+# service id (``w-1:outreach_email|contract_sign,...``). Granted
+# types match stored action_type values byte-for-byte; a bare "*"
+# is rejected at parse (no wildcards, no default-allow).
+MAX_SCOPE_TYPES = 64
+MAX_SCOPE_TYPE_CHARS = 128
+
+_DUMMY_SERVICE_SECRET = "dummy-secret-for-unknown-service-comparison-only"
 
 
 class AuthenticationFailedError(RuntimeError):
@@ -115,6 +142,20 @@ class ExecutorPrincipal:
 
     executor_id: str
     method: str = "executor-key"
+
+
+@dataclass(frozen=True)
+class OrchestratorPrincipal:
+    """A data representation of an orchestrator service.
+
+    Same trust rule as :class:`HumanPrincipal`: a bare instance is
+    an unauthenticated claim. Only :func:`verify_orchestrator`
+    outputs count as authenticated, and only those may reach the
+    enqueue policy checks.
+    """
+
+    orchestrator_id: str
+    method: str = "orchestrator-key"
 
 
 def canonical_identity_name(value: object) -> str:
@@ -174,8 +215,13 @@ def parse_authorizer_keys(raw: str | None) -> dict[str, bytes]:
     return entries
 
 
-def parse_executor_keys(raw: str | None) -> dict[str, str]:
-    """Parse ``id:secret`` service credentials (secrets stay in this map)."""
+def _parse_service_keys(raw: str | None, *, kind: str) -> dict[str, str]:
+    """Parse ``id:secret`` service credentials (secrets stay in this map).
+
+    Shared by the executor and orchestrator namespaces; each caller
+    passes its own ``kind`` so error text names the right map. The
+    namespaces never mix: verification reads exactly one map.
+    """
     entries: dict[str, str] = {}
     if raw is None or not raw.strip():
         return entries
@@ -183,19 +229,83 @@ def parse_executor_keys(raw: str | None) -> dict[str, str]:
         item = item.strip()
         if not item:
             continue
-        executor_id, sep, secret = item.partition(":")
+        service_id, sep, secret = item.partition(":")
         if not sep:
-            raise AuthenticationFailedError("executor map entry missing ':'")
+            raise AuthenticationFailedError(f"{kind} map entry missing ':'")
         try:
-            canonical = canonical_identity_name(executor_id)
+            canonical = canonical_identity_name(service_id)
         except ValueError:
-            raise AuthenticationFailedError("executor map has invalid id entry") from None
+            raise AuthenticationFailedError(f"{kind} map has invalid id entry") from None
         if not (MIN_EXECUTOR_SECRET_CHARS <= len(secret) <= MAX_EXECUTOR_SECRET_CHARS):
-            raise AuthenticationFailedError("executor map has invalid secret entry")
+            raise AuthenticationFailedError(f"{kind} map has invalid secret entry")
         if canonical in entries or len(entries) >= MAX_IDENTITY_ENTRIES:
-            raise AuthenticationFailedError("executor map has invalid id entry")
+            raise AuthenticationFailedError(f"{kind} map has invalid id entry")
         entries[canonical] = secret
     return entries
+
+
+def parse_executor_keys(raw: str | None) -> dict[str, str]:
+    """Parse ``id:secret`` executor service credentials (secrets stay in this map)."""
+    return _parse_service_keys(raw, kind="executor")
+
+
+def parse_orchestrator_keys(raw: str | None) -> dict[str, str]:
+    """Parse ``id:secret`` orchestrator credentials (separate namespace).
+
+    Same rules as executors; enrolled ids here verify ONLY via
+    :func:`verify_orchestrator` and can never authenticate as an
+    executor, even if the same id string appears in both maps.
+    """
+    return _parse_service_keys(raw, kind="orchestrator")
+
+
+def _parse_scope_map(raw: str | None, *, kind: str) -> dict[str, frozenset[str]]:
+    """Parse ``id:type|type,...`` action-type grants (fail closed).
+
+    Grants are EXACT action-type strings: a service may act only on
+    rows whose stored ``action_type`` equals a granted string
+    byte-for-byte (case-sensitive, no wildcards -- a bare "*" entry
+    is rejected at parse). Missing or empty maps deny everyone;
+    malformed entries raise :class:`AuthorizationDeniedError`
+    (policy, not identity, failed) with no map content echoed.
+    """
+    entries: dict[str, frozenset[str]] = {}
+    if raw is None or not raw.strip():
+        return entries
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        service_id, sep, types_blob = item.partition(":")
+        if not sep:
+            raise AuthorizationDeniedError(f"{kind} scope map entry missing ':'")
+        try:
+            canonical = canonical_identity_name(service_id)
+        except ValueError:
+            raise AuthorizationDeniedError(f"{kind} scope map has invalid id entry") from None
+        granted = frozenset(t.strip() for t in types_blob.split("|"))
+        if (
+            not types_blob.strip()
+            or "" in granted
+            or "*" in granted
+            or any(len(t) > MAX_SCOPE_TYPE_CHARS for t in granted)
+            or len(granted) > MAX_SCOPE_TYPES
+        ):
+            raise AuthorizationDeniedError(f"{kind} scope map has invalid type entry")
+        if canonical in entries or len(entries) >= MAX_IDENTITY_ENTRIES:
+            raise AuthorizationDeniedError(f"{kind} scope map has invalid id entry")
+        entries[canonical] = granted
+    return entries
+
+
+def parse_executor_scopes(raw: str | None) -> dict[str, frozenset[str]]:
+    """Parse per-executor claim grants (exact action-type match)."""
+    return _parse_scope_map(raw, kind="executor")
+
+
+def parse_orchestrator_scopes(raw: str | None) -> dict[str, frozenset[str]]:
+    """Parse per-orchestrator enqueue grants (exact action-type match)."""
+    return _parse_scope_map(raw, kind="orchestrator")
 
 
 def load_authorizer_keys() -> dict[str, bytes]:
@@ -206,6 +316,43 @@ def load_authorizer_keys() -> dict[str, bytes]:
 def load_executor_keys() -> dict[str, str]:
     """Load executor service credentials from the environment."""
     return parse_executor_keys(os.getenv(EXECUTOR_KEYS_ENV_VAR))
+
+
+def load_orchestrator_keys() -> dict[str, str]:
+    """Load orchestrator service credentials from the environment."""
+    return parse_orchestrator_keys(os.getenv(ORCHESTRATOR_KEYS_ENV_VAR))
+
+
+def load_executor_scopes() -> dict[str, frozenset[str]]:
+    """Load per-executor claim grants from the environment."""
+    return parse_executor_scopes(os.getenv(EXECUTOR_SCOPES_ENV_VAR))
+
+
+def load_orchestrator_scopes() -> dict[str, frozenset[str]]:
+    """Load per-orchestrator enqueue grants from the environment."""
+    return parse_orchestrator_scopes(os.getenv(ORCHESTRATOR_SCOPES_ENV_VAR))
+
+
+def ensure_credential_namespaces_disjoint(
+    executors: dict[str, str] | None = None,
+    orchestrators: dict[str, str] | None = None,
+) -> None:
+    """Reject any secret value enrolled in both service namespaces.
+
+    Orchestrator and executor credentials must never be reusable
+    across roles: if any secret VALUE appears in both maps --
+    regardless of identity name -- the configuration is rejected
+    and NEITHER role can authenticate. A side left as None loads
+    from its environment variable. Missing maps are empty (nothing
+    to overlap); malformed maps fail closed via their own parsers.
+    The error is uniform and carries no secret material. Called by
+    both ``verify_*`` functions so the invariant holds for every
+    present and future caller.
+    """
+    exec_map = load_executor_keys() if executors is None else executors
+    orch_map = load_orchestrator_keys() if orchestrators is None else orchestrators
+    if set(exec_map.values()) & set(orch_map.values()):
+        raise AuthenticationFailedError("service credential namespaces overlap")
 
 
 def _approval_payload(
@@ -348,13 +495,39 @@ def verify_executor(
     """
     claimed = canonical_identity_name(executor_id)
     known = load_executor_keys() if executors is None else executors
+    ensure_credential_namespaces_disjoint(executors=known, orchestrators=None)
     expected = known.get(claimed)
     if expected is None:
-        hmac.compare_digest(str(proof), _DUMMY_EXECUTOR_SECRET)
+        hmac.compare_digest(str(proof), _DUMMY_SERVICE_SECRET)
         raise AuthenticationFailedError("unknown executor")
     if not isinstance(proof, str) or not hmac.compare_digest(proof, expected):
         raise AuthenticationFailedError("executor proof mismatch")
     return ExecutorPrincipal(executor_id=claimed)
+
+
+def verify_orchestrator(
+    *,
+    orchestrator_id: str,
+    proof: str,
+    orchestrators: dict[str, str] | None = None,
+) -> OrchestratorPrincipal:
+    """Verify one orchestrator service credential (constant-time compare).
+
+    Reads ONLY the orchestrator namespace: an executor credential --
+    even for an identically spelled id -- never verifies here.
+    Returns the enrolled canonical id; anything else raises
+    :class:`AuthenticationFailedError` without secret material.
+    """
+    claimed = canonical_identity_name(orchestrator_id)
+    known = load_orchestrator_keys() if orchestrators is None else orchestrators
+    ensure_credential_namespaces_disjoint(executors=None, orchestrators=known)
+    expected = known.get(claimed)
+    if expected is None:
+        hmac.compare_digest(str(proof), _DUMMY_SERVICE_SECRET)
+        raise AuthenticationFailedError("unknown orchestrator")
+    if not isinstance(proof, str) or not hmac.compare_digest(proof, expected):
+        raise AuthenticationFailedError("orchestrator proof mismatch")
+    return OrchestratorPrincipal(orchestrator_id=claimed)
 
 
 def may_authorize(principal: object) -> bool:
@@ -391,4 +564,94 @@ def ensure_may_claim(principal: object) -> None:
     if not may_claim(principal):
         raise AuthorizationDeniedError(
             "claiming an action requires a verified executor service"
+        )
+
+
+def may_enqueue(principal: object) -> bool:
+    """Only a verified orchestrator service may enqueue actions.
+
+    Same trust rule as :func:`may_authorize`: type check only, valid
+    solely for :func:`verify_orchestrator` outputs. Ledger entry
+    points verify proofs themselves.
+    """
+    return isinstance(principal, OrchestratorPrincipal)
+
+
+def _scope_grants(
+    scopes: dict[str, frozenset[str]] | None,
+    service_id: str,
+    action_type: object,
+) -> bool:
+    """Exact-match grant check over one parser-produced scope map."""
+    if not isinstance(scopes, dict) or not isinstance(action_type, str):
+        return False
+    granted = scopes.get(service_id)
+    if not isinstance(granted, (set, frozenset)):
+        return False
+    return action_type in granted
+
+
+def may_claim_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None,
+) -> bool:
+    """May this verified executor claim this exact action type?
+
+    Pure predicate over a caller-supplied map (normally
+    :func:`parse_executor_scopes` output): role type AND exact
+    grant membership. Unknown ids, unknown types, missing maps,
+    and non-dict maps all deny.
+    """
+    if not isinstance(principal, ExecutorPrincipal):
+        return False
+    return _scope_grants(scopes, principal.executor_id, action_type)
+
+
+def may_enqueue_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None,
+) -> bool:
+    """May this verified orchestrator enqueue this exact action type?
+
+    Same shape as :func:`may_claim_type`, over the orchestrator
+    namespace and :func:`parse_orchestrator_scopes` output.
+    """
+    if not isinstance(principal, OrchestratorPrincipal):
+        return False
+    return _scope_grants(scopes, principal.orchestrator_id, action_type)
+
+
+def ensure_may_enqueue(principal: object) -> None:
+    """Enforce the enqueue role policy (fail closed, explicit denial)."""
+    if not may_enqueue(principal):
+        raise AuthorizationDeniedError(
+            "enqueueing an action requires a verified orchestrator service"
+        )
+
+
+def ensure_may_claim_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None = None,
+) -> None:
+    """Enforce scoped claim permission (loads env map when omitted)."""
+    granted = load_executor_scopes() if scopes is None else scopes
+    if not may_claim_type(principal, action_type, granted):
+        raise AuthorizationDeniedError(
+            "executor is not permitted to claim this action type"
+        )
+
+
+def ensure_may_enqueue_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None = None,
+) -> None:
+    """Enforce scoped enqueue permission (loads env map when omitted)."""
+    granted = load_orchestrator_scopes() if scopes is None else scopes
+    if not may_enqueue_type(principal, action_type, granted):
+        raise AuthorizationDeniedError(
+            "orchestrator is not permitted to enqueue this action type"
         )

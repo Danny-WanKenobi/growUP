@@ -1214,9 +1214,9 @@ before any database mutation. No migration, no routes, no workers.
   holds `id:secret` pairs verified with constant-time compare
   (dummy compare for unknown ids). These are reusable bearer
   secrets: they prove which enrolled service calls, but do not
-  independently authorize any specific action type — action scopes,
-  executor isolation, and execution safety remain prerequisites
-  for real external actions.
+  independently authorize any specific action type (per-type
+  scopes arrived in Phase 3C-3B-2B below); executor isolation and
+  execution safety remain prerequisites for real external actions.
 - **Policy separation:** authentication answers *who*
   (`AuthenticationFailedError`); `ensure_may_authorize` /
   `ensure_may_claim` answer *may* (`AuthorizationDeniedError`) —
@@ -1248,6 +1248,66 @@ before any database mutation. No migration, no routes, no workers.
   approval with `sign_approval()` over the exact authorization
   fields. Tests generate throwaway keys at runtime; no real key
   material is committed anywhere.
+
+### Phase 3C-3B-2B — Scoped enqueue, scoped claim, verified outcomes
+
+Three gates, three identities: humans authorize WHAT (unchanged
+Ed25519 approvals), orchestrators schedule WHEN (`AUTHORIZED →
+PENDING`), executors claim and record outcomes. No migration, no
+routes, no workers, no break-glass.
+
+- **Orchestrator identity:** `ORCHESTRATOR_KEYS` holds
+  `id:secret` pairs in a namespace separate from `EXECUTOR_KEYS`
+  — an orchestrator credential never verifies as an executor and
+  vice versa, even for identically spelled ids. Separation is by
+  secret value, not by name: any value enrolled in both maps is
+  rejected before either role can authenticate (neither role
+  works until the overlap is removed), while identical names
+  with distinct secrets remain permitted. Role policy
+  (`may_enqueue` / `ensure_may_enqueue`) accepts only
+  verifier-produced `OrchestratorPrincipal` values.
+- **Exact-match scopes:** `EXECUTOR_SCOPES` and
+  `ORCHESTRATOR_SCOPES` hold `id:type|type,...` grants matched
+  byte-for-byte against the action's stored `action_type`
+  (case-sensitive). No wildcards (a bare `*` is rejected at
+  parse), no default-allow, no inference from agent names:
+  missing, empty, malformed, or non-granting maps deny with
+  `AuthorizationDeniedError`.
+- **Scoped enqueue:** `transition_action(..., to_state="PENDING")`
+  requires orchestrator credentials plus a scope grant for the
+  actual type read from the locked row. Denial raises before
+  anything is written; success records `enqueued_by` in the
+  permanent transition audit.
+- **Scoped claim:** `claim_action` authenticates, runs the
+  conditional `UPDATE … WHERE state = 'PENDING'`, then checks
+  the scope against the returned row's type BEFORE inserting the
+  attempt row. A denial rolls the whole transaction back: the
+  action stays `PENDING` with its original `attempt_count`, no
+  attempt row, and no audit event.
+- **Verified outcomes:** `ATTEMPTING → SUCCEEDED/FAILED/UNKNOWN`
+  requires the claiming executor's credentials plus an exact
+  match between the verified id and the open attempt's recorded
+  `executor_id`. Stale, mismatched, closed, and foreign attempts
+  still raise `StaleAttemptError`; non-owners raise
+  `AuthorizationDeniedError`. Success records `recorded_by` in
+  the permanent audit. There is deliberately no human
+  break-glass or administrative override in this phase.
+- **Credential rotation rule:** rotation must account for
+  outstanding attempts. If credentials are revoked while an
+  attempt is unresolved, the attempt stays unresolved for future
+  human reconciliation — never automatically reassigned,
+  replayed, or resolved.
+- **Preserved:** the Ed25519 approval payload and lifetime rules,
+  the state-transition matrix and all deferrals, GRW-EXT-001,
+  idempotency, atomic audit transactions, and the internal-only
+  posture (route and credential-confinement guards extended to
+  the new surface; the ledger still defines no execution or
+  retry surface). Proofs never appear in audit details.
+
+Four PostgreSQL-backed integration tests (unauthorized enqueue,
+denied-claim rollback with permitted reclaim, concurrent
+permitted/denied claims, non-owner outcome denial) skip unless
+`GROWUP_PG_INTEGRATION=1` with migrations 005–006 applied.
 
 ---
 

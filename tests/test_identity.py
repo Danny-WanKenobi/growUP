@@ -19,18 +19,33 @@ from app.identity import (
     AuthorizationDeniedError,
     ExecutorPrincipal,
     HumanPrincipal,
+    OrchestratorPrincipal,
     canonical_identity_name,
+    ensure_credential_namespaces_disjoint,
     ensure_may_authorize,
     ensure_may_claim,
+    ensure_may_claim_type,
+    ensure_may_enqueue,
+    ensure_may_enqueue_type,
     load_authorizer_keys,
     load_executor_keys,
+    load_executor_scopes,
+    load_orchestrator_keys,
+    load_orchestrator_scopes,
     may_authorize,
     may_claim,
+    may_claim_type,
+    may_enqueue,
+    may_enqueue_type,
     parse_authorizer_keys,
     parse_executor_keys,
+    parse_executor_scopes,
+    parse_orchestrator_keys,
+    parse_orchestrator_scopes,
     sign_approval,
     verify_executor,
     verify_human_approval,
+    verify_orchestrator,
 )
 
 _NOW = datetime(2026, 10, 27, 12, 0, 0, tzinfo=timezone.utc)
@@ -120,6 +135,68 @@ def test_parse_executor_keys() -> None:
             parse_executor_keys(bad)
 
 
+def test_parse_orchestrator_keys() -> None:
+    parsed = parse_orchestrator_keys(f"sched-1:{_EXEC_SECRET},Sched-2:{_EXEC_SECRET}x")
+    assert set(parsed) == {"sched-1", "sched-2"}
+    assert parse_orchestrator_keys(None) == {}
+    for bad in (
+        "sched-1",  # missing colon
+        "sched-1:short",  # weak secret
+        f"sched-1:{'s' * 1025}",  # oversized secret
+        f"sched-1:{_EXEC_SECRET},SCHED-1:{_EXEC_SECRET}",  # canonical duplicate
+    ):
+        with pytest.raises(AuthenticationFailedError, match="orchestrator map"):
+            parse_orchestrator_keys(bad)
+
+
+def test_parse_executor_scopes() -> None:
+    parsed = parse_executor_scopes(
+        "w-1:outreach_email|contract_sign, W-2 : outreach_email ,"
+    )
+    assert parsed == {
+        "w-1": frozenset({"outreach_email", "contract_sign"}),
+        "w-2": frozenset({"outreach_email"}),
+    }
+    assert parse_executor_scopes(None) == {}
+    assert parse_executor_scopes("  ") == {}
+    for bad in (
+        "w-1",  # missing colon
+        "bad name:x",  # malformed id
+        "w-1:",  # no grants is a config error, not silent deny
+        "w-1:  ",  # whitespace-only grants
+        "w-1:outreach_email||contract_sign",  # empty element
+        "w-1:outreach_email| ",  # trailing empty element
+        "w-1:*",  # wildcards rejected
+        f"w-1:{'t' * 129}",  # overlong type
+        "w-1:a,W-1:b",  # canonical duplicate
+    ):
+        with pytest.raises(AuthorizationDeniedError, match="scope map"):
+            parse_executor_scopes(bad)
+    many_ids = ",".join(f"w-{n}:t" for n in range(65))
+    with pytest.raises(AuthorizationDeniedError, match="scope map"):
+        parse_executor_scopes(many_ids)
+    many_types = "w-1:" + "|".join(f"t{n}" for n in range(65))
+    with pytest.raises(AuthorizationDeniedError, match="scope map"):
+        parse_executor_scopes(many_types)
+
+
+def test_parse_orchestrator_scopes() -> None:
+    parsed = parse_orchestrator_scopes("sched-1:outreach_email")
+    assert parsed == {"sched-1": frozenset({"outreach_email"})}
+    assert parse_orchestrator_scopes(None) == {}
+    with pytest.raises(AuthorizationDeniedError, match="orchestrator scope map"):
+        parse_orchestrator_scopes("sched-1")
+    with pytest.raises(AuthorizationDeniedError, match="orchestrator scope map"):
+        parse_orchestrator_scopes("sched-1:*")
+
+
+def test_scope_errors_carry_no_map_content() -> None:
+    with pytest.raises(AuthorizationDeniedError) as exc:
+        parse_executor_scopes("w-1:*,w-2:secret-type-name")
+    text = str(exc.value)
+    assert "secret-type-name" not in text and "w-2" not in text
+
+
 def test_no_key_material_in_parse_errors() -> None:
     _, pub = _keypair()
     try:
@@ -137,11 +214,22 @@ def test_loaders_read_environment(monkeypatch) -> None:
     _, pub = _keypair()
     monkeypatch.setenv("AUTHORIZER_PUBLIC_KEYS", f"alice:{pub}")
     monkeypatch.setenv("EXECUTOR_KEYS", f"w-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("ORCHESTRATOR_KEYS", f"sched-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("EXECUTOR_SCOPES", "w-1:outreach_email")
+    monkeypatch.setenv("ORCHESTRATOR_SCOPES", "sched-1:outreach_email")
     assert set(load_authorizer_keys()) == {"alice"}
     assert load_executor_keys() == {"w-1": _EXEC_SECRET}
+    assert load_orchestrator_keys() == {"sched-1": _EXEC_SECRET}
+    assert load_executor_scopes() == {"w-1": frozenset({"outreach_email"})}
+    assert load_orchestrator_scopes() == {"sched-1": frozenset({"outreach_email"})}
     monkeypatch.delenv("AUTHORIZER_PUBLIC_KEYS")
     monkeypatch.delenv("EXECUTOR_KEYS")
+    monkeypatch.delenv("ORCHESTRATOR_KEYS")
+    monkeypatch.delenv("EXECUTOR_SCOPES")
+    monkeypatch.delenv("ORCHESTRATOR_SCOPES")
     assert load_authorizer_keys() == {} and load_executor_keys() == {}
+    assert load_orchestrator_keys() == {} and load_executor_scopes() == {}
+    assert load_orchestrator_scopes() == {}
 
 
 # --- Human approval signatures ---
@@ -314,23 +402,211 @@ def test_verify_executor() -> None:
         verify_executor(executor_id="not an id!", proof=_EXEC_SECRET, executors=enrolled)
 
 
+# --- Orchestrator credentials and namespace separation ---
+
+
+def test_verify_orchestrator() -> None:
+    enrolled = {"sched-1": _EXEC_SECRET}
+    principal = verify_orchestrator(
+        orchestrator_id="Sched-1", proof=_EXEC_SECRET, orchestrators=enrolled
+    )
+    assert principal == OrchestratorPrincipal(
+        orchestrator_id="sched-1", method="orchestrator-key"
+    )
+    with pytest.raises(AuthenticationFailedError, match="mismatch"):
+        verify_orchestrator(
+            orchestrator_id="sched-1", proof="wrong-proof-00000000",
+            orchestrators=enrolled,
+        )
+    with pytest.raises(AuthenticationFailedError, match="unknown orchestrator"):
+        verify_orchestrator(
+            orchestrator_id="ghost-9", proof=_EXEC_SECRET, orchestrators=enrolled
+        )
+    with pytest.raises(AuthenticationFailedError, match="unknown orchestrator"):
+        verify_orchestrator(
+            orchestrator_id="sched-1", proof=_EXEC_SECRET, orchestrators={}
+        )
+    with pytest.raises(AuthenticationFailedError):
+        verify_orchestrator(
+            orchestrator_id="sched-1", proof=None, orchestrators=enrolled
+        )
+    with pytest.raises(ValueError):
+        verify_orchestrator(
+            orchestrator_id="not an id!", proof=_EXEC_SECRET, orchestrators=enrolled
+        )
+
+
+def test_credential_namespaces_never_mix() -> None:
+    # A bearer enrolled in both maps authenticates as NEITHER role.
+    with pytest.raises(AuthenticationFailedError, match="namespaces overlap"):
+        ensure_credential_namespaces_disjoint(
+            executors={"dual-1": _EXEC_SECRET},
+            orchestrators={"dual-1": _EXEC_SECRET},
+        )
+    with pytest.raises(AuthenticationFailedError, match="unknown orchestrator"):
+        verify_orchestrator(
+            orchestrator_id="w-1", proof=_EXEC_SECRET,
+            orchestrators={"sched-1": _EXEC_SECRET},
+        )
+    with pytest.raises(AuthenticationFailedError, match="unknown executor"):
+        verify_executor(
+            executor_id="sched-1", proof=_EXEC_SECRET,
+            executors={"w-1": _EXEC_SECRET},
+        )
+
+
+def test_ensure_credential_namespaces_disjoint() -> None:
+    other = "test-only-second-secret-0123456789abcdef"
+    ensure_credential_namespaces_disjoint(executors={}, orchestrators={})
+    ensure_credential_namespaces_disjoint(  # same id, distinct secrets: permitted
+        executors={"dual-1": _EXEC_SECRET}, orchestrators={"dual-1": other}
+    )
+    ensure_credential_namespaces_disjoint(  # distinct ids and secrets: permitted
+        executors={"w-1": _EXEC_SECRET}, orchestrators={"sched-1": other}
+    )
+    with pytest.raises(AuthenticationFailedError, match="namespaces overlap"):
+        ensure_credential_namespaces_disjoint(  # same id + same secret: rejected
+            executors={"dual-1": _EXEC_SECRET},
+            orchestrators={"dual-1": _EXEC_SECRET},
+        )
+    with pytest.raises(AuthenticationFailedError, match="namespaces overlap"):
+        ensure_credential_namespaces_disjoint(  # different ids, same secret: rejected
+            executors={"w-1": _EXEC_SECRET},
+            orchestrators={"sched-9": _EXEC_SECRET},
+        )
+
+
+def test_verify_rejects_overlapping_namespaces(monkeypatch) -> None:
+    monkeypatch.setenv("EXECUTOR_KEYS", f"w-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("ORCHESTRATOR_KEYS", f"sched-9:{_EXEC_SECRET}")
+    with pytest.raises(AuthenticationFailedError, match="namespaces overlap"):
+        verify_executor(executor_id="w-1", proof=_EXEC_SECRET)
+    with pytest.raises(AuthenticationFailedError, match="namespaces overlap"):
+        verify_orchestrator(orchestrator_id="sched-9", proof=_EXEC_SECRET)
+
+
+def test_shared_names_with_distinct_secrets_permitted(monkeypatch) -> None:
+    other = _EXEC_SECRET + "-second"
+    monkeypatch.setenv("EXECUTOR_KEYS", f"dual-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("ORCHESTRATOR_KEYS", f"dual-1:{other}")
+    assert verify_executor(executor_id="dual-1", proof=_EXEC_SECRET).executor_id == "dual-1"
+    assert verify_orchestrator(
+        orchestrator_id="dual-1", proof=other
+    ).orchestrator_id == "dual-1"
+
+
+def test_verify_fails_closed_on_malformed_counterpart(monkeypatch) -> None:
+    monkeypatch.setenv("EXECUTOR_KEYS", f"w-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("ORCHESTRATOR_KEYS", "bogus-entry")
+    with pytest.raises(AuthenticationFailedError, match="orchestrator map"):
+        verify_executor(executor_id="w-1", proof=_EXEC_SECRET)
+    monkeypatch.setenv("ORCHESTRATOR_KEYS", f"sched-1:{_EXEC_SECRET}")
+    monkeypatch.setenv("EXECUTOR_KEYS", "bogus-entry")
+    with pytest.raises(AuthenticationFailedError, match="executor map"):
+        verify_orchestrator(orchestrator_id="sched-1", proof=_EXEC_SECRET)
+
+
+def test_disjointness_error_reveals_nothing() -> None:
+    with pytest.raises(AuthenticationFailedError) as exc:
+        ensure_credential_namespaces_disjoint(
+            executors={"w-1": _EXEC_SECRET},
+            orchestrators={"sched-1": _EXEC_SECRET},
+        )
+    assert _EXEC_SECRET not in str(exc.value)
+
+
 # --- Policy separation ---
 
 
 def test_authorization_policy_matrix() -> None:
     human = HumanPrincipal(name="alice")
     executor = ExecutorPrincipal(executor_id="w-1")
-    assert (may_authorize(human), may_claim(human)) == (True, False)
-    assert (may_authorize(executor), may_claim(executor)) == (False, True)
+    orchestrator = OrchestratorPrincipal(orchestrator_id="sched-1")
+    assert (may_authorize(human), may_claim(human), may_enqueue(human)) == (True, False, False)
+    assert (may_authorize(executor), may_claim(executor), may_enqueue(executor)) == (False, True, False)
+    assert (
+        may_authorize(orchestrator), may_claim(orchestrator), may_enqueue(orchestrator)
+    ) == (False, False, True)
     for other in ("alice", None, 42, {"name": "alice"}, object()):
         assert may_authorize(other) is False
         assert may_claim(other) is False
+        assert may_enqueue(other) is False
     ensure_may_authorize(human)
     ensure_may_claim(executor)
+    ensure_may_enqueue(orchestrator)
     with pytest.raises(AuthorizationDeniedError):
         ensure_may_authorize(executor)
     with pytest.raises(AuthorizationDeniedError):
+        ensure_may_authorize(orchestrator)
+    with pytest.raises(AuthorizationDeniedError):
         ensure_may_claim(human)
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_claim(orchestrator)
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_enqueue(human)
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_enqueue(executor)
+
+
+def test_scoped_policy_exact_match() -> None:
+    executor = ExecutorPrincipal(executor_id="w-1")
+    orchestrator = OrchestratorPrincipal(orchestrator_id="sched-1")
+    exec_scopes = parse_executor_scopes("w-1:outreach_email|contract_sign")
+    orch_scopes = parse_orchestrator_scopes("sched-1:outreach_email")
+    assert may_claim_type(executor, "outreach_email", exec_scopes) is True
+    assert may_claim_type(executor, "contract_sign", exec_scopes) is True
+    assert may_enqueue_type(orchestrator, "outreach_email", orch_scopes) is True
+    # Exact match only: case, substrings, and unknown types deny.
+    for denied in ("Outreach_Email", "outreach", "outreach_email_v2", "wire_transfer", ""):
+        assert may_claim_type(executor, denied, exec_scopes) is False
+        assert may_enqueue_type(orchestrator, denied, orch_scopes) is False
+    # Unknown ids and missing/foreign maps deny.
+    assert may_claim_type(executor, "outreach_email", {}) is False
+    assert may_claim_type(executor, "outreach_email", None) is False
+    assert may_enqueue_type(orchestrator, "outreach_email", {}) is False
+    assert may_claim_type(
+        ExecutorPrincipal(executor_id="w-9"), "outreach_email", exec_scopes
+    ) is False
+    assert may_claim_type(executor, "outreach_email", orch_scopes) is False
+    assert may_enqueue_type(orchestrator, "outreach_email", exec_scopes) is False
+    # Wrong principal types deny even with a granting map.
+    human = HumanPrincipal(name="alice")
+    assert may_claim_type(human, "outreach_email", exec_scopes) is False
+    assert may_claim_type(orchestrator, "outreach_email", exec_scopes) is False
+    assert may_enqueue_type(human, "outreach_email", orch_scopes) is False
+    assert may_enqueue_type(executor, "outreach_email", orch_scopes) is False
+    for other in ("w-1", None, 42, object()):
+        assert may_claim_type(other, "outreach_email", exec_scopes) is False
+        assert may_enqueue_type(other, "outreach_email", orch_scopes) is False
+    # Non-dict maps and non-string types deny (never raise, never grant).
+    assert may_claim_type(executor, "outreach_email", "w-1:outreach_email") is False
+    assert may_claim_type(executor, None, exec_scopes) is False
+    ensure_may_claim_type(executor, "outreach_email", exec_scopes)
+    ensure_may_enqueue_type(orchestrator, "outreach_email", orch_scopes)
+    with pytest.raises(AuthorizationDeniedError, match="not permitted to claim"):
+        ensure_may_claim_type(executor, "wire_transfer", exec_scopes)
+    with pytest.raises(AuthorizationDeniedError, match="not permitted to enqueue"):
+        ensure_may_enqueue_type(orchestrator, "wire_transfer", orch_scopes)
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_claim_type(orchestrator, "outreach_email", exec_scopes)
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_enqueue_type(executor, "outreach_email", orch_scopes)
+
+
+def test_scoped_policy_loads_environment(monkeypatch) -> None:
+    executor = ExecutorPrincipal(executor_id="w-1")
+    monkeypatch.setenv("EXECUTOR_SCOPES", "w-1:outreach_email")
+    ensure_may_claim_type(executor, "outreach_email")  # env map loaded
+    with pytest.raises(AuthorizationDeniedError):
+        ensure_may_claim_type(executor, "wire_transfer")
+    monkeypatch.delenv("EXECUTOR_SCOPES")
+    with pytest.raises(AuthorizationDeniedError, match="not permitted to claim"):
+        ensure_may_claim_type(executor, "outreach_email")  # missing map denies
+    monkeypatch.setenv("ORCHESTRATOR_SCOPES", "bogus-entry")
+    with pytest.raises(AuthorizationDeniedError, match="scope map"):
+        ensure_may_enqueue_type(
+            OrchestratorPrincipal(orchestrator_id="sched-1"), "outreach_email"
+        )  # malformed map fails closed
 
 
 def test_constructed_principals_confer_no_ledger_path() -> None:
@@ -340,11 +616,12 @@ def test_constructed_principals_confer_no_ledger_path() -> None:
 
     # The ledger accepts claims plus proofs, never principal objects:
     # constructing one cannot reach any authorization path.
-    for fn in (ledger.record_authorization, ledger.claim_action):
+    for fn in (ledger.record_authorization, ledger.claim_action, ledger.transition_action):
         params = inspect.signature(fn).parameters
         assert "principal" not in params
         assert "HumanPrincipal" not in str(params.values())
         assert "ExecutorPrincipal" not in str(params.values())
+        assert "OrchestratorPrincipal" not in str(params.values())
 
 
 # --- Secret hygiene and boundary confinement ---
@@ -364,6 +641,11 @@ def test_no_secrets_in_verification_errors() -> None:
                         executors={"w-1": _EXEC_SECRET})
     assert _EXEC_SECRET not in str(exec_exc.value)
     assert "wrong-proof" not in str(exec_exc.value)
+    with pytest.raises(AuthenticationFailedError) as orch_exc:
+        verify_orchestrator(orchestrator_id="sched-1", proof="wrong-proof-00000000",
+                            orchestrators={"sched-1": _EXEC_SECRET})
+    assert _EXEC_SECRET not in str(orch_exc.value)
+    assert "wrong-proof" not in str(orch_exc.value)
 
 
 def test_credential_env_access_confined_to_identity() -> None:
@@ -375,7 +657,16 @@ def test_credential_env_access_confined_to_identity() -> None:
         if source.name == "identity.py":
             continue
         text = source.read_text(encoding="utf-8")
-        if "AUTHORIZER_PUBLIC_KEYS" in text or "EXECUTOR_KEYS" in text:
+        if any(
+            token in text
+            for token in (
+                "AUTHORIZER_PUBLIC_KEYS",
+                "EXECUTOR_KEYS",
+                "ORCHESTRATOR_KEYS",
+                "EXECUTOR_SCOPES",
+                "ORCHESTRATOR_SCOPES",
+            )
+        ):
             offenders.append(str(source))
     assert offenders == [], offenders
 
@@ -389,8 +680,11 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
         hits = [
             token for token in (
                 "app.identity", "sign_approval", "verify_human_approval",
-                "verify_executor", "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS",
+                "verify_executor", "verify_orchestrator", "may_enqueue",
+                "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS", "ORCHESTRATOR_KEYS",
+                "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES",
                 "external_actions_db", "record_authorization", "claim_action",
+                "transition_action",
             )
             if token in text
         ]

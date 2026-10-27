@@ -55,13 +55,30 @@ any database mutation. Authentication (who) and authorization policy
 (may a human authorize / may an executor claim) are explicit,
 separate steps in :mod:`app.identity`.
 
+Scoped enqueue, scoped claim, verified outcomes (Phase 3C-3B-2B):
+AUTHORIZED -> PENDING requires a verified orchestrator service
+with an exact-match scope grant for the stored action type;
+claims require the verified executor to hold a grant for the
+claimed row's type (denial rolls the conditional UPDATE back, so
+the action stays PENDING with no attempt and no audit); outcomes
+require the claiming executor's credentials plus exact ownership
+of the open attempt. Orchestrator and executor credentials live
+in separate namespaces and neither verifies as the other; a
+secret value enrolled in both is rejected before either role
+can authenticate. There is no human break-glass or override
+path: if credentials are
+revoked while an attempt is unresolved, the attempt stays
+unresolved for future human reconciliation -- never reassigned,
+replayed, or auto-resolved.
+
 LIMITATIONS (read before exposing this): this interface is
 internal-only and must not be exposed through an API route. Human
 private keys never enter this process, so human approvals are
-unforgeable even in-process; executor service secrets live in the
-process environment (like all service secrets here), so executor
-verification holds against external and credential-less callers but
-not against arbitrary malicious code inside this same process --
+unforgeable even in-process; executor and orchestrator service
+secrets live in the process environment (like all service secrets
+here), so service verification holds against external and
+credential-less callers but not against arbitrary malicious code
+inside this same process --
 service-process separation is the documented future hardening (see
 :mod:`app.identity`). Unpredictable per-authorization idempotency
 keys (e.g. UUIDs) remain required, since key squatting can still
@@ -92,8 +109,12 @@ from app.identity import (
     canonical_identity_name,
     ensure_may_authorize,
     ensure_may_claim,
+    ensure_may_claim_type,
+    ensure_may_enqueue,
+    ensure_may_enqueue_type,
     verify_executor,
     verify_human_approval,
+    verify_orchestrator,
 )
 from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
 from app.observability.store import insert_event_in_transaction
@@ -106,6 +127,7 @@ MAX_ACTION_TYPE_CHARS = 128
 MAX_PRINCIPAL_CHARS = 200
 MAX_REFERENCE_CHARS = 200
 MAX_EXECUTOR_CHARS = 200
+MAX_ORCHESTRATOR_CHARS = 200
 
 _AUDIT_EVENT_TYPE = "external_action.authorized"
 _AUDIT_CLAIMED_TYPE = "external_action.claimed"
@@ -504,8 +526,12 @@ def claim_action(
     handle -- ``executor_proof`` must verify against the enrolled
     executor credential, and the STORED id is the server-resolved
     canonical value. Verification runs before any connection opens;
-    denial raises before any ledger or audit mutation. Lost claims
-    write nothing and raise nothing.
+    denial raises before any ledger or audit mutation. The verified
+    executor must also hold an exact-match scope grant for the
+    row's stored action type, checked after the conditional UPDATE
+    wins and before the attempt row: a scope denial rolls the
+    claim back completely, leaving PENDING with no attempt and no
+    audit. Lost claims write nothing and raise nothing.
     """
     aid = _coerce_uuid(action_id, "action_id")
     _require_text(executor_id, "executor_id", MAX_EXECUTOR_CHARS)
@@ -541,6 +567,11 @@ def claim_action(
                 claimed=False,
             )
         action = dict(row)
+        # Scope gate sits AFTER the winning UPDATE and BEFORE the
+        # attempt row: denial raises AuthorizationDeniedError, the
+        # handler below rolls back, and real PostgreSQL restores
+        # PENDING with the original attempt_count.
+        ensure_may_claim_type(verified, action["action_type"])
         attempt_id = uuid4()
         attempt_number = action["attempt_count"]
         with conn.cursor() as cur:
@@ -565,6 +596,7 @@ def claim_action(
             f" (attempt {attempt_number}) by {executor}",
             {
                 "action_id": str(aid),
+                "action_type": action["action_type"],
                 "attempt_id": str(attempt_id),
                 "attempt_number": attempt_number,
                 "executor_id": executor,
@@ -644,6 +676,10 @@ def transition_action(
     action_id: UUID | str,
     to_state: ActionState | str,
     attempt_id: UUID | str | None = None,
+    orchestrator_id: str | None = None,
+    orchestrator_proof: str | None = None,
+    executor_id: str | None = None,
+    executor_proof: str | None = None,
     config: DatabaseConfig | None = None,
 ) -> dict[str, Any]:
     """Transition one action between permitted states, atomically audited.
@@ -656,6 +692,16 @@ def transition_action(
     :class:`StaleAttemptError`. A timeout is never interpreted here:
     callers record the outcome they actually observed, including
     UNKNOWN, and UNKNOWN is left for later reconciliation.
+
+    Every transition requires an authenticated caller, verified
+    before any connection opens: orchestrator credentials for
+    AUTHORIZED -> PENDING (plus an exact-match scope grant for the
+    stored action type), the claiming executor's credentials for
+    ATTEMPTING outcomes (plus exact ownership of the open
+    attempt). Missing credentials fail before any database access;
+    wrong-role, unscoped, or non-owning callers are denied without
+    mutation. There is no human break-glass or administrative
+    override in this phase.
 
     Executable in this phase: AUTHORIZED -> PENDING and ATTEMPTING
     -> SUCCEEDED/FAILED/UNKNOWN. PENDING -> ATTEMPTING must go
@@ -671,6 +717,26 @@ def transition_action(
     except (ValueError, TypeError) as exc:
         raise ValueError(f"invalid target state: {to_state!r}") from exc
     att_id = _coerce_uuid(attempt_id, "attempt_id") if attempt_id is not None else None
+    if (orchestrator_id is None) != (orchestrator_proof is None):
+        raise ValueError("orchestrator_id and orchestrator_proof must be supplied together")
+    if (executor_id is None) != (executor_proof is None):
+        raise ValueError("executor_id and executor_proof must be supplied together")
+    if orchestrator_id is None and executor_id is None:
+        raise AuthenticationFailedError("transition requires an authenticated caller")
+    orchestrator = None
+    if orchestrator_id is not None:
+        _require_text(orchestrator_id, "orchestrator_id", MAX_ORCHESTRATOR_CHARS)
+        orchestrator = verify_orchestrator(
+            orchestrator_id=canonical_identity_name(orchestrator_id),
+            proof=orchestrator_proof,  # type: ignore[arg-type] -- paired above
+        )
+    executor = None
+    if executor_id is not None:
+        _require_text(executor_id, "executor_id", MAX_EXECUTOR_CHARS)
+        executor = verify_executor(
+            executor_id=canonical_identity_name(executor_id),
+            proof=executor_proof,  # type: ignore[arg-type] -- paired above
+        )
     conn = get_connection(config)
     try:
         with conn.cursor() as cur:
@@ -685,11 +751,36 @@ def transition_action(
         current = ActionState(row["state"])
         validate_transition(current, target)
         _reject_deferred(current, target)
+        actor_details: dict[str, Any] = {}
+        if current is ActionState.AUTHORIZED:
+            # Enqueue: the only AUTHORIZED exit. Scope is checked
+            # against the actual stored type from the locked row;
+            # denial raises before anything is written.
+            ensure_may_enqueue(orchestrator)
+            ensure_may_enqueue_type(orchestrator, row["action_type"])
+            actor_details = {
+                "enqueued_by": orchestrator.orchestrator_id,
+                "principal_type": "orchestrator",
+                "auth_method": orchestrator.method,
+            }
         attempt_number: int | None = None
         if current is ActionState.ATTEMPTING:
+            if executor is None:
+                raise AuthorizationDeniedError(
+                    "recording an outcome requires the claiming executor's credentials"
+                )
             if att_id is None:
                 raise ValueError("attempt_id is required to record an ATTEMPTING outcome")
             attempt = _load_open_attempt(conn, aid, att_id, row["attempt_count"])
+            if attempt["executor_id"] != executor.executor_id:
+                raise AuthorizationDeniedError(
+                    "only the claiming executor may record this attempt's outcome"
+                )
+            actor_details = {
+                "recorded_by": executor.executor_id,
+                "principal_type": "executor",
+                "auth_method": executor.method,
+            }
             attempt_number = attempt["attempt_number"]
             with conn.cursor() as cur:
                 cur.execute(
@@ -719,6 +810,7 @@ def transition_action(
                 "to_state": target.value,
                 "attempt_id": str(att_id) if att_id is not None else None,
                 "attempt_number": attempt_number,
+                **actor_details,
             },
         )
         insert_event_in_transaction(conn, audit)
@@ -729,6 +821,8 @@ def transition_action(
         DeferredTransitionError,
         DatabaseNotConfiguredError,
         DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
         ValueError,
         TypeError,
     ):
