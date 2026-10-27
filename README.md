@@ -833,6 +833,65 @@ provider and budget interactions are mocked.
 
 ---
 
+## 📡 Shared Agent Observability (MVP-004C-A, Phase 1)
+
+Foundation for all seven agents: one typed event model, one emitter
+API, a JSONL diagnostic trace, and a PostgreSQL activity index. Agents
+never choose sinks — the event's retention class routes it.
+
+### Event model and emitter
+
+`app/observability/` exposes `AgentEvent` (ids, UTC timestamps, agent,
+run/correlation/property ids, stable `event_type`, severity, summary,
+bounded details, evidence refs, parent id, retention class) and
+`emit()` plus helpers: `log_diagnostic`, `log_activity`,
+`log_decision`, `log_evidence`, `log_handoff`, `log_warning`,
+`log_error`. Routing: diagnostic → trace file; activity → file +
+PostgreSQL; permanent (decisions, evidence, handoffs) → PostgreSQL +
+file, with PostgreSQL as the durable copy.
+
+### Durability and failure contract
+
+File failures never raise and never break business operations (counted
+in `get_status()`, echoed to stderr). Activity PG failures degrade to
+file-only. Permanent PG failures raise `EventPersistenceError` after a
+best-effort file copy — never silent. Error paths never emit events
+(no recursion); PG writes use dedicated short-lived connections, never
+business transactions.
+
+### Retention
+
+Diagnostic trace: 90 days default (`OBS_DIAGNOSTIC_RETENTION_DAYS`).
+Activity rows: 365 days default (`OBS_ACTIVITY_RETENTION_DAYS`).
+Permanent rows are never auto-deleted; cleanup SQL carries an explicit
+`retention_class != 'permanent'` guard. Trace files rotate at 10MB × 10
+backups (`OBS_LOG_MAX_BYTES`, `OBS_LOG_BACKUP_COUNT`); only the sink's
+own rotated filenames are ever purged.
+
+### Security
+
+Centralized redaction runs on every event before any sink: secret-like
+field names (keys, tokens, passwords, auth headers, cookies) plus
+`Bearer` and `sk-` value patterns. Summaries are collapsed to one line;
+control characters stripped (including NUL, which PostgreSQL rejects);
+details capped (8KB default, truncated with marker); no full
+request/response logging. No observability endpoints exist in this
+phase — queries are Python-level only, for Wondrue's future controlled
+read-only interface (`recent_by_agent`, `by_property`, `by_run`,
+`by_correlation`, `decisions`, `handoffs`).
+
+### Configuration and deployment
+
+All `OBS_*` variables are optional (see `.env.example`); invalid values
+fail closed to defaults. Migration `004_agent_events.sql` applies via
+`python -m app.migrate`. Ubuntu prerequisite: set
+`OBS_LOG_DIR=/var/www/growup/logs` in `/etc/growup/growup.env` and
+pre-create that directory owned by `growup` (releases are immutable, so
+logs live outside them). Research payload capture/replay is deferred to
+MVP-004C-B; Gabriel workflow instrumentation is future work.
+
+---
+
 ## 🎥 Demonstration
 
 A demonstration video and usage walkthrough will be added as the hackathon MVP reaches completion.
