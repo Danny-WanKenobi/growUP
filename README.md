@@ -1090,6 +1090,59 @@ unchanged. Two PostgreSQL-backed integration tests prove rollback
 and commit end to end but skip unless `GROWUP_PG_INTEGRATION=1`
 with a configured database.
 
+### Phase 3C-3A — External-action ledger foundation
+
+`migrations/005_external_actions.sql` adds the `external_actions`
+ledger; `app/external_actions_db.py::record_authorization` is its
+internal-only writer. The ledger records durable AUTHORIZATION of
+consequential external actions — it never executes them.
+
+- **Authorization vs execution:** a ledger row proves an action was
+  authorized, never that it ran. Creation (`AUTHORIZED`) is the only
+  business operation; the six-state transition policy
+  (`AUTHORIZED → PENDING → ATTEMPTING → SUCCEEDED/FAILED/UNKNOWN`)
+  is defined and validated but has no transition writer yet.
+  `UNKNOWN` is terminal-until-reconciled: requeueing is prohibited
+  because the action may already have executed, so the only exits
+  are verified reconciliation to `SUCCEEDED`/`FAILED`.
+- **Idempotency contract:** each authorization carries a unique
+  `idempotency_key` plus a `request_fingerprint` (`sha256:` hash
+  over canonical type/agent/property/request plus the authorizing
+  principal and reference). Same key + identical request,
+  principal, and reference replays the existing action with no
+  duplicate audit; any difference raises `IdempotencyConflictError`,
+  so one principal's submission can never silently replay
+  another's. Safety comes from the PostgreSQL UNIQUE constraint
+  and `ON CONFLICT DO NOTHING`, never check-then-insert. The raw
+  request is never stored — only its hash.
+- **Atomic audit:** a new authorization and its permanent
+  `external_action.authorized` audit event commit in one PostgreSQL
+  transaction (via `insert_event_in_transaction`); audit failure
+  rolls the authorization back.
+- **Principal-verification limit:** `authorized_by` is a CLAIMED
+  principal string — no authenticated-principal verification exists
+  yet, so this interface must not be exposed through any API route
+  or presented as a fully secure authorization system. The claimed
+  principal is bound into the fingerprint (a different principal
+  conflicts instead of replaying), but keys must still be
+  unguessable per authorization, since key squatting can force a
+  legitimate submission to conflict.
+- **Why SQLite can't authorize:** an outbox row cannot join the
+  PostgreSQL authorization transaction, so on PostgreSQL failure
+  the call fails closed instead of recording authorization
+  anywhere else.
+- **Deferred to 3C-3B:** execution workers, attempt/outcome
+  recording, retries, `attempt_count` advancement, UNKNOWN
+  resolution (reconciliation to a definitive outcome requires
+  independently verified evidence, never a re-attempt), retry of
+  FAILED actions (requires explicit retry authorization plus proof
+  of definitive failure), and verified principal binding.
+
+Six PostgreSQL-backed integration tests (atomicity, replay,
+conflict, rollback, CHECK constraints, property-delete history
+preservation) skip unless `GROWUP_PG_INTEGRATION=1` with migration
+005 applied.
+
 ---
 
 ## 🎥 Demonstration
