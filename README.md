@@ -245,15 +245,26 @@ belongs to Raphael (future milestone).
 
 ### Discovery source
 
-MVP-003 ships one real provider, behind a modular interface so more can be
+Gabriel ships two real providers behind a modular interface so more can be
 added later:
 
 - **Overpass (`overpass`)** — OpenStreetMap building footprints with names,
   addresses, and building-type tags, queried over a caller-supplied bounding
   box via the public Overpass API (`https://overpass-api.de/api/interpreter`,
   docs: `https://wiki.openstreetmap.org/wiki/Overpass_API`). No credentials
-  required. Access complies with the OSM usage policy: bounded result counts,
-  explicit timeouts, identifying User-Agent, and no bypassed restrictions.
+  required. Access complies with the OSM usage policy: bounded result counts, explicit timeouts, identifying User-Agent, and no bypassed restrictions.
+
+- **OSM API (`osm_api`)** — Mapped building geometry and tags from the official
+  OpenStreetMap API v0.6 map endpoint
+  (`https://api.openstreetmap.org/api/0.6/map`, docs:
+  `https://wiki.openstreetmap.org/wiki/API_v0.6`). No credentials required.
+  Strictly limited to small controlled boxes (at most 0.05° per side and
+  0.001 square degrees); larger boxes are rejected before any request, with
+  no retries, subdivision, or bulk harvesting. One request per search, with an identifying User-Agent.
+Mapped buildings are not verified commercial-property opportunities: a record
+means "this building exists at this location according to OpenStreetMap,"
+not "this property is listed, vacant, or distressed." Suitability and
+verification belong to Raphael and Onesimus in later milestones.
 
 High-rise, downtown-commercial, and warehouse/industrial candidates are
 queried together with no ranking boost, preserving equal priority. OpenStreetMap
@@ -317,7 +328,15 @@ curl -X POST http://127.0.0.1:8001/discovery/runs \
 # 3. Inspect what Gabriel stored (unknown-status, sourced, nulls for unknowns).
 curl "http://127.0.0.1:8001/properties?limit=3"
 
-# 4. Re-run step 2 unchanged: previously stored addresses must now be
+# 4. Try the official OSM API provider on a small controlled box
+#    (at most 0.05 degrees per side and 0.001 square degrees).
+curl -X POST http://127.0.0.1:8001/discovery/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"osm_api",
+       "bbox":{"south":32.780,"west":-96.797,"north":32.781,"east":-96.796},
+       "limit":5,"timeout_seconds":20}'
+
+# 5. Re-run step 2 unchanged: previously stored addresses must now be
 #    reported as skipped duplicates with zero new records created.
 ```
 
