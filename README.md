@@ -451,6 +451,82 @@ credentials and terms are arranged. Trellistate is a potential future
 provider, but its public API currently returns HTTP 500 and is not
 integrated or depended upon in MVP-004A.
 
+---
+
+## 🗺️ Gabriel Search Planner (MVP-004B-1)
+
+The planner generates structured commercial real estate research
+assignments for Dallas, Texas. **Listings first. Value driven. Distress
+focused.** It produces assignments only: no searches executed, no scraping,
+no AI calls, no database writes, no network requests.
+
+### Architecture
+
+`app/agents/gabriel/planner.py` exposes a narrow Python interface:
+
+- `plan_initial_searches(config)` — balanced city-wide assignment set.
+- `plan_followups(parent, feedback, config)` — bounded single-step
+  adaptation from structured research feedback.
+
+`GET /discovery/search-plan` previews the initial plan (read-only;
+`total`, `per_category`, and `downtown` query parameters). It performs
+no live research and changes no data.
+
+Each assignment carries a stable content-derived id, query, market,
+category, strategy, priority, research intent, planner version
+(`004B-1.0`), downtown flag, depth, and parent id. Same inputs always
+yield the same assignments in the same order.
+
+### Supported search strategies
+
+`for_sale`, `high_value`, `distressed`, `foreclosure_reo`,
+`receivership_bankruptcy`, `auction_liquidation`,
+`vacant_underutilized`, `price_reduced`, `long_listing`. Every query
+seeks actual sale opportunities across the three primary categories in
+balanced round-robin allocation (4 each by default, 12 total). A query's
+wording is never evidence that a property is distressed; intents say so
+explicitly. Downtown Dallas appears only as a bounded secondary
+refinement (every fourth slot); city-wide Dallas dominates.
+
+### Example research assignments
+
+```json
+[
+  {"query": "high-rise office building for sale in Dallas, TX",
+   "category": "high_rise", "strategy": "for_sale", "priority": 1},
+  {"query": "price-reduced commercial office building for sale in Dallas, TX",
+   "category": "downtown_commercial", "strategy": "price_reduced"},
+  {"query": "distressed industrial warehouse property for sale in Downtown Dallas, TX",
+   "category": "warehouse_industrial", "strategy": "distressed"}
+]
+```
+
+### Configuration and budget controls
+
+`PlannerConfig`: `total_max_queries` (1–54, default 12),
+`per_category_max` (1–18, default 4), `followup_max` (0–50, default 6),
+`max_depth` (0–5, default 2), `downtown_refinement` (default true).
+Invalid budgets are rejected. Follow-ups derive deterministically from
+feedback outcomes (`no_results`, `duplicates_heavy`, `promising`,
+`provider_failure`, `missing_pricing`, `missing_distress_evidence`):
+provider failures generate zero queries (no automatic retry), depth and
+follow-up caps bound growth, and known queries are never repeated.
+
+### Limitations
+
+- No property values are invented and no minimum price is imposed; the
+  planner ranks nothing because it has seen no listings.
+- No provider adapter exists yet; assignments name no endpoints or
+  credentials and assume no website HTML access.
+- Geographic scope is Dallas only, with no grids, radius expansion, or
+  boundary processing.
+
+### Remaining MVP-004B phases
+
+Later phases will cover provider execution adapters, listing-result
+ingestion through the intake contract, and property ranking in
+MVP-004B-4.
+
 ### Environment requirements
 
 MVP-002 adds no new environment variables. It reuses the MVP-001 PostgreSQL

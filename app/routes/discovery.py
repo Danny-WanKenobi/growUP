@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 
 from app.agents.gabriel.schemas import (
     DiscoveryRunRequest,
@@ -12,6 +13,11 @@ from app.agents.gabriel.schemas import (
     DiscoverySourceInfo,
 )
 from app.agents.gabriel.intake import IntakeError, IntakeResult, ListingIntakeRequest, process_intake
+from app.agents.gabriel.planner import (
+    PlannerConfig,
+    SearchAssignment,
+    plan_initial_searches,
+)
 from app.auth import require_intake_key
 from app.agents.gabriel.service import run_discovery
 from app.agents.gabriel.sources.base import (
@@ -98,3 +104,26 @@ def submit_listing(
     if result.outcome != "created":
         response.status_code = status.HTTP_200_OK
     return result
+
+@router.get("/discovery/search-plan", response_model=list[SearchAssignment])
+def preview_search_plan(
+    total: int = 12,
+    per_category: int = 4,
+    downtown: bool = True,
+) -> list:
+    """Preview Gabriel research assignments (read-only, no execution).
+
+    Pure planning: no database access, no network calls, no property
+    changes. Invalid budgets return 422.
+    """
+    try:
+        config = PlannerConfig(
+            total_max_queries=total,
+            per_category_max=per_category,
+            downtown_refinement=downtown,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_plan_config"
+        ) from exc
+    return plan_initial_searches(config)
