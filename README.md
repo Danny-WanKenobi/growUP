@@ -126,6 +126,133 @@ API credentials and other secrets must never be committed to the public reposito
 
 ---
 
+## 🗄️ Property Data Foundation (MVP-002)
+
+MVP-002 provides the shared PostgreSQL-backed property record that all seven
+agents will eventually use. Each property has a stable UUID, address, category,
+sourced numeric facts, evidence references, and timestamps.
+
+**Evidence model (owner-approved):** numeric facts are stored as explicit
+`estimated` / `verified` pairs within one record, so sourced estimates and
+verified facts coexist without being confused. Unknown values stay null --
+never zero, never invented. Hypothetical values are not permitted in
+operational records; hypothetical agricultural or tenant-consolidation
+scenarios belong in separate future storage, and no simulation subsystem is
+built in this milestone.
+
+Sourcing rules, enforced at the API boundary:
+- Any populated estimated or verified value requires traceable record-level
+  `provenance` naming its source (substantive, non-placeholder).
+- Every populated verified field additionally requires a supporting reference
+  in `field_evidence`, keyed by field name.
+- `data_status` (`verified` / `estimated` / `mixed` / `unknown`) is derived
+  server-side from the populated pairs. A client label is never trusted, and
+  `hypothetical` is rejected outright.
+- Vacant area must not exceed building area within the same evidence class.
+
+### API endpoints
+
+| Method | Path | Result |
+|---|---|---|
+| `POST` | `/properties` | `201` with the created record (server assigns `id`, timestamps, derived status) |
+| `GET` | `/properties` | `200` with stored records, newest first (`limit`/`offset` supported) |
+| `GET` | `/properties/{property_id}` | `200` with the record, or `404` when the id does not exist |
+
+Invalid input -- including unsourced estimates, unverified-without-evidence
+values, or a `hypothetical` status -- returns `422`; an unconfigured or
+unreachable database returns `503` with a generic error category (never
+credentials or driver details). The MVP-001 `GET /health` and `GET /ready`
+endpoints are unchanged.
+
+Example (sourced estimate):
+
+```bash
+curl -X POST http://127.0.0.1:8001/properties \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Example Tower","city":"Dallas","state":"TX",
+       "category":"downtown_commercial",
+       "building_area_sqft_estimated":50000,
+       "provenance":"Dallas Central Appraisal District record, account 00001234, retrieved 2026-10-26"}'
+```
+
+Record fields: `name` (required), `street_address`, `city`, `state`,
+`zip_code`, `category` (required: `high_rise`, `downtown_commercial`,
+`warehouse_industrial`, `empty_lot`, or `other`), `occupancy`, `owner`,
+`provenance`, `field_evidence` (JSON object mapping field names to evidence
+references), `data_status` (server-derived), and `notes`, plus these nullable
+estimated/verified pairs:
+
+| Estimated | Verified | Type |
+|---|---|---|
+| `building_area_sqft_estimated` | `building_area_sqft_verified` | sqft (nonnegative) |
+| `vacant_area_sqft_estimated` | `vacant_area_sqft_verified` | sqft (nonnegative) |
+| `gross_monthly_rent_income_estimated` | `gross_monthly_rent_income_verified` | money |
+| `owner_monthly_costs_estimated` | `owner_monthly_costs_verified` | money |
+| `property_value_estimated` | `property_value_verified` | money |
+| `liens_total_estimated` | `liens_total_verified` | money |
+| `months_on_market_estimated` | `months_on_market_verified` | distress: whole months, nonnegative |
+| `months_vacant_estimated` | `months_vacant_verified` | distress: whole months, nonnegative |
+
+Money is stored as PostgreSQL `NUMERIC` and handled as exact `Decimal` values
+in Python -- never converted through float. Send monetary values as JSON
+strings (e.g. `"4500000.10"`) and expect them back as JSON strings. Unknown
+financial information stays null.
+
+Distress indicators: `months_on_market` is the duration a property has been
+actively listed for sale; `months_vacant` is the duration the relevant
+building or space has been vacant. They are separate measurements and are
+never treated as equivalent. A property being listed for sale, being vacant,
+and being financially distressed are three distinct conditions -- one does
+not imply the others, and distress requires supporting evidence.
+
+Note: `empty_lot` is accepted by the data model but remains outside Gabriel's
+initial discovery scope, alongside food forests.
+
+### Database migrations
+
+SQL migrations live in `migrations/` and are applied in filename order with:
+
+```bash
+python -m app.migrate
+```
+
+The runner is repeatable: applied files are recorded in a `schema_migrations`
+table and skipped on later runs. It only touches the configured database and
+never creates, drops, or alters other databases.
+
+### Synthetic demo fixture
+
+`fixtures/synthetic_dallas_property.json` is a clearly labeled **SYNTHETIC**
+Dallas commercial property with invented values (`data_status: hypothetical`).
+It is not a real listing. Hypothetical values are barred from operational
+records, so the API rejects it (`422`), and the loader refuses it:
+
+```bash
+python scripts/load_synthetic_fixture.py   # exits 1: refused by policy
+```
+
+The fixture remains available for isolated automated testing only (tests read
+the JSON without inserting it anywhere).
+
+### Environment requirements
+
+MVP-002 adds no new environment variables. It reuses the MVP-001 PostgreSQL
+settings (`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`,
+`DATABASE_PASSWORD`); see `.env.example`. No AI inference, authentication, or
+external property APIs are introduced.
+
+### Verification limitations
+
+The MVP-002 evidence gate is structural: it requires substantive,
+non-placeholder, non-synthetic provenance for sourced values and per-field
+evidence references for verified values, with PostgreSQL constraints as a
+backstop. A client-provided "verified" label or evidence reference does not
+independently establish truth: the gate cannot confirm cited facts against
+external sources. A human review workflow, trusted-source registry, and
+separate hypothetical-scenario storage are deferred to future milestones.
+
+---
+
 ## 🎥 Demonstration
 
 A demonstration video and usage walkthrough will be added as the hackathon MVP reaches completion.

@@ -1,0 +1,20 @@
+{
+  "_label": "SYNTHETIC DEMONSTRATION FIXTURE — NOT A REAL PROPERTY LISTING. All values are invented for MVP-002 testing only.",
+  "name": "SYNTHETIC — Dallas Demo Commercial Property",
+  "street_address": "1234 Synthetic Example Blvd (fictional)",
+  "city": "Dallas",
+  "state": "TX",
+  "zip_code": "75201",
+  "category": "downtown_commercial",
+  "building_area_sqft": 50000,
+  "vacant_area_sqft": 20000,
+  "occupancy": "SYNTHETIC example: 60% leased office, 40% vacant (invented).",
+  "gross_monthly_rent_income": 45000,
+  "owner": "SYNTHETIC example owner (fictional)",
+  "owner_monthly_costs": 30000,
+  "property_value": 4500000,
+  "liens": "SYNTHETIC example: none known (invented).",
+  "provenance": "synthetic_fixture_mvp002",
+  "data_status": "hypothetical",
+  "notes": "SYNTHETIC fixture for MVP-002 demonstrations and tests. NOT a real listing; values are invented and must never be treated as verified."
+}

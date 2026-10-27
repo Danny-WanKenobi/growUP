@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.routes.health import router as health_router
+from app.routes.properties import router as properties_router
 from app.routes.readiness import router as readiness_router
 
 
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
     )
     application.include_router(health_router)
     application.include_router(readiness_router)
+    application.include_router(properties_router)
     return application
 
 

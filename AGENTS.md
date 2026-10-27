@@ -22,6 +22,30 @@ Start discovery in major Texas markets, expanding later as appropriate. Do not a
 
 Vacant lots and food forests are a future expansion, not a hackathon requirement.
 
+## Property Distress Indicators
+
+Property distress is a central discovery priority. The property record carries
+nullable estimated/verified month counts for two separate measurements:
+
+- `months_on_market`: duration a property has been actively listed for sale.
+- `months_vacant`: duration the relevant building or space has been vacant.
+
+These are separate measurements and must never be automatically treated as
+equivalent. Preserve the distinction between a property being listed for
+sale, being vacant, and being financially distressed: one does not imply the
+others, and distress requires supporting evidence.
+
+Agent responsibilities (no agent logic is built in MVP-002; this records the
+intended division of work):
+
+- **Gabriel — Property Discovery:** Actively research listing duration, vacancy
+  duration, and other potential distress indicators. Collect source references
+  and identify missing information.
+- **Raphael — Property Inspection:** Investigate and verify those indicators.
+  Determine whether apparent distress is supported by evidence.
+- **Onesimus — Agricultural Engineering:** Collaborate with Raphael on building
+  suitability and provide feedback to Gabriel on property discovery criteria.
+
 ## Hypothetical Tenant Consolidation
 
 For preliminary building simulations, **assume that existing tenants can be relocated upward and vacant space consolidated downward**, allowing agricultural conversion to begin at the lowest feasible level and expand upward through contiguous space. Do not reject a candidate merely because its ground floor is occupied.
