@@ -1052,6 +1052,44 @@ authorization/attempt/outcome lifecycle with idempotency for
 external actions to Phase 3C-3. No existing workflow calls this
 module; Gabriel stays on the legacy nonfatal path.
 
+### Phase 3C-2 — Transaction-safe consequential auditing
+
+`app/observability/transactions.py::run_consequential_transaction`
+commits one PostgreSQL business mutation and its permanent audit
+event atomically: both commit on one coordinator-owned connection,
+or both roll back. `store.insert_event_in_transaction(conn, event)`
+is the join-the-transaction primitive — it executes the audit INSERT
+on the supplied connection and never commits, rolls back, opens
+another connection, or touches SQLite/JSONL.
+
+- **Durable acceptance vs atomicity:** Phase 3C-1 proves an audit
+  event reached a durable store; it says nothing about whether a
+  separate business write committed. Phase 3C-2 proves business and
+  audit committed together — or neither did.
+- **When to use which:** standalone audit records (decisions already
+  made, handoffs, evidence notes) use 3C-1 `audit_event`. A
+  consequential PostgreSQL state change whose audit must be
+  inseparable from the change uses 3C-2.
+- **Why SQLite can't substitute:** the outbox lives outside
+  PostgreSQL, so accepting an audit there can never join the
+  business transaction. On PostgreSQL failure the coordinator fails
+  closed instead of pretending an outbox row is atomic with a
+  rolled-back mutation.
+- **Callback contract:** `mutate(conn)` receives the open
+  connection and must only write through it — no commit, rollback,
+  close, replace, stash, or side transactions. The coordinator
+  cannot prevent a misbehaving callback from touching its own
+  connection object, so misuse voids the guarantee by definition.
+- **Still deferred (3C-3):** for external effects, 3C-2 commits the
+  audit record only. Distinguishing durable authorization from
+  attempted execution and confirmed outcome, with idempotency and
+  ambiguous-failure recovery, remains Phase 3C-3 work.
+
+No production consequential workflows exist yet; Gabriel's paths are
+unchanged. Two PostgreSQL-backed integration tests prove rollback
+and commit end to end but skip unless `GROWUP_PG_INTEGRATION=1`
+with a configured database.
+
 ---
 
 ## 🎥 Demonstration

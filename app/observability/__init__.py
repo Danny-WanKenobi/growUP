@@ -61,10 +61,12 @@ from app.observability.store import (
     deliver_event,
     handoffs,
     insert_event,
+    insert_event_in_transaction,
     purge_expired_events,
     query_events,
     recent_by_agent,
 )
+from app.observability.transactions import run_consequential_transaction
 
 __all__ = [
     "AgentEvent",
@@ -102,6 +104,7 @@ __all__ = [
     "get_status",
     "handoffs",
     "insert_event",
+    "insert_event_in_transaction",
     "log_activity",
     "log_decision",
     "log_diagnostic",
@@ -118,6 +121,7 @@ __all__ = [
     "require_durable",
     "reset_sinks",
     "retry_delay_seconds",
+    "run_consequential_transaction",
     "scrub_text",
     "validate_production_path",
 ]

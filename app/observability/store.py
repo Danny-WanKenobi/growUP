@@ -3,7 +3,10 @@
 Durable store for routine activity and permanent decision, evidence,
 and handoff events. Uses the existing ``properties_db.get_connection``
 convention with short-lived dedicated connections: event writes never
-join business transactions and never hold them open.
+join business transactions and never hold them open -- except through
+:func:`insert_event_in_transaction`, which executes the audit INSERT
+on a caller-owned connection so a Phase 3C-2 coordinator can commit
+business and audit writes atomically.
 
 All queries are parameterized, bounded (limit clamped), and ordered
 deterministically by ``(occurred_at, event_id)`` so pagination is
@@ -20,7 +23,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
-from app.observability.events import AgentEvent
+from app.observability.events import AgentEvent, RetentionClass
 from app.properties_db import get_connection
 
 DEFAULT_QUERY_LIMIT = 100
@@ -78,6 +81,41 @@ def insert_event(event: AgentEvent, config: Any = None) -> AgentEvent:
                     params,
                 )
             conn.commit()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("event_insert_failed") from exc
+    return event
+
+
+def insert_event_in_transaction(conn: Any, event: AgentEvent) -> AgentEvent:
+    """Execute the audit INSERT on a caller-owned connection/transaction.
+
+    Phase 3C-2 primitive: the INSERT runs inside the caller's
+    transaction on the supplied psycopg connection. This function
+    never opens another connection, never commits, never rolls back,
+    and never touches SQLite or JSONL. A return means the INSERT
+    executed -- NOT that it committed; only the transaction owner
+    (the 3C-2 coordinator) may commit.
+
+    Only permanent events are accepted, checked before any SQL runs.
+    The INSERT is plain (no ``ON CONFLICT`` handling): a duplicate
+    ``event_id`` raises instead of merging, confirming, or
+    overwriting, so a colliding audit fails closed.
+    """
+    if not isinstance(event, AgentEvent):
+        raise TypeError("event must be an AgentEvent")
+    if event.retention_class is not RetentionClass.PERMANENT:
+        raise ValueError("transactional audit requires a permanent event")
+    params = _insert_params(event)
+    columns = ", ".join(_INSERT_COLUMNS)
+    placeholders = ", ".join(f"%({name})s" for name in _INSERT_COLUMNS)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO agent_events ({columns}) VALUES ({placeholders})",
+                params,
+            )
     except (DatabaseNotConfiguredError, DatabaseUnavailableError):
         raise
     except Exception as exc:
