@@ -388,14 +388,18 @@ def test_run_research_success(monkeypatch) -> None:
     calls: list = []
 
     def _execute(query, assignment_id, timeout):
+        from app.agents.gabriel.sources.brave import BraveSearchResult
+
         calls.append((query, timeout))
         return [
-            {
-                "assignment_id": assignment_id, "query": query, "title": "T",
-                "url": "https://example.com/x", "snippet": "S", "domain": "example.com",
-                "provider": "brave", "retrieved_at": "2026-10-27T00:00:00+00:00",
-                "published_at": None, "rank": 1,
-            }
+            BraveSearchResult.model_validate(
+                {
+                    "assignment_id": assignment_id, "query": query, "title": "T",
+                    "url": "https://example.com/x", "snippet": "S", "domain": "example.com",
+                    "provider": "brave", "retrieved_at": "2026-10-27T00:00:00+00:00",
+                    "published_at": None, "rank": 1,
+                }
+            )
         ]
 
     monkeypatch.setattr(research, "execute_query", _execute)

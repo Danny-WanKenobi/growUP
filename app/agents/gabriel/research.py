@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
+from app.agents.gabriel.extractor import ResearchIntelligence, extract_research_intelligence
 from app.agents.gabriel.planner import (
     PLANNED_CATEGORIES,
     PLANNER_VERSION,
@@ -52,6 +53,7 @@ class ResearchRunRequest(BaseModel):
 
     assignments: list[SearchAssignment] = Field(min_length=1, max_length=25)
     timeout_seconds: float = Field(default=15.0, ge=5.0, le=60.0)
+    include_intelligence: bool = True
 
 
 class ExecutedAssignment(BaseModel):
@@ -78,6 +80,7 @@ class ResearchRunResult(BaseModel):
     results: list[BraveSearchResult] = []
     errors: list[ResearchAssignmentError] = []
     retrieved_at: str = ""
+    intelligence: ResearchIntelligence | None = None
 
 
 def select_assignments(assignments: list[SearchAssignment]) -> list[SearchAssignment]:
@@ -171,4 +174,8 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
             result.errors.append(ResearchAssignmentError(assignment_id=item.id, error=_error_code(exc)))
             continue
         result.results.extend(found)
+    if request.include_intelligence:
+        # Pure local extraction over already-retrieved results: no extra
+        # Brave calls, no property writes, no intake submissions.
+        result.intelligence = extract_research_intelligence(result.results)
     return result

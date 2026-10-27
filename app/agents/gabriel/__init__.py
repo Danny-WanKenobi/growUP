@@ -12,6 +12,7 @@ preserves every source reference so Raphael can check his work.
 
 from __future__ import annotations
 
+from app.agents.gabriel.extractor import ResearchIntelligence, extract_research_intelligence
 from app.agents.gabriel.planner import (
     PlannerConfig,
     SearchAssignment,
@@ -25,7 +26,9 @@ __all__ = [
     "DiscoveryRunRequest",
     "DiscoveryRunResult",
     "PlannerConfig",
+    "ResearchIntelligence",
     "SearchAssignment",
+    "extract_research_intelligence",
     "plan_followups",
     "plan_initial_searches",
     "run_discovery",

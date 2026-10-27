@@ -597,6 +597,61 @@ curl -X POST http://127.0.0.1:8001/discovery/research-runs \
 
 # 2. Confirm budget accounting decreased by the reported request_count.
 # 3. Confirm no new rows in properties, listing_evidence, or distress_observations.
+
+---
+
+## 🧠 Listing Intelligence Extractor (MVP-004B-3)
+
+The extractor (`app/agents/gabriel/extractor.py`) turns raw Brave results
+into structured, evidence-backed research intelligence using deterministic
+rules only: no AI calls, no network requests, no database writes. It plugs
+into the existing flow as Search Planner → Brave Search → Intelligence
+Extractor → (future) Evidence Intake, complementing intake without
+duplicating or bypassing it.
+
+### What it extracts
+
+- **Classification**: `property_listing`, `property_lead`,
+  `listing_directory`, `news_article`, `legal_or_public_record`,
+  `background_information`, or `unknown` — each with an auditable reason.
+  Directories, historical articles, and generic leads are never mistaken
+  for current sale offerings; ambiguity falls back to `unknown`.
+- **Property identity**: conservatively matched names, street addresses,
+  and state-anchored cities (Farmers Branch is not Dallas proper).
+  Multiple buildings in one result stay separate; attributes are never
+  merged across properties.
+- **Money**: explicit dollar amounts classified as current/historical
+  asking, completed sale, proposed transaction, estimated value, price
+  per square foot, or unclassified. Historical amounts never become
+  current asking prices; ambiguous amounts stay unclassified.
+- **Distress vs underuse**: separate signal vocabularies. Bankruptcy,
+  foreclosure, receivership, default, REO, auctions, price cuts, and
+  stale listings indicate distress; low occupancy, high vacancy,
+  unleased space, and tenant departures indicate underuse. Underuse is
+  never auto-classified as distress.
+- **Occupancy safeguards**: reported percentages kept with period, scope
+  (whole building vs partial), and evidence. Leased ≠ physical, available
+  ≠ vacant, historical ≠ current; unknown stays unknown, never zero.
+- **Temporal awareness**: publication dates resolved against retrieval
+  time; old or undatable material is historical/undetermined, never
+  presented as current availability.
+- **Provenance**: every observation keeps assignment id, query, URL,
+  domain, evidence excerpt, timestamps, method (`rule-based-004B-3.0`),
+  rationale, and status (`reported_unverified`/`unknown` — never
+  verified, never estimated, no fabricated confidence).
+
+HTML markup and entities in snippets are normalized to clean text
+without rendering. Conservative grouping by exact address or name+city
+flags ambiguous matches for review while keeping observations separate.
+
+### API behavior
+
+`POST /discovery/research-runs` accepts `include_intelligence` (default
+true) and returns an optional `intelligence` section alongside the
+unchanged existing fields. Extraction runs over already-retrieved
+results: zero additional Brave calls, zero property writes, zero intake
+submissions. No migration required; off-market discovery is explicitly
+out of scope but the intelligence model is sale-status independent.
 ```
 
 ### Environment requirements
