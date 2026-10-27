@@ -142,6 +142,39 @@ def list_properties(
     return [dict(row) for row in rows]
 
 
+def find_by_address(
+    street: str,
+    city: str = "",
+    state: str = "",
+    zip_code: str = "",
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any] | None:
+    """Return the id of the record matching a normalized address, or None.
+
+    Minimal Gabriel dedup lookup: compares lowercased, trimmed address
+    parts exactly. Callers normalize inputs first (see gabriel dedup).
+    """
+    sql = (
+        "SELECT id FROM properties "
+        "WHERE lower(btrim(street_address)) = %(street)s "
+        "AND lower(btrim(COALESCE(city, ''))) = %(city)s "
+        "AND lower(btrim(COALESCE(state, ''))) = %(state)s "
+        "AND lower(btrim(COALESCE(zip_code, ''))) = %(zip)s "
+        "LIMIT 1"
+    )
+    params = {"street": street, "city": city, "state": state, "zip": zip_code}
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    return dict(row) if row is not None else None
+
+
 def get_property(property_id: UUID, config: DatabaseConfig | None = None) -> dict[str, Any] | None:
     """Return one property row by id, or None when it does not exist."""
     sql = f"SELECT {', '.join(_PROPERTY_COLUMNS)} FROM properties WHERE id = %(id)s"

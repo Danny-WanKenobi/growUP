@@ -1,3 +1,3 @@
-"""Grow Up application package (MVP-002 property data foundation)."""
+"""Grow Up application package (MVP-003 Gabriel discovery agent)."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

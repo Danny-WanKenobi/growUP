@@ -234,6 +234,103 @@ python scripts/load_synthetic_fixture.py   # exits 1: refused by policy
 The fixture remains available for isolated automated testing only (tests read
 the JSON without inserting it anywhere).
 
+---
+
+## 🔍 Gabriel — Property Discovery Agent (MVP-003)
+
+Gabriel researches **real** commercial properties and records them as
+preliminary operational records through the existing MVP-002 validation gate.
+He discovers possible opportunities; he never verifies claims. Verification
+belongs to Raphael (future milestone).
+
+### Discovery source
+
+MVP-003 ships one real provider, behind a modular interface so more can be
+added later:
+
+- **Overpass (`overpass`)** — OpenStreetMap building footprints with names,
+  addresses, and building-type tags, queried over a caller-supplied bounding
+  box via the public Overpass API (`https://overpass-api.de/api/interpreter`,
+  docs: `https://wiki.openstreetmap.org/wiki/Overpass_API`). No credentials
+  required. Access complies with the OSM usage policy: bounded result counts,
+  explicit timeouts, identifying User-Agent, and no bypassed restrictions.
+
+High-rise, downtown-commercial, and warehouse/industrial candidates are
+queried together with no ranking boost, preserving equal priority. OpenStreetMap
+provides no listing prices, vacancy figures, or ownership data, so Gabriel's
+records carry `unknown` status with unknowns as null and a notes entry
+describing what is missing. Long listing or vacancy periods are never treated
+as proof of financial distress.
+
+To add a provider: implement the `DiscoverySource` interface in a new module
+under `app/agents/gabriel/sources/`, register it in `SOURCES`, and cover it
+with mocked tests. No other Gabriel code changes.
+
+### API endpoints
+
+| Method | Path | Result |
+|---|---|---|
+| `GET` | `/discovery/sources` | `200` with provider metadata (no credentials needed) |
+| `POST` | `/discovery/runs` | `200` with run counts, created ids, and skip reasons |
+
+`POST /discovery/runs` accepts `source` (default `overpass`), a bounded `bbox`
+(max 0.5° span per side), optional `categories`, `limit` (1–25, default 10),
+and `timeout_seconds` (5–60, default 15). Unknown sources and unbounded input
+return `422`; provider failures return `502` with nothing fabricated or
+persisted; database problems return `503` as with the property endpoints.
+
+### Evidence, duplicates, and integrity
+
+- Every record keeps traceable `provenance`: provider name, query bounds,
+  retrieval timestamp, and the OpenStreetMap element URL.
+- Gabriel populates estimated/unknown fields only -- never verified fields
+  or `field_evidence`. All payloads pass the MVP-002 `PropertyCreate` gate.
+- Duplicates are skipped, never merged: same normalized street address means
+  the same property. Gabriel never updates existing rows, so verified values
+  cannot be overwritten by discovery. Skipped candidates are reported with
+  reasons (`already stored`, `duplicate within this run`, `insufficient
+  location information`, `failed operational validation gate`).
+- The synthetic Dallas fixture is never inserted by discovery; empty
+  provider results persist nothing.
+
+### External configuration requirements
+
+None beyond MVP-002. No API keys or credentials. The host needs network
+egress to `overpass-api.de` (HTTPS) and the usual `DATABASE_*` settings with
+migrations applied.
+
+### First controlled discovery test
+
+Run against a development database with migrations applied (never production):
+
+```bash
+# 1. Confirm the provider is registered (no credentials needed).
+curl http://127.0.0.1:8001/discovery/sources
+
+# 2. Run a small bounded discovery pass over downtown Dallas.
+curl -X POST http://127.0.0.1:8001/discovery/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"overpass",
+       "bbox":{"south":32.770,"west":-96.810,"north":32.790,"east":-96.785},
+       "limit":3,"timeout_seconds":20}'
+
+# 3. Inspect what Gabriel stored (unknown-status, sourced, nulls for unknowns).
+curl "http://127.0.0.1:8001/properties?limit=3"
+
+# 4. Re-run step 2 unchanged: previously stored addresses must now be
+#    reported as skipped duplicates with zero new records created.
+```
+
+### Known limitations
+
+- OpenStreetMap coverage varies; some candidates lack names or addresses and
+  are skipped as unusable. Address matching is intentionally simple (case,
+  punctuation, whitespace) -- abbreviation variants may not dedup.
+- Gabriel finds candidate buildings, not listings: prices, vacancy duration,
+  and ownership require future providers and Raphael's verification.
+- Live Overpass research needs direct HTTPS egress; sandboxed or proxied
+  networks may fail closed with `502 source_unavailable`.
+
 ### Environment requirements
 
 MVP-002 adds no new environment variables. It reuses the MVP-001 PostgreSQL
