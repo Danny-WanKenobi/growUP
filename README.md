@@ -930,11 +930,48 @@ degrade silently-safe, permanent failures downgrade to a file-traced
 warning via `emit_nonfatal`, and validation errors propagate as code
 bugs. `emit_nonfatal` returns an `EmitOutcome`
 (`persisted_pg`/`file_copy`/`degraded`/`error`) so callers can
-distinguish PostgreSQL-persisted permanent events from degraded ones;
-a degraded permanent event is explicitly not durably recorded, and no
-retry queue exists yet — guaranteed eventual persistence would require
-a follow-up outbox design. No extra Brave calls, no ranking/geography
-changes, no new endpoints or migrations.
+distinguish PostgreSQL-persisted permanent events from degraded ones.
+No extra Brave calls, no ranking/geography changes, no new endpoints
+or migrations.
+
+### Phase 3A — Durable SQLite outbox (storage foundation)
+
+`app/observability/outbox.py` (`Outbox`) is the first stage of durable
+event recovery: a transactional SQLite store for permanent events that
+survives application restarts when PostgreSQL is unavailable.
+**The outbox is not yet connected to the live emitter** — no delivery,
+worker, or Gabriel integration exists in this phase.
+
+- **Configuration:** `OBS_OUTBOX_PATH` (default
+  `outbox/events-outbox.sqlite3` for development). Ubuntu:
+  `/var/www/growup/shared/observability/events-outbox.sqlite3`,
+  outside versioned releases. The module never creates the database on
+  import; schema setup is an explicit `initialize()` call. Production
+  use requires an explicitly configured absolute path outside the
+  release tree: `Outbox(..., production=True)` (which the Phase 3B
+  worker must use) rejects relative paths and anything resolving
+  through symlinks under `/var/www/growup/releases/` or
+  `/var/www/growup/current/`, failing closed with `OutboxConfigError`.
+- **Schema:** one row per event (`event_id` primary key, complete
+  validated/redacted JSON payload, event + enqueue timestamps,
+  `pending`/`delivered` status, attempt count, last attempt/error,
+  next retry time), with a pending-retrieval index.
+- **Durability:** WAL mode, `synchronous=FULL`, busy timeout, explicit
+  transactions. `accept()` returns only after commit; any failure
+  raises and the event is NOT accepted. Commits depend on filesystem
+  reliability — SQLite does not survive physical disk failure.
+- **Identity:** the existing `event_id`; identical resubmission is an
+  idempotent no-op, conflicting payloads raise `OutboxConflictError`.
+  Nonpermanent events are rejected. Payloads are re-validated and
+  re-scrubbed on accept.
+- **Security:** created directories `0700`, database and WAL sidecars
+  `0600`, service-account owned; pre-existing admin paths are never
+  altered; error categories are short codes, never tracebacks.
+- **Lifecycle:** `accept` → `pending` (retry-due, oldest first) →
+  `mark_delivered` / `record_attempt` (attempt count + next retry).
+  Delivered rows are retained for audit; retention purging is future
+  work. Phase 3B will add the recovery worker that forwards pending
+  rows to PostgreSQL and marks them delivered.
 
 ---
 

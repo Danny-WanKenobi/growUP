@@ -32,6 +32,15 @@ from app.observability.events import (
     Severity,
 )
 from app.observability.jsonlog import JsonlSink, get_sink, purge_old_log_files, reset_sinks
+from app.observability.outbox import (
+    Outbox,
+    OutboxConfigError,
+    OutboxConflictError,
+    OutboxError,
+    OutboxUnavailableError,
+    PendingEvent,
+    validate_production_path,
+)
 from app.observability.redaction import REDACTED, redact, scrub_text
 from app.observability.store import (
     by_correlation,
@@ -53,6 +62,12 @@ __all__ = [
     "EventPersistenceError",
     "JsonlSink",
     "ObservabilityConfig",
+    "Outbox",
+    "OutboxConfigError",
+    "OutboxConflictError",
+    "OutboxError",
+    "OutboxUnavailableError",
+    "PendingEvent",
     "REDACTED",
     "RetentionClass",
     "Severity",
@@ -82,4 +97,5 @@ __all__ = [
     "redact",
     "reset_sinks",
     "scrub_text",
+    "validate_production_path",
 ]

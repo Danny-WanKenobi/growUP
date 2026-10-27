@@ -18,6 +18,7 @@ DEFAULT_MAX_DETAIL_BYTES = 8192
 DEFAULT_MAX_EVIDENCE_REFS = 50
 DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_LOG_BACKUP_COUNT = 10
+DEFAULT_OUTBOX_PATH = "outbox/events-outbox.sqlite3"
 
 _VALID_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
@@ -35,6 +36,7 @@ class ObservabilityConfig:
     max_evidence_refs: int = DEFAULT_MAX_EVIDENCE_REFS
     log_max_bytes: int = DEFAULT_LOG_MAX_BYTES
     log_backup_count: int = DEFAULT_LOG_BACKUP_COUNT
+    outbox_path: str = DEFAULT_OUTBOX_PATH
 
 
 def _positive_int(raw: str | None, default: int) -> int:
@@ -67,4 +69,5 @@ def get_observability_config() -> ObservabilityConfig:
         log_backup_count=_positive_int(
             os.getenv("OBS_LOG_BACKUP_COUNT"), DEFAULT_LOG_BACKUP_COUNT
         ),
+        outbox_path=os.getenv("OBS_OUTBOX_PATH", DEFAULT_OUTBOX_PATH) or DEFAULT_OUTBOX_PATH,
     )
