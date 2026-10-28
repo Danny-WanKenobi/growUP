@@ -1524,6 +1524,57 @@ live-PostgreSQL tests in `tests/test_external_action_reads.py`
 the reconciled-dossier test, which removes its decision row
 before the shared cleanup).
 
+### Phase 3C-3B-3B-3B-2 — Human review workflow and evidence presentation
+
+Pure `build_reconciliation_review(dossier)` in the new
+`app/external_action_review.py` transforms one dossier from
+`get_reconciliation_case()` into a JSON-compatible human
+review report. No database, network, filesystem, routes,
+authorization, execution, or reconciliation capability —
+and no imports capable of those. Authorization and snapshot
+guarantees stay with the dossier reader.
+
+- **Six sections:** case summary (identifiers, agent, type,
+  state, interpretation, review reason), authorization
+  (principal, reference, timestamp — never credentials),
+  execution history (attempts with open/succeeded/failed/
+  unknown categories and honest descriptions), evidence
+  assessment, audit timeline (chronological, truncation
+  flagged), and review guidance (missing information,
+  permissible steps, standing prohibitions).
+- **Evidence:** `documented` / `reported` /
+  `human_reviewed` / `missing` classification kept separate
+  from `complete` / `partial` / `missing` completeness.
+  Credibility comes only from the recorded review tier:
+  recorded-but-unreviewed evidence is conservatively
+  `reported` however complete its references (the dossier
+  carries no signal distinguishing documented from reported
+  claims, so `documented` stays reserved for a future
+  signal); `human_reviewed` is never presented as
+  independently provider-verified, and referenced artifacts
+  are cited, never assumed inspected. When a truncated
+  history omits the resolved attempt, the report explicitly
+  discloses that the decision-to-attempt linkage cannot be
+  confirmed from the displayed history.
+- **Readiness:** `needs_evidence` /
+  `ready_for_human_review` / `review_completed` /
+  `not_applicable`, derived conservatively from present
+  fields; ready-for-review never authorizes reconciliation.
+- **Defensive:** explicit field allowlist (unexpected keys,
+  including smuggled secrets, are dropped), strict type
+  coercion, state/status/decision cross-checks plus attempt
+  and decision linkage validation (identifiers, ordering,
+  count bounds, terminal-outcome agreement, UNKNOWN-history
+  preservation; truncated pages skip only what they cannot
+  prove), input never mutated; malformed input raises
+  `ReviewInputError`.
+
+Tests: `tests/test_external_action_review.py` covers every
+readiness status and evidence classification, truncation,
+malformed dossiers, sensitive-field exclusion,
+immutability, determinism, and structural purity guards —
+no PostgreSQL needed.
+
 ---
 
 ## 🎥 Demonstration
