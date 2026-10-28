@@ -7,6 +7,8 @@ connection strings, or driver internals.
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.config import DatabaseConfig, get_database_config
 
 
@@ -16,6 +18,22 @@ class DatabaseNotConfiguredError(RuntimeError):
 
 class DatabaseUnavailableError(RuntimeError):
     """A PostgreSQL connection attempt failed."""
+
+
+def acquire_intake_locks(cur: Any, keys: list[str]) -> None:
+    """Acquire transaction-scoped advisory locks in deterministic order.
+
+    Keys are deduplicated and sorted so concurrent operations holding
+    overlapping key sets always acquire in the same global order (no
+    deadlocks). Locks are transaction-scoped: PostgreSQL releases them
+    automatically at commit or rollback.
+
+    Locks coordinate intake operations; they never prove physical
+    identity. Callers must still run every identity check after
+    acquiring them.
+    """
+    for key in sorted(set(keys)):
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%(key)s))", {"key": key})
 
 
 def check_database_connection(config: DatabaseConfig | None = None) -> bool:

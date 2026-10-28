@@ -262,6 +262,26 @@ def enrich_property_estimates(
         raise ValueError(f"enrichment supports estimated fields only: {unknown}")
     if not fills:
         return []
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                row = _update_estimates_cursor(cur, property_id, fills, field_evidence, data_status)
+            conn.commit()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    return list(fills) if row is not None else []
+
+
+def _update_estimates_cursor(
+    cur: Any,
+    property_id: UUID | str,
+    fills: dict[str, Any],
+    field_evidence: dict[str, str] | None,
+    data_status: str,
+) -> dict[str, Any] | None:
+    """Execute the guarded estimates UPDATE on a caller-managed cursor (no commit)."""
     assignments = ", ".join(f"{col} = %({col})s" for col in fills)
     guards = " AND ".join(f"{col} IS NULL" for col in fills)
     sql = (
@@ -274,16 +294,31 @@ def enrich_property_estimates(
     params = {"id": str(property_id),
               "field_evidence": json.dumps(field_evidence) if field_evidence is not None else None,
               "data_status": data_status, **fills}
-    try:
-        with get_connection(config) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                row = cur.fetchone()
-            conn.commit()
-    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
-        raise
-    except Exception as exc:
-        raise DatabaseUnavailableError("database_error") from exc
+    cur.execute(sql, params)
+    row = cur.fetchone()
+    return dict(row) if row is not None else None
+
+
+def enrich_property_estimates_in_transaction(
+    conn: Any,
+    property_id: UUID | str,
+    fills: dict[str, Any],
+    field_evidence: dict[str, str] | None,
+    data_status: str,
+) -> list[str]:
+    """Fill NULL estimated columns on the caller's connection (no commit).
+
+    Same guards and row shape as :func:`enrich_property_estimates`;
+    the caller owns commit/rollback so several writes can share one
+    transaction.
+    """
+    unknown = [key for key in fills if key not in ENRICHABLE_ESTIMATED_FIELDS]
+    if unknown:
+        raise ValueError(f"enrichment supports estimated fields only: {unknown}")
+    if not fills:
+        return []
+    with conn.cursor() as cur:
+        row = _update_estimates_cursor(cur, property_id, fills, field_evidence, data_status)
     return list(fills) if row is not None else []
 
 

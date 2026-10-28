@@ -18,6 +18,40 @@ _NO_MATCH = AddressMatch(AddressMatchStatus.NONE)
 def _unique_match(property_id: str) -> AddressMatch:
     return AddressMatch(AddressMatchStatus.UNIQUE, property_id)
 
+
+class _DummyConnection:
+    """No-op transaction connection (write seams are mocked separately)."""
+
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+    def cursor(self):
+        return self
+
+    def execute(self, *args, **kwargs) -> None:
+        pass
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+def _txn_env(monkeypatch) -> _DummyConnection:
+    conn = _DummyConnection()
+    monkeypatch.setattr(intake, "get_connection", lambda config=None: conn)
+    monkeypatch.setattr(intake, "acquire_intake_locks", lambda cur, keys: None)
+    monkeypatch.setattr(intake, "find_evidence_by_url", lambda url: [])
+    return conn
+
 client = TestClient(app, raise_server_exceptions=False)
 
 _OBSERVED = "2026-10-20T12:00:00+00:00"
@@ -113,18 +147,19 @@ def test_valid_intake_creates_record_with_evidence(monkeypatch) -> None:
     evidence: dict = {}
     distress: dict = {}
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
-        intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-1"}
+        intake, "create_property_in_transaction", lambda conn, data: created.update(data) or {"id": "new-prop-1"}
     )
     monkeypatch.setattr(
         intake,
-        "create_listing_evidence",
-        lambda **kwargs: evidence.update(kwargs) or {"id": "ev-1"},
+        "create_listing_evidence_in_transaction",
+        lambda conn, **kwargs: evidence.update(kwargs) or {"id": "ev-1"},
     )
     monkeypatch.setattr(
         intake,
-        "create_distress_observations",
-        lambda property_id, rows, **_: distress.update({"rows": rows}) or ["d-1"],
+        "create_distress_observations_in_transaction",
+        lambda conn, property_id, rows, **_: distress.update({"rows": rows}) or ["d-1"],
     )
     response = client.post(
         "/discovery/intake",
@@ -210,11 +245,12 @@ def test_missing_financials_stay_unknown(monkeypatch) -> None:
     _configured_env(monkeypatch)
     created: dict = {}
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
-        intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-2"}
+        intake, "create_property_in_transaction", lambda conn, data: created.update(data) or {"id": "new-prop-2"}
     )
-    monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-2"})
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: {"id": "ev-2"})
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     response = client.post("/discovery/intake", json=_body())
     assert response.status_code == 201
     assert response.json()["filled_fields"] == []
@@ -233,13 +269,14 @@ def test_available_area_preserved_as_evidence_only(monkeypatch) -> None:
     created: dict = {}
     evidence: dict = {}
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
-        intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-3"}
+        intake, "create_property_in_transaction", lambda conn, data: created.update(data) or {"id": "new-prop-3"}
     )
     monkeypatch.setattr(
-        intake, "create_listing_evidence", lambda **kwargs: evidence.update(kwargs) or {"id": "ev-3"}
+        intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: evidence.update(kwargs) or {"id": "ev-3"}
     )
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     response = client.post(
         "/discovery/intake",
         json=_body(advertised_building_area_sqft=30000, advertised_available_area_sqft=5000),
@@ -258,13 +295,14 @@ def test_asking_price_preserved_exactly_as_decimal_string(monkeypatch) -> None:
     created: dict = {}
     evidence: dict = {}
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
-        intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-4"}
+        intake, "create_property_in_transaction", lambda conn, data: created.update(data) or {"id": "new-prop-4"}
     )
     monkeypatch.setattr(
-        intake, "create_listing_evidence", lambda **kwargs: evidence.update(kwargs) or {"id": "ev-5"}
+        intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: evidence.update(kwargs) or {"id": "ev-5"}
     )
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     response = client.post("/discovery/intake", json=_body(asking_price="1250000.10"))
     assert response.status_code == 201
     assert evidence["payload"]["asking_price"] == "1250000.10"
@@ -310,10 +348,11 @@ def test_duplicate_listing_skipped_without_changes(monkeypatch) -> None:
     def _must_not_write(*args, **kwargs):
         raise AssertionError("duplicate resubmission must not write")
 
-    monkeypatch.setattr(intake, "create_property", _must_not_write)
-    monkeypatch.setattr(intake, "enrich_property_estimates", _must_not_write)
-    monkeypatch.setattr(intake, "create_listing_evidence", _must_not_write)
-    monkeypatch.setattr(intake, "create_distress_observations", _must_not_write)
+    _txn_env(monkeypatch)
+    monkeypatch.setattr(intake, "create_property_in_transaction", _must_not_write)
+    monkeypatch.setattr(intake, "enrich_property_estimates_in_transaction", _must_not_write)
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", _must_not_write)
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", _must_not_write)
     response = client.post("/discovery/intake", json=_body())
     assert response.status_code == 200
     assert response.json()["outcome"] == "skipped_duplicate"
@@ -331,14 +370,15 @@ def test_verified_values_protected_during_enrichment(monkeypatch) -> None:
     monkeypatch.setattr(intake, "get_property", lambda pid: dict(existing))
     monkeypatch.setattr(intake, "get_listing_evidence", lambda pid, url: None)
     enriched: dict = {}
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
         intake,
-        "enrich_property_estimates",
-        lambda pid, fills, ev, st: enriched.update(
+        "enrich_property_estimates_in_transaction",
+        lambda conn, pid, fills, ev, st: enriched.update(
             {"fills": fills, "evidence": ev, "status": st}) or list(fills),
     )
-    monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-new"})
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: {"id": "ev-new"})
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     response = client.post(
         "/discovery/intake", json=_body(asking_price="1250000.00", advertised_building_area_sqft=20000)
     )
@@ -362,14 +402,15 @@ def test_conflicting_enrichment_skipped_but_evidence_kept(monkeypatch) -> None:
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _unique_match("42345678-1234-5678-1234-567812345678"))
     monkeypatch.setattr(intake, "get_property", lambda pid: dict(existing))
     monkeypatch.setattr(intake, "get_listing_evidence", lambda pid, url: None)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
-        intake, "enrich_property_estimates", lambda pid, fills, ev, st: list(fills)
+        intake, "enrich_property_estimates_in_transaction", lambda conn, pid, fills, ev, st: list(fills)
     )
     recorded: dict = {}
     monkeypatch.setattr(
-        intake, "create_listing_evidence", lambda **kwargs: recorded.update(kwargs) or {"id": "ev-4"}
+        intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: recorded.update(kwargs) or {"id": "ev-4"}
     )
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     # Building 100 would undercut the stored vacant figure of 5000: conflict.
     response = client.post(
         "/discovery/intake", json=_body(advertised_building_area_sqft=100)
@@ -416,9 +457,10 @@ def test_intake_fetches_nothing(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "get", _must_not_fetch)
     monkeypatch.setattr(httpx, "post", _must_not_fetch)
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
-    monkeypatch.setattr(intake, "create_property", lambda data: {"id": "new-prop-9"})
-    monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-9"})
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    _txn_env(monkeypatch)
+    monkeypatch.setattr(intake, "create_property_in_transaction", lambda conn, data: {"id": "new-prop-9"})
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: {"id": "ev-9"})
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     assert client.post("/discovery/intake", json=_body()).status_code == 201
 
 
@@ -494,9 +536,10 @@ def test_intake_incorrect_header_rejected() -> None:
 def test_intake_valid_header_accepted(monkeypatch) -> None:
     _configured_env(monkeypatch)
     monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
-    monkeypatch.setattr(intake, "create_property", lambda data: {"id": "auth-prop-1"})
-    monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-a"})
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    _txn_env(monkeypatch)
+    monkeypatch.setattr(intake, "create_property_in_transaction", lambda conn, data: {"id": "auth-prop-1"})
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: {"id": "ev-a"})
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     response = client.request(
         "POST", "/discovery/intake", json=_body(),
         headers={"X-Intake-Key": TEST_INTAKE_KEY},
@@ -651,6 +694,7 @@ def test_intake_database_failure_maps_to_503(monkeypatch) -> None:
     def _fail(*args, **kwargs):
         raise DatabaseUnavailableError("connection_failed")
 
+    _txn_env(monkeypatch)
     monkeypatch.setattr(intake, "match_existing_address", _fail)
     response = client.post("/discovery/intake", json=_body())
     assert response.status_code == 503

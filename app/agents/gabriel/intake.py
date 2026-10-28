@@ -36,13 +36,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
-from app.agents.gabriel.dedup import AddressMatchStatus, match_existing_address, normalize_text
+from app.agents.gabriel.dedup import (
+    AddressMatchStatus,
+    intake_address_lock_key,
+    intake_url_lock_key,
+    match_existing_address,
+    normalize_text,
+)
 from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
-from app.db import DatabaseNotConfiguredError
+from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError, acquire_intake_locks
 from app.listings_db import (
-    create_distress_observations,
-    create_listing_evidence,
+    create_distress_observations_in_transaction,
+    create_listing_evidence_in_transaction,
     find_evidence_by_url,
     get_listing_evidence,
 )
@@ -52,7 +58,12 @@ from app.properties import (
     check_source_text,
     derive_data_status,
 )
-from app.properties_db import create_property, enrich_property_estimates, get_property
+from app.properties_db import (
+    create_property_in_transaction,
+    enrich_property_estimates_in_transaction,
+    get_connection,
+    get_property,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -390,10 +401,21 @@ def _location_conflicts(body: ListingIntakeRequest, existing: dict[str, Any]) ->
     return False
 
 
-def _resolve_addressless_url(
-    body: ListingIntakeRequest, source_url: str
+def _street_conflicts(data: dict[str, Any], existing: dict[str, Any]) -> bool:
+    """True when present street addresses contradict each other.
+
+    Missing information on either side is never a contradiction.
+    Exact normalized comparison only.
+    """
+    incoming = normalize_text(data.get("street_address"))
+    stored = normalize_text(existing.get("street_address"))
+    return bool(incoming) and bool(stored) and incoming != stored
+
+
+def _resolve_url_association(
+    body: ListingIntakeRequest, data: dict[str, Any], source_url: str
 ) -> IntakeResult | None:
-    """Check global URL associations for an addressless listing.
+    """Check global URL associations for a listing with no address match.
 
     Returns a duplicate or review outcome with zero writes, or None
     when no previous association exists and intake may proceed. A URL
@@ -419,7 +441,11 @@ def _resolve_addressless_url(
     existing = get_property(UUID(property_id))
     if existing is None:  # pragma: no cover - raced deletion; fail closed
         raise IntakeError("associated property disappeared; resubmit the listing")
-    if _identity_ambiguous(body, existing) or _location_conflicts(body, existing):
+    if (
+        _identity_ambiguous(body, existing)
+        or _location_conflicts(body, existing)
+        or _street_conflicts(data, existing)
+    ):
         return IntakeResult(
             outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
             property_id="",
@@ -486,8 +512,38 @@ def process_intake(body: ListingIntakeRequest) -> IntakeResult:
     return result
 
 
+def _rollback_quietly(conn: Any) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+def _intake_lock_keys(data: dict[str, Any], source_url: str) -> list[str]:
+    """Coordination keys for one intake operation.
+
+    Every usable listing URL contributes its exact-URL key; a usable
+    street address additionally contributes its normalized-address key.
+    Keys coordinate concurrent operations sharing a URL or an address;
+    they never prove physical identity.
+    """
+    keys = []
+    if source_url:
+        keys.append(intake_url_lock_key(source_url))
+    if normalize_text(data.get("street_address")):
+        keys.append(
+            intake_address_lock_key(
+                data.get("street_address"),
+                data.get("city"),
+                data.get("state"),
+                data.get("zip_code"),
+            )
+        )
+    return keys
+
+
 def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
-    """Validate, dedup, and persist one listing (create, enrich, skip, or review)."""
+    """Validate one listing, then decide and persist inside a locked transaction."""
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
     try:
@@ -499,7 +555,38 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
     evidence_payload = build_evidence_payload(body, mapped)
     distress_rows = build_distress_rows(body)
     source_url = str(body.listing_url)
+    keys = _intake_lock_keys(data, source_url)
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                acquire_intake_locks(cur, keys)
+            return _process_intake_locked(
+                conn, body, data, mapped, evidence_payload, distress_rows, source_url
+            )
+        except (IntakeError, ValueError, DatabaseNotConfiguredError, DatabaseUnavailableError):
+            _rollback_quietly(conn)
+            raise
+        except Exception as exc:
+            _rollback_quietly(conn)
+            raise DatabaseUnavailableError("database_error") from exc
 
+
+def _process_intake_locked(
+    conn: Any,
+    body: ListingIntakeRequest,
+    data: dict[str, Any],
+    mapped: list[str],
+    evidence_payload: dict[str, Any],
+    distress_rows: list[dict[str, Any]],
+    source_url: str,
+) -> IntakeResult:
+    """Decide and persist one listing inside a locked transaction.
+
+    Runs after advisory locks are held, so every identity check below
+    observes post-lock state and no same-key operation can commit
+    concurrently. Write paths commit exactly once; read-only outcomes
+    return without writing.
+    """
     address_match = match_existing_address(data)
     if address_match.status is AddressMatchStatus.AMBIGUOUS:
         # Several stored properties share this normalized address: select
@@ -515,16 +602,18 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
             ),
         )
     if address_match.status is AddressMatchStatus.NONE:
-        if not normalize_text(data.get("street_address")) and source_url:
-            # Addressless with no address match: a repeated listing URL
-            # must not mint another property. Missing/unusable URLs keep
-            # existing behavior (the request model requires a valid URL).
-            duplicate = _resolve_addressless_url(body, source_url)
+        if source_url:
+            # No address match: a repeated listing URL must not mint
+            # another property, whether addressed or addressless.
+            # Missing/unusable URLs keep existing behavior (the request
+            # model requires a valid URL).
+            duplicate = _resolve_url_association(body, data, source_url)
             if duplicate is not None:
                 return duplicate
-        row = create_property(data)
+        row = create_property_in_transaction(conn, data)
         property_id = str(row["id"])
-        evidence = create_listing_evidence(
+        evidence = create_listing_evidence_in_transaction(
+            conn,
             property_id=property_id,
             source_name=body.source_name,
             source_url=source_url,
@@ -532,7 +621,8 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
             listing_type=body.listing_type.value,
             payload=evidence_payload,
         )
-        distress_ids = create_distress_observations(property_id, distress_rows)
+        distress_ids = create_distress_observations_in_transaction(conn, property_id, distress_rows)
+        conn.commit()
         return IntakeResult(
             outcome=IntakeOutcome.CREATED,
             property_id=property_id,
@@ -561,6 +651,20 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
                 "same address but a materially different building name; "
                 "identity is ambiguous, existing record preserved unchanged, "
                 "no evidence attached; human identity review required"
+            ),
+        )
+    url_associated = find_evidence_by_url(source_url)
+    if any(str(link["property_id"]) != str(existing_id) for link in url_associated):
+        # This listing URL already evidences a different property while
+        # the address matches this one: the signals disagree. Review
+        # with zero writes; select neither property.
+        return IntakeResult(
+            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            property_id="",
+            message=(
+                "listing URL already recorded for a different property; "
+                "nothing was changed, no evidence attached; "
+                "human identity review required"
             ),
         )
     fills = {
@@ -594,11 +698,12 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
         **{k: v for k, v in new_refs.items() if k not in stored_evidence},
     }
     merged_status = derive_data_status({**existing, **fills}).value
-    filled = enrich_property_estimates(UUID(str(existing_id)), fills, merged_evidence or None, merged_status)
+    filled = enrich_property_estimates_in_transaction(conn, UUID(str(existing_id)), fills, merged_evidence or None, merged_status)
     evidence_id: str | None = None
     distress_ids: list[str] = []
     if not already_recorded:
-        evidence = create_listing_evidence(
+        evidence = create_listing_evidence_in_transaction(
+            conn,
             property_id=str(existing_id),
             source_name=body.source_name,
             source_url=source_url,
@@ -607,7 +712,8 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
             payload=evidence_payload,
         )
         evidence_id = str(evidence["id"])
-        distress_ids = create_distress_observations(str(existing_id), distress_rows)
+        distress_ids = create_distress_observations_in_transaction(conn, str(existing_id), distress_rows)
+    conn.commit()
     return IntakeResult(
         outcome=IntakeOutcome.ENRICHED,
         property_id=str(existing_id),

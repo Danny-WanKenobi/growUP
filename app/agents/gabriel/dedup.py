@@ -108,3 +108,27 @@ def match_existing_address(payload: dict[str, Any]) -> AddressMatch:
     if len(rows) == 1:
         return AddressMatch(AddressMatchStatus.UNIQUE, rows[0]["id"])
     return AddressMatch(AddressMatchStatus.AMBIGUOUS)
+
+
+def intake_url_lock_key(source_url: str) -> str:
+    """Coordination key for the exact listing URL (verbatim, never altered)."""
+    return f"gabriel-intake-url:{source_url}"
+
+
+def intake_address_lock_key(
+    street: str, city: str = "", state: str = "", zip_code: str = ""
+) -> str:
+    """Coordination key for a normalized address (symmetric contract).
+
+    Components use the same normalization as operational lookup so
+    equivalent spellings serialize together. Length-prefixed so no two
+    distinct tuples can produce the same key.
+    """
+    parts = [
+        normalize_text(street),
+        normalize_text(city),
+        normalize_text(state),
+        normalize_text(zip_code),
+    ]
+    joined = "|".join(f"{len(part)}:{part}" for part in parts)
+    return f"gabriel-intake-addr:{joined}"

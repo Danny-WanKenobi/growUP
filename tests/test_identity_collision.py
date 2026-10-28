@@ -19,6 +19,7 @@ same-name, same-address listing from a second source still enriches.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from datetime import datetime, timezone
@@ -39,6 +40,9 @@ class _CollisionStore:
         self.properties: dict[str, dict[str, Any]] = {}
         self.evidence: list[dict[str, Any]] = []
         self.distress: list[dict[str, Any]] = []
+        self.queries: list[str] = []
+        self.params: list[dict[str, Any]] = []
+        self.fail_on: str | None = None
 
 
 def _pg_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -69,6 +73,10 @@ class _FakeCursor:
         return False
 
     def execute(self, query: str, params: dict[str, Any] | None = None) -> None:
+        self._store.queries.append(query)
+        self._store.params.append(dict(params or {}))
+        if self._store.fail_on and self._store.fail_on in query:
+            raise RuntimeError(f"injected failure for test: {self._store.fail_on}")
         self._query = query
         self._params = dict(params or {})
         self._rows = self._apply()
@@ -83,6 +91,8 @@ class _FakeCursor:
         store = self._store
         query = self._query
         params = self._params
+        if "pg_advisory_xact_lock" in query:
+            return [{"locked": True}]
         if "FROM listing_evidence" in query and query.strip().upper().startswith("SELECT"):
             if "property_id" in params:
                 for row in store.evidence:
@@ -164,8 +174,14 @@ class _FakeCursor:
 class _FakeConnection:
     def __init__(self, store: _CollisionStore) -> None:
         self._store = store
+        self._snapshot: tuple | None = None
+        self.commits = 0
+        self.rollbacks = 0
 
     def __enter__(self) -> _FakeConnection:
+        self._snapshot = copy.deepcopy(
+            (self._store.properties, self._store.evidence, self._store.distress)
+        )
         return self
 
     def __exit__(self, *args: object) -> bool:
@@ -175,17 +191,28 @@ class _FakeConnection:
         return _FakeCursor(self._store)
 
     def commit(self) -> None:
-        pass
+        self.commits += 1
+        self._snapshot = None
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        if self._snapshot is not None:
+            properties, evidence, distress = copy.deepcopy(self._snapshot)
+            self._store.properties = properties
+            self._store.evidence = evidence
+            self._store.distress = distress
+            self._snapshot = None
 
 
 @pytest.fixture
 def collision_store(monkeypatch: pytest.MonkeyPatch) -> _CollisionStore:
     """Route the real DB-access functions at an in-memory store.
 
-    Only the driver-level `get_connection` is stubbed (both import sites);
-    `match_existing_address`, `create_property`, `get_property`,
-    `enrich_property_estimates`, and the listing-evidence helpers all run
+    Only the driver-level `get_connection` is stubbed (all import sites,
+    including the intake coordinator's); `match_existing_address`, the
+    transaction-capable writers, and the listing-evidence helpers all run
     their real code, including the real SQL text and real dedup logic.
+    Lock acquisition also runs its real code against the fake cursor.
     """
     store = _CollisionStore()
     monkeypatch.setenv("DATABASE_HOST", "localhost")
@@ -198,6 +225,9 @@ def collision_store(monkeypatch: pytest.MonkeyPatch) -> _CollisionStore:
     )
     monkeypatch.setattr(
         "app.listings_db.get_connection", lambda config=None: _FakeConnection(store)
+    )
+    monkeypatch.setattr(
+        "app.agents.gabriel.intake.get_connection", lambda config=None: _FakeConnection(store)
     )
     return store
 
@@ -505,6 +535,146 @@ def test_addressless_unusable_url_rejected() -> None:
 
     with pytest.raises(ValidationError):
         _listing("URL Hall", "not-a-url", None, street=None)
+
+
+def test_create_evidence_failure_rolls_back(collision_store: _CollisionStore) -> None:
+    """Evidence failure leaves no property behind (real coordinator, fake driver)."""
+    from app.db import DatabaseUnavailableError
+
+    collision_store.fail_on = "INSERT INTO listing_evidence"
+    with pytest.raises(DatabaseUnavailableError):
+        process_intake(
+            _listing("Atomic Hall", "https://example.com/listings/atomic-evidence-fail", 120000)
+        )
+    assert collision_store.properties == {}
+    assert collision_store.evidence == []
+    assert collision_store.distress == []
+
+
+def test_create_distress_failure_rolls_back(collision_store: _CollisionStore) -> None:
+    """Distress failure rolls back the property and evidence with it."""
+    from app.db import DatabaseUnavailableError
+
+    collision_store.fail_on = "INSERT INTO distress_observations"
+    with pytest.raises(DatabaseUnavailableError):
+        process_intake(
+            _listing(
+                "Atomic Hall",
+                "https://example.com/listings/atomic-distress-fail",
+                120000,
+                distress=_DISTRESS_ONE,
+            )
+        )
+    assert collision_store.properties == {}
+    assert collision_store.evidence == []
+    assert collision_store.distress == []
+
+
+def test_enrich_evidence_failure_rolls_back(collision_store: _CollisionStore) -> None:
+    """Enrichment failure leaves the stored property and evidence untouched."""
+    from app.db import DatabaseUnavailableError
+
+    first = process_intake(
+        _listing("Atomic Hall", "https://example.com/listings/atomic-enrich-a", None)
+    )
+    assert first.outcome.value == "created"
+    assert len(collision_store.evidence) == 1
+    collision_store.fail_on = "INSERT INTO listing_evidence"
+    with pytest.raises(DatabaseUnavailableError):
+        process_intake(
+            _listing("Atomic Hall", "https://example.com/listings/atomic-enrich-b", 240000)
+        )
+    assert collision_store.properties[first.property_id]["building_area_sqft_estimated"] is None
+    assert len(collision_store.properties) == 1
+    assert len(collision_store.evidence) == 1
+    assert collision_store.distress == []
+
+
+def test_addressed_url_on_different_property_needs_review(
+    collision_store: _CollisionStore,
+) -> None:
+    """Address match and URL association disagreeing selects neither property."""
+    first_a = process_intake(
+        _listing("Hall Alpha", "https://example.com/listings/split-a", None)
+    )
+    assert first_a.outcome.value == "created"
+    first_b = process_intake(
+        _listing(
+            "Hall Beta",
+            "https://example.com/listings/split-b",
+            None,
+            street="700 Split Avenue",
+        )
+    )
+    assert first_b.outcome.value == "created"
+    result = process_intake(
+        _listing(
+            "Hall Beta",
+            "https://example.com/listings/split-a",
+            240000,
+            street="700 Split Avenue",
+        )
+    )
+    assert result.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert result.property_id == ""
+    assert "different property" in result.message
+    assert len(collision_store.properties) == 2, _diagnostics(collision_store)
+    assert len(collision_store.evidence) == 2
+
+
+def test_addressed_new_street_known_url_duplicates_without_populating(
+    collision_store: _CollisionStore,
+) -> None:
+    """An addressed listing of a known addressless URL duplicates; no backfill."""
+    first = process_intake(
+        _listing("Gain Hall", "https://example.com/listings/gain-url", None, street=None)
+    )
+    assert first.outcome.value == "created"
+    assert collision_store.properties[first.property_id]["street_address"] is None
+    result = process_intake(
+        _listing(
+            "Gain Hall",
+            "https://example.com/listings/gain-url",
+            240000,
+            street="800 Gain Street",
+        )
+    )
+    assert result.outcome.value == "skipped_duplicate", _diagnostics(collision_store)
+    assert result.property_id == first.property_id
+    assert len(collision_store.properties) == 1, _diagnostics(collision_store)
+    assert len(collision_store.evidence) == 1
+    assert collision_store.properties[first.property_id]["street_address"] is None
+
+
+def test_intake_acquires_locks_before_writes(collision_store: _CollisionStore) -> None:
+    """Both coordination keys lock (sorted) before decisions and writes."""
+    url = "https://example.com/listings/atomic-lock-order"
+    result = process_intake(_listing("Atomic Hall", url, 120000))
+    assert result.outcome.value == "created"
+    lock_params = [
+        params["key"]
+        for query, params in zip(collision_store.queries, collision_store.params)
+        if "pg_advisory_xact_lock" in query
+    ]
+    assert lock_params == sorted(lock_params)
+    assert len(lock_params) == 2
+    assert lock_params[0].startswith("gabriel-intake-addr:")
+    assert "500 commerce street" in lock_params[0]
+    assert lock_params[1] == f"gabriel-intake-url:{url}"
+    lock_positions = [
+        i for i, query in enumerate(collision_store.queries) if "pg_advisory_xact_lock" in query
+    ]
+    decision_reads = [
+        i
+        for i, query in enumerate(collision_store.queries)
+        if query.strip().upper().startswith("SELECT") and "pg_advisory_xact_lock" not in query
+    ]
+    assert decision_reads, "expected identity-decision SELECTs for an addressed intake"
+    assert max(lock_positions) < min(decision_reads)
+    first_write = next(
+        i for i, query in enumerate(collision_store.queries) if query.startswith("INSERT INTO")
+    )
+    assert max(lock_positions) < first_write
 
 
 # --- Live PostgreSQL integration (GROWUP_PG_INTEGRATION=1) ---

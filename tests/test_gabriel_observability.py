@@ -358,16 +358,42 @@ def _configured(monkeypatch, module):
     )
 
 
+def _txn_env(monkeypatch) -> None:
+    class _DummyConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+        def cursor(self):
+            return self
+
+        def execute(self, *args, **kwargs) -> None:
+            pass
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+    monkeypatch.setattr(intake, "get_connection", lambda config=None: _DummyConnection())
+    monkeypatch.setattr(intake, "acquire_intake_locks", lambda cur, keys: None)
+    monkeypatch.setattr(intake, "find_evidence_by_url", lambda url: [])
+
+
 def test_intake_accepted_event(monkeypatch) -> None:
     _configured(monkeypatch, intake)
+    _txn_env(monkeypatch)
     prop_id = str(uuid4())
     monkeypatch.setattr(
         intake, "match_existing_address",
         lambda payload: AddressMatch(AddressMatchStatus.NONE),
     )
-    monkeypatch.setattr(intake, "create_property", lambda data: {"id": prop_id})
-    monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-1"})
-    monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
+    monkeypatch.setattr(intake, "create_property_in_transaction", lambda conn, data: {"id": prop_id})
+    monkeypatch.setattr(intake, "create_listing_evidence_in_transaction", lambda conn, **kwargs: {"id": "ev-1"})
+    monkeypatch.setattr(intake, "create_distress_observations_in_transaction", lambda conn, pid, rows, **_: [])
     calls = _tap(monkeypatch, intake, "note_activity", "note_warning")
     body = intake.ListingIntakeRequest.model_validate(
         _intake_body(correlation_id="corr-intake-1")
@@ -390,6 +416,7 @@ def test_intake_accepted_event(monkeypatch) -> None:
 
 def test_intake_rejected_event(monkeypatch) -> None:
     _configured(monkeypatch, intake)
+    _txn_env(monkeypatch)
     monkeypatch.setattr(
         intake, "match_existing_address",
         lambda payload: AddressMatch(AddressMatchStatus.UNIQUE, "22345678-1234-5678-1234-567812345678")
