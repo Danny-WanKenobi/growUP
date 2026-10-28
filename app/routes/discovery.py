@@ -63,11 +63,15 @@ def list_sources() -> list:
 
 
 @router.post("/discovery/runs", response_model=DiscoveryRunResult)
-def start_discovery_run(body: DiscoveryRunRequest) -> DiscoveryRunResult:
+def start_discovery_run(
+    body: DiscoveryRunRequest,
+    _: None = Depends(require_intake_key),
+) -> DiscoveryRunResult:
     """Run one bounded discovery pass and persist new candidates.
 
-    Unknown source names are rejected; provider failures return 502
-    with nothing fabricated or persisted.
+    Requires the X-Intake-Key header. Unknown source names are
+    rejected; provider failures return 502 with nothing fabricated
+    or persisted.
     """
     try:
         return run_discovery(body)

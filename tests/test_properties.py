@@ -30,6 +30,23 @@ LOADER_PATH = Path(__file__).resolve().parent.parent / "scripts" / "load_synthet
 _EVIDENCE = "unit-test evidence record QA-001, county file R-1234"
 _FIELD_REF = "unit-test deed book 12, page 34"
 
+TEST_INTAKE_KEY = "unit-test-intake-key-only"
+
+
+@pytest.fixture(autouse=True)
+def _intake_key_configured(monkeypatch):
+    """Provide the server-side test key for property endpoint tests.
+
+    The environment value alone authenticates nothing: every HTTP
+    request below still passes its X-Intake-Key header explicitly.
+    Tests for missing server configuration override this per-test.
+    """
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
+
+
+def _headers():
+    return {"X-Intake-Key": TEST_INTAKE_KEY}
+
 
 def _stored_row(**overrides):
     row = {
@@ -79,7 +96,7 @@ _CREATE_BODY = {
 
 def test_create_sourced_estimate_returns_201_with_derived_status(monkeypatch) -> None:
     monkeypatch.setattr(property_routes, "create_property", lambda data: _stored_row())
-    response = client.post("/properties", json=_CREATE_BODY)
+    response = client.post("/properties", headers=_headers(), json=_CREATE_BODY)
     assert response.status_code == 201
     body = response.json()
     assert body["data_status"] == "estimated"
@@ -92,7 +109,7 @@ def test_create_sourced_estimate_returns_201_with_derived_status(monkeypatch) ->
 def test_create_money_stays_decimal_without_float(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(property_routes, "create_property", lambda data: seen.update(data) or _stored_row())
-    assert client.post("/properties", json=_CREATE_BODY).status_code == 201
+    assert client.post("/properties", headers=_headers(), json=_CREATE_BODY).status_code == 201
     assert seen["property_value_estimated"] == Decimal("4500000.10")
     assert isinstance(seen["property_value_estimated"], Decimal)
 
@@ -101,7 +118,7 @@ def test_client_status_label_is_derived_not_trusted(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(property_routes, "create_property", lambda data: seen.update(data) or _stored_row())
     body = dict(_CREATE_BODY, data_status="verified")  # estimates only: cannot be verified
-    assert client.post("/properties", json=body).status_code == 201
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 201
     assert seen["data_status"] is DataStatus.ESTIMATED
 
 
@@ -117,7 +134,7 @@ def test_create_unknown_record_without_values(monkeypatch) -> None:
             data_status="unknown",
         )
     )
-    response = client.post("/properties", json={"name": "X", "category": "other"})
+    response = client.post("/properties", headers=_headers(), json={"name": "X", "category": "other"})
     assert response.status_code == 201
     assert response.json()["data_status"] == "unknown"
     assert seen["data_status"] is DataStatus.UNKNOWN
@@ -135,7 +152,7 @@ def test_create_mixed_record(monkeypatch) -> None:
         building_area_sqft_verified=48000.0,
         field_evidence={"building_area_sqft_verified": _FIELD_REF},
     )
-    response = client.post("/properties", json=body)
+    response = client.post("/properties", headers=_headers(), json=body)
     assert response.status_code == 201
     assert response.json()["data_status"] == "mixed"
     assert seen["data_status"] is DataStatus.MIXED
@@ -143,45 +160,45 @@ def test_create_mixed_record(monkeypatch) -> None:
 
 def test_create_rejects_hypothetical_status() -> None:
     body = dict(_CREATE_BODY, data_status="hypothetical")
-    response = client.post("/properties", json=body)
+    response = client.post("/properties", headers=_headers(), json=body)
     assert response.status_code == 422
 
 
 def test_create_rejects_estimates_without_provenance() -> None:
     body = {k: v for k, v in _CREATE_BODY.items() if k != "provenance"}
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(_CREATE_BODY, provenance="too short")
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(_CREATE_BODY, provenance="synthetic test source for unit checks")
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
 
 def test_create_rejects_verified_field_without_evidence() -> None:
     body = dict(_CREATE_BODY, property_value_verified="4400000.00")
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(
         _CREATE_BODY,
         property_value_verified="4400000.00",
         field_evidence={"property_value_verified": "  "},
     )
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(
         _CREATE_BODY,
         property_value_verified="4400000.00",
         field_evidence={"not_a_field": _FIELD_REF},
     )
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(
         _CREATE_BODY,
         property_value_verified="4400000.00",
         field_evidence={"property_value_verified": "synthetic guess"},
     )
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
 
 def test_create_rejects_same_class_vacant_excess() -> None:
     body = dict(_CREATE_BODY, building_area_sqft_estimated=100, vacant_area_sqft_estimated=200)
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
     body = dict(
         _CREATE_BODY,
         building_area_sqft_verified=100.0,
@@ -191,7 +208,7 @@ def test_create_rejects_same_class_vacant_excess() -> None:
             "vacant_area_sqft_verified": _FIELD_REF,
         },
     )
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
 
 def test_create_allows_cross_class_vacant_difference(monkeypatch) -> None:
@@ -212,7 +229,7 @@ def test_create_allows_cross_class_vacant_difference(monkeypatch) -> None:
         "building_area_sqft_verified": 100.0,
         "field_evidence": {"building_area_sqft_verified": _FIELD_REF},
     }
-    assert client.post("/properties", json=body).status_code == 201
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 201
 
 
 @pytest.mark.parametrize(
@@ -228,7 +245,7 @@ def test_create_allows_cross_class_vacant_difference(monkeypatch) -> None:
     ],
 )
 def test_create_property_rejects_invalid_input(body) -> None:
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
 
 def test_float_money_input_keeps_decimal_exactness() -> None:
@@ -272,7 +289,7 @@ def test_create_sourced_distress_estimates(monkeypatch) -> None:
         "provenance": _EVIDENCE,
         "months_on_market_estimated": 9,
     }
-    response = client.post("/properties", json=body)
+    response = client.post("/properties", headers=_headers(), json=body)
     assert response.status_code == 201
     assert response.json()["data_status"] == "estimated"
     assert response.json()["months_on_market_estimated"] == 9
@@ -288,7 +305,7 @@ def test_create_verified_distress_requires_evidence(monkeypatch) -> None:
         "provenance": _EVIDENCE,
         "months_vacant_verified": 14,
     }
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
     seen: dict = {}
     monkeypatch.setattr(
@@ -306,7 +323,7 @@ def test_create_verified_distress_requires_evidence(monkeypatch) -> None:
         ),
     )
     body["field_evidence"] = {"months_vacant_verified": _FIELD_REF}
-    response = client.post("/properties", json=body)
+    response = client.post("/properties", headers=_headers(), json=body)
     assert response.status_code == 201
     assert response.json()["data_status"] == "verified"
     assert seen["data_status"] is DataStatus.VERIFIED
@@ -324,12 +341,12 @@ def test_create_verified_distress_requires_evidence(monkeypatch) -> None:
     ],
 )
 def test_create_rejects_invalid_distress_input(body) -> None:
-    assert client.post("/properties", json=body).status_code == 422
+    assert client.post("/properties", headers=_headers(), json=body).status_code == 422
 
 
 def test_get_property_returns_record(monkeypatch) -> None:
     monkeypatch.setattr(property_routes, "get_property", lambda pid: _stored_row())
-    response = client.get(f"/properties/{_stored_row()['id']}")
+    response = client.get(f"/properties/{_stored_row()['id']}", headers=_headers())
     assert response.status_code == 200
     body = response.json()
     assert body["data_status"] == "estimated"
@@ -338,27 +355,27 @@ def test_get_property_returns_record(monkeypatch) -> None:
 
 def test_get_property_missing_id_returns_404(monkeypatch) -> None:
     monkeypatch.setattr(property_routes, "get_property", lambda pid: None)
-    response = client.get("/properties/12345678-1234-5678-1234-567812345678")
+    response = client.get("/properties/12345678-1234-5678-1234-567812345678", headers=_headers())
     assert response.status_code == 404
     assert response.json() == {"detail": "property_not_found"}
 
 
 def test_get_property_invalid_id_returns_422() -> None:
-    assert client.get("/properties/not-a-uuid").status_code == 422
+    assert client.get("/properties/not-a-uuid", headers=_headers()).status_code == 422
 
 
 def test_list_properties_returns_records(monkeypatch) -> None:
     monkeypatch.setattr(
         property_routes, "list_properties", lambda limit=100, offset=0: [_stored_row()]
     )
-    response = client.get("/properties")
+    response = client.get("/properties", headers=_headers())
     assert response.status_code == 200
     assert response.json()[0]["id"] == _stored_row()["id"]
 
 
 def test_list_properties_empty(monkeypatch) -> None:
     monkeypatch.setattr(property_routes, "list_properties", lambda limit=100, offset=0: [])
-    response = client.get("/properties")
+    response = client.get("/properties", headers=_headers())
     assert response.status_code == 200
     assert response.json() == []
 
@@ -370,9 +387,9 @@ def test_property_endpoints_map_database_failure_to_503(monkeypatch) -> None:
     monkeypatch.setattr(property_routes, "create_property", _fail)
     monkeypatch.setattr(property_routes, "get_property", _fail)
     monkeypatch.setattr(property_routes, "list_properties", _fail)
-    assert client.post("/properties", json=_CREATE_BODY).status_code == 503
-    assert client.get("/properties").status_code == 503
-    response = client.get(f"/properties/{_stored_row()['id']}")
+    assert client.post("/properties", headers=_headers(), json=_CREATE_BODY).status_code == 503
+    assert client.get("/properties", headers=_headers()).status_code == 503
+    response = client.get(f"/properties/{_stored_row()['id']}", headers=_headers())
     assert response.status_code == 503
     assert response.json() == {"detail": "database_unavailable"}
 
@@ -382,7 +399,7 @@ def test_property_create_not_configured_returns_503(monkeypatch) -> None:
         raise DatabaseNotConfiguredError("database_not_configured")
 
     monkeypatch.setattr(property_routes, "create_property", _fail)
-    response = client.post("/properties", json=_CREATE_BODY)
+    response = client.post("/properties", headers=_headers(), json=_CREATE_BODY)
     assert response.status_code == 503
     assert response.json() == {"detail": "database_not_configured"}
 

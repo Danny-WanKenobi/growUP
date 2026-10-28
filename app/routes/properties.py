@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from app.auth import require_intake_key
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.properties import Property, PropertyCreate
 from app.properties_db import create_property, get_property, list_properties
@@ -17,12 +18,17 @@ router = APIRouter(tags=["properties"])
 
 
 @router.post("/properties", response_model=Property, status_code=status.HTTP_201_CREATED)
-def create_property_endpoint(body: PropertyCreate, response: Response) -> dict:
+def create_property_endpoint(
+    body: PropertyCreate,
+    response: Response,
+    _: None = Depends(require_intake_key),
+) -> dict:
     """Create one sourced property record.
 
-    Estimates require traceable provenance, verified fields require
-    per-field evidence, and data_status is derived server-side.
-    Unknown fields stay null; hypothetical values are rejected.
+    Requires the X-Intake-Key header. Estimates require traceable
+    provenance, verified fields require per-field evidence, and
+    data_status is derived server-side. Unknown fields stay null;
+    hypothetical values are rejected.
     """
     try:
         row = create_property(body.model_dump())
@@ -43,8 +49,12 @@ def create_property_endpoint(body: PropertyCreate, response: Response) -> dict:
 def list_properties_endpoint(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    _: None = Depends(require_intake_key),
 ) -> list:
-    """List stored properties, newest first."""
+    """List stored properties, newest first.
+
+    Requires the X-Intake-Key header.
+    """
     try:
         return list_properties(limit=limit, offset=offset)
     except DatabaseNotConfiguredError as exc:
@@ -59,8 +69,14 @@ def list_properties_endpoint(
 
 
 @router.get("/properties/{property_id}", response_model=Property)
-def get_property_endpoint(property_id: UUID) -> dict:
-    """Return one property by id, or 404 when it does not exist."""
+def get_property_endpoint(
+    property_id: UUID,
+    _: None = Depends(require_intake_key),
+) -> dict:
+    """Return one property by id, or 404 when it does not exist.
+
+    Requires the X-Intake-Key header.
+    """
     try:
         row = get_property(property_id)
     except DatabaseNotConfiguredError as exc:

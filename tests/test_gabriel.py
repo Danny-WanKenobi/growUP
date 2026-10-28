@@ -34,6 +34,12 @@ _BBOX = BoundingBox(south=32.770, west=-96.810, north=32.790, east=-96.785)
 _BBOX_INPUT = {"south": 32.770, "west": -96.810, "north": 32.790, "east": -96.785}
 _EVIDENCE_AT = "2026-10-27T00:00:00+00:00"
 
+TEST_INTAKE_KEY = "unit-test-intake-key-only"
+
+
+def _headers():
+    return {"X-Intake-Key": TEST_INTAKE_KEY}
+
 
 def _listing(**overrides) -> RawListing:
     base = {
@@ -487,9 +493,11 @@ def test_start_run_returns_result(monkeypatch) -> None:
         created_ids=["id-1"],
     )
     monkeypatch.setattr(discovery_routes, "run_discovery", lambda body: expected)
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     response = client.post(
         "/discovery/runs",
         json={"source": "overpass", "bbox": _BBOX_INPUT, "limit": 3, "timeout_seconds": 10.0},
+        headers=_headers(),
     )
     assert response.status_code == 200
     assert response.json()["created_ids"] == ["id-1"]
@@ -499,6 +507,7 @@ def test_start_run_maps_failures(monkeypatch) -> None:
     from app.db import DatabaseUnavailableError
 
     body = {"source": "overpass", "bbox": _BBOX_INPUT}
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
 
     def _boom(error):
         def _raise(_body):
@@ -507,15 +516,15 @@ def test_start_run_maps_failures(monkeypatch) -> None:
         return _raise
 
     monkeypatch.setattr(discovery_routes, "run_discovery", _boom(UnknownSourceError("x")))
-    assert client.post("/discovery/runs", json=body).status_code == 422
+    assert client.post("/discovery/runs", json=body, headers=_headers()).status_code == 422
     monkeypatch.setattr(discovery_routes, "run_discovery", _boom(SourceTimeout("slow")))
-    response = client.post("/discovery/runs", json=body)
+    response = client.post("/discovery/runs", json=body, headers=_headers())
     assert response.status_code == 502
     assert response.json() == {"detail": "source_unavailable"}
     monkeypatch.setattr(discovery_routes, "run_discovery", _boom(SourceError("down")))
-    assert client.post("/discovery/runs", json=body).status_code == 502
+    assert client.post("/discovery/runs", json=body, headers=_headers()).status_code == 502
     monkeypatch.setattr(discovery_routes, "run_discovery", _boom(DatabaseUnavailableError("x")))
-    assert client.post("/discovery/runs", json=body).status_code == 503
+    assert client.post("/discovery/runs", json=body, headers=_headers()).status_code == 503
 
 
 @pytest.mark.parametrize(
@@ -528,5 +537,6 @@ def test_start_run_maps_failures(monkeypatch) -> None:
         {"source": "overpass", "bbox": _BBOX_INPUT, "timeout_seconds": 300.0},
     ],
 )
-def test_start_run_rejects_unbounded_input(body) -> None:
-    assert client.post("/discovery/runs", json=body).status_code == 422
+def test_start_run_rejects_unbounded_input(monkeypatch, body) -> None:
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
+    assert client.post("/discovery/runs", json=body, headers=_headers()).status_code == 422

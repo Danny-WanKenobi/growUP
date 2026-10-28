@@ -24,6 +24,12 @@ _SMALL_BBOX_INPUT = {"south": 32.780, "west": -96.797, "north": 32.781, "east": 
 _EVIDENCE_AT = "2026-10-27T00:00:00+00:00"
 _ALL_CATS = ["high_rise", "downtown_commercial", "warehouse_industrial", "other"]
 
+TEST_INTAKE_KEY = "unit-test-intake-key-only"
+
+
+def _headers():
+    return {"X-Intake-Key": TEST_INTAKE_KEY}
+
 SAMPLE_OSM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <osm version="0.6" generator="unit-test">
   <node id="11" lat="32.78010" lon="-96.79650">
@@ -241,11 +247,13 @@ def test_osm_api_run_through_existing_pipeline(monkeypatch) -> None:
         gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
     )
     monkeypatch.setattr(gabriel_service, "find_existing_id", lambda payload: None)
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     response = client.post(
         "/discovery/runs",
         json={"source": "osm_api", "bbox": _SMALL_BBOX_INPUT,
               "categories": ["high_rise", "downtown_commercial", "warehouse_industrial", "other"],
               "limit": 10, "timeout_seconds": 10.0},
+        headers=_headers(),
     )
     assert response.status_code == 200
     body = response.json()
@@ -283,11 +291,13 @@ def test_osm_api_run_skips_stored_duplicates(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(gabriel_service, "find_existing_id", _existing)
+    monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     response = client.post(
         "/discovery/runs",
         json={"source": "osm_api", "bbox": _SMALL_BBOX_INPUT,
               "categories": ["high_rise", "downtown_commercial", "warehouse_industrial", "other"],
               "limit": 10, "timeout_seconds": 10.0},
+        headers=_headers(),
     )
     assert response.status_code == 200
     body = response.json()

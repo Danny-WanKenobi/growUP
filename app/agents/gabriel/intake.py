@@ -56,12 +56,16 @@ from app.properties_db import create_property, enrich_property_estimates, get_pr
 logger = logging.getLogger(__name__)
 
 SECURITY_LIMITATION = (
-    "POST /discovery/intake requires the X-Intake-Key header matching the "
-    "INTAKE_API_KEY environment variable (constant-time comparison; missing "
-    "configuration fails closed with 503). Remaining limitations: a single "
-    "shared secret with no rotation, per-client scoping, or audit trail, and "
-    "all other endpoints remain unauthenticated. Operate intake over trusted "
-    "networks and rotate the key if it may be exposed."
+    "POST /discovery/intake, POST /discovery/runs, POST /properties, "
+    "GET /properties, and GET /properties/{property_id} require the "
+    "X-Intake-Key header matching the INTAKE_API_KEY environment variable "
+    "(constant-time comparison; missing configuration fails closed with "
+    "503). POST /discovery/research-runs and POST /discovery/investigations "
+    "require the X-Research-Key header instead. Remaining limitations: a "
+    "single shared secret with no rotation, per-client scoping, or audit "
+    "trail. Some read-only and computational endpoints remain "
+    "unauthenticated by design. Operate keyed endpoints over trusted "
+    "networks and rotate a key if it may be exposed."
 )
 
 MAX_DISTRESS_OBSERVATIONS = 10

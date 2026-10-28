@@ -433,14 +433,18 @@ property+URL pair changes nothing.
 
 ### Security limitations
 
-`POST /discovery/intake` requires the `X-Intake-Key` request header matching
-the `INTAKE_API_KEY` environment variable (compared in constant time). A
-missing or empty server key fails closed with `503`; a missing or wrong
-header returns `401`. Keys never appear in logs or error responses. Set a
-long random value via your environment (see `.env.example`); never commit a
-real credential. Remaining limitations: one shared secret with no rotation,
-per-client scoping, or audit trail, and all other endpoints remain
-unauthenticated. Submitted URLs are stored, never fetched, so intake cannot
+`POST /discovery/intake`, `POST /discovery/runs`, `POST /properties`,
+`GET /properties`, and `GET /properties/{property_id}` require the
+`X-Intake-Key` request header matching the `INTAKE_API_KEY` environment
+variable (compared in constant time). `POST /discovery/research-runs` and
+`POST /discovery/investigations` require the `X-Research-Key` header
+instead. A missing or empty server key fails closed with `503`; a missing
+or wrong header returns `401`. Keys never appear in logs or error responses.
+Set a long random value via your environment (see `.env.example`); never
+commit a real credential. Remaining limitations: one shared secret with no
+rotation, per-client scoping, or audit trail. Some read-only and
+computational endpoints intentionally remain public at this stage.
+Submitted URLs are stored, never fetched, so intake cannot
 become an SSRF mechanism.
 
 ### Future provider integration

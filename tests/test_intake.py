@@ -432,6 +432,7 @@ def test_existing_property_endpoint_intact(monkeypatch) -> None:
     response = client.post(
         "/properties",
         json={"name": "X", "category": "other", "provenance": "unit-test evidence record QA-001"},
+        headers={"X-Intake-Key": TEST_INTAKE_KEY},
     )
     assert response.status_code == 201
 
@@ -497,7 +498,7 @@ def test_intake_valid_header_accepted(monkeypatch) -> None:
     assert response.json()["outcome"] == "created"
 
 
-def test_other_endpoints_need_no_intake_key(monkeypatch) -> None:
+def test_public_endpoints_need_no_key_while_properties_fails_closed(monkeypatch) -> None:
     import app.routes.properties as property_routes
 
     monkeypatch.delenv("INTAKE_API_KEY", raising=False)
@@ -506,11 +507,18 @@ def test_other_endpoints_need_no_intake_key(monkeypatch) -> None:
     monkeypatch.setattr(
         property_routes, "create_property", lambda data: _stored_row()
     )
+    # Step 73A: /properties now requires the intake key. With no
+    # server key configured it fails closed instead of creating.
     response = client.post(
         "/properties",
-        json={"name": "X", "category": "other", "provenance": "unit-test evidence record QA-001"},
+        json={
+            "name": "X",
+            "category": "other",
+            "provenance": "unit-test evidence record QA-001",
+        },
     )
-    assert response.status_code == 201
+    assert response.status_code == 503
+    assert response.json() == {"detail": "intake_not_configured"}
 
 
 # Storage-layer checks with a stubbed driver.
