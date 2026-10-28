@@ -1438,6 +1438,46 @@ record path against a fake backend mimicking PG row locks and
 `GROWUP_PG_INTEGRATION=1` (migrations 005–007 applied; each
 test removes its own rows).
 
+### Phase 3C-3B-3B-3A — Read-only reconciliation review queue
+
+Two orchestrator-only scans in `app/external_action_reads.py`
+report actions whose state is exactly `UNKNOWN` — uncertain
+outcomes awaiting human review. No migration, no routes, no
+writes, no audit events, no reconciliation decisions.
+
+- **What it reports:** `list_unknown_actions` returns queued
+  actions oldest-first by the latest attempt's
+  `outcome_recorded_at` (stable ID tie-break, default limit
+  50, clamped to 200), each with its latest attempt's ID,
+  number, executor, recorded outcome, and timestamps;
+  `unknown_summary` reports the visible count, oldest
+  unresolved timestamp (`min(outcome_recorded_at)`), and its
+  age in one aggregate query (None — never zero — when
+  empty).
+- **Who may inspect:** the `WONDRUE_READER_ID` designee reads
+  all types; other verified orchestrators read only types
+  their exact scope grants cover (empty means nothing);
+  executor credentials are rejected. All filtering is
+  SQL-side and parameterized.
+- **`UNKNOWN` vs stale `ATTEMPTING`:** staleness asks whether
+  an open attempt is taking too long; the queue lists recorded
+  uncertain outcomes. An unresolved action is awaiting review,
+  never presumed failed.
+- **Inspection authorizes nothing:** a queued entry confers no
+  authority to retry, execute, or reconcile (GRW-EXT-001/
+  GRW-EXT-002); only the separate human-approved
+  reconciliation path resolves `UNKNOWN`. Every entry must
+  carry a latest attempt still `UNKNOWN` with a recorded
+  outcome timestamp — a missing or mismatched attempt
+  history, or a missing `outcome_recorded_at`, fails the
+  call closed rather than hide.
+
+Tests: fake-backend queue/summary coverage plus gated
+live-PostgreSQL tests in `tests/test_external_action_reads.py`
+(`GROWUP_PG_INTEGRATION=1`, migrations 005–006 applied; no
+reconciliation rows are created, and cleanup removes each
+test's actions, attempts, and audit events).
+
 ---
 
 ## 🎥 Demonstration

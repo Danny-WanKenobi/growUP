@@ -31,6 +31,19 @@ investigation" -- nothing more. Staleness never implies failure,
 never authorizes a retry, and never moves state. The default
 threshold is 15 minutes (900 seconds), overridable per call.
 
+Reconciliation review queue (Phase 3C-3B-3B-3A): actions whose
+state is exactly UNKNOWN -- execution ended uncertainly and a
+human must review provider evidence before anything else
+happens. UNKNOWN is a recorded outcome, not a slow ATTEMPTING:
+staleness asks "is this attempt taking too long?", the queue
+asks "which uncertain outcomes still await human review?".
+Listing an action here authorizes no execution, no retry, and
+no reconciliation decision (GRW-EXT-001/GRW-EXT-002); the
+attempt's UNKNOWN outcome is preserved history, and only the
+separate human-approved reconciliation path may resolve it.
+Every queued entry must carry a latest attempt whose outcome is
+still UNKNOWN -- anything else fails closed rather than hide.
+
 Internal-only: no routes reference this module (pinned by test).
 Authorization is enforced inside the SQL statements themselves, so
 a caller cannot distinguish "absent" from "unauthorized": both
@@ -551,5 +564,186 @@ def stale_summary(
         raise
     except Exception as exc:
         raise DatabaseUnavailableError("stale_summary_failed") from exc
+    finally:
+        _quiet_close(conn)
+
+
+# Reconciliation review queue columns: action identity plus the
+# latest attempt's investigating details. The attempt JOIN pins
+# attempt_number to the action's own attempt_count (the ledger's
+# latest-attempt invariant); it is a LEFT JOIN so a missing or
+# mismatched attempt surfaces as NULLs for the explicit
+# fail-closed check instead of silently dropping the row.
+_SELECT_UNKNOWN_QUEUE = (
+    "a.action_id, a.action_type, a.state, a.attempt_count,"
+    " a.idempotency_key, a.authorized_by, a.authorization_reference,"
+    " a.authorized_at, a.updated_at,"
+    " t.attempt_id, t.attempt_number, t.executor_id, t.outcome,"
+    " t.claimed_at, t.outcome_recorded_at"
+)
+_JOIN_LATEST_ATTEMPT = (
+    " LEFT JOIN external_action_attempts t"
+    " ON t.action_id = a.action_id AND t.attempt_number = a.attempt_count"
+)
+
+
+def list_unknown_actions(
+    *,
+    orchestrator_id: str,
+    orchestrator_proof: str,
+    limit: int = DEFAULT_READ_LIMIT,
+    config: DatabaseConfig | None = None,
+) -> list[dict[str, Any]]:
+    """Return UNKNOWN actions awaiting human review, oldest first.
+
+    Oldest means the latest attempt's outcome_recorded_at -- the
+    historical timestamp of its recorded UNKNOWN outcome -- with
+    a stable action-ID tie-break. Orchestrator-only scan: the
+    designated Wondrue reader sees all types; other orchestrators
+    are filtered to their exact scope grants (SQL-side, so LIMIT
+    stays meaningful). Empty grants short-circuit to [] without
+    querying. Executor credentials cannot scan. Each entry
+    carries its latest attempt's id, number, executor, recorded
+    outcome, and timestamps for human investigation -- and
+    confers no authority to retry, execute, or reconcile the
+    action (GRW-EXT-001/GRW-EXT-002).
+
+    Every returned entry must have a latest attempt whose outcome
+    is still UNKNOWN with a recorded outcome timestamp. An
+    UNKNOWN action with a missing latest attempt, a latest
+    outcome of anything else, or a missing outcome timestamp is
+    a state the ledger cannot produce: the call fails closed with
+    DatabaseUnavailableError rather than conceal it. Consistency
+    is verified over the returned page; unknown_summary verifies
+    the full visible set.
+    """
+    capped = _require_limit(limit)
+    _, grants = _resolve_scan_scope(
+        orchestrator_id=orchestrator_id, orchestrator_proof=orchestrator_proof
+    )
+    if grants is not None and not grants:
+        return []
+    params: dict[str, Any] = {"limit": capped}
+    type_clause = ""
+    if grants is not None:
+        type_clause = " AND a.action_type = ANY(%(types)s)"
+        params["types"] = sorted(grants)
+    conn = get_connection(config)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_UNKNOWN_QUEUE}"
+                " FROM external_actions a"
+                + _JOIN_LATEST_ATTEMPT +
+                " WHERE a.state = 'UNKNOWN'" + type_clause +
+                " ORDER BY t.outcome_recorded_at ASC, a.action_id ASC"
+                " LIMIT %(limit)s",
+                params,
+            )
+            rows = cur.fetchall()
+        found = []
+        for row in rows or []:
+            record = dict(row)
+            if (
+                record.get("attempt_id") is None
+                or record.get("outcome") != "UNKNOWN"
+                or record.get("outcome_recorded_at") is None
+            ):
+                raise DatabaseUnavailableError("unknown_action_inconsistent")
+            found.append(record)
+        return found
+    except (
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
+        ValueError,
+        TypeError,
+    ):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("unknown_queue_failed") from exc
+    finally:
+        _quiet_close(conn)
+
+
+def unknown_summary(
+    *,
+    orchestrator_id: str,
+    orchestrator_proof: str,
+    now: datetime | None = None,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any]:
+    """Return bounded UNKNOWN-queue counts and oldest unresolved age.
+
+    Same visibility rules as :func:`list_unknown_actions` in one
+    aggregate query: no rows cross the boundary, only the count
+    and the oldest unresolved timestamp (the latest attempt's
+    outcome_recorded_at, the historical timestamp of its
+    recorded UNKNOWN outcome). Empty results report None (never
+    zero) for the oldest timestamp and its age. An unresolved
+    action is awaiting review, never presumed failed.
+
+    The aggregate also counts visible UNKNOWN actions whose
+    latest attempt is missing, not UNKNOWN, or lacks a recorded
+    outcome timestamp; any such row fails the call closed rather
+    than hide inside the count.
+    """
+    moment = _require_moment(now)
+    _, grants = _resolve_scan_scope(
+        orchestrator_id=orchestrator_id, orchestrator_proof=orchestrator_proof
+    )
+    if grants is not None and not grants:
+        return {
+            "unknown_count": 0,
+            "oldest_unresolved_at": None,
+            "oldest_age_seconds": None,
+            "checked_at": moment,
+        }
+    params: dict[str, Any] = {}
+    type_clause = ""
+    if grants is not None:
+        type_clause = " AND a.action_type = ANY(%(types)s)"
+        params["types"] = sorted(grants)
+    conn = get_connection(config)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FILTER (WHERE t.outcome = 'UNKNOWN'"
+                " AND t.outcome_recorded_at IS NOT NULL)"
+                " AS unknown_count,"
+                " min(t.outcome_recorded_at) FILTER (WHERE t.outcome = 'UNKNOWN')"
+                " AS oldest_unresolved_at,"
+                " count(*) FILTER (WHERE t.outcome IS DISTINCT FROM 'UNKNOWN'"
+                " OR t.outcome_recorded_at IS NULL)"
+                " AS inconsistent_count"
+                " FROM external_actions a"
+                + _JOIN_LATEST_ATTEMPT +
+                " WHERE a.state = 'UNKNOWN'" + type_clause,
+                params,
+            )
+            row = cur.fetchone()
+        if row is not None and row["inconsistent_count"]:
+            raise DatabaseUnavailableError("unknown_action_inconsistent")
+        oldest = row["oldest_unresolved_at"] if row else None
+        return {
+            "unknown_count": row["unknown_count"] if row else 0,
+            "oldest_unresolved_at": oldest,
+            "oldest_age_seconds": (
+                int((moment - oldest).total_seconds()) if oldest is not None else None
+            ),
+            "checked_at": moment,
+        }
+    except (
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
+        ValueError,
+        TypeError,
+    ):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("unknown_summary_failed") from exc
     finally:
         _quiet_close(conn)
