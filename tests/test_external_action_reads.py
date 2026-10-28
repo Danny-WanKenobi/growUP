@@ -2047,7 +2047,6 @@ def test_live_dossier_unknown_terminal_and_scoped() -> None:
 def test_live_dossier_reconciled(monkeypatch) -> None:
     import app.external_action_reconcile as reconcile
     from app.identity import (
-        canonical_evidence_digest,
         sign_reconciliation_approval,
     )
     from app.properties_db import get_connection
@@ -2060,7 +2059,7 @@ def test_live_dossier_reconciled(monkeypatch) -> None:
     try:
         action_id, attempt_id = _live_seed_unknown(key, "outreach_email", "w-1")
         observed = datetime.now(timezone.utc) - timedelta(hours=1)
-        evidence = {
+        evidence: dict[str, object] = {
             "kind": "provider_receipt",
             "source": "provider-support-desk",
             "observed_at": observed.isoformat(),
@@ -2071,12 +2070,13 @@ def test_live_dossier_reconciled(monkeypatch) -> None:
         }
         issued = datetime.now(timezone.utc) - timedelta(minutes=5)
         expires = issued + timedelta(hours=1)
+        validated_evidence = reconcile.ReconciliationEvidence(**evidence)
         signature = sign_reconciliation_approval(
             private_key_hex=priv,
             action_id=action_id,
             attempt_id=attempt_id,
             proposed_outcome="SUCCEEDED",
-            evidence_digest=canonical_evidence_digest(evidence),
+            evidence_digest=validated_evidence.digest(),
             reconciled_by="operator-alice",
             reconciliation_reference="live-recon-1",
             issued_at=issued,
