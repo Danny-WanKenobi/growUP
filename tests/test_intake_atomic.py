@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import threading
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -329,7 +329,24 @@ def test_live_concurrent_addressed_and_addressless_share_url() -> None:
         assert errors == []
         # Both requests lock the shared URL key: exactly one creates.
         assert sorted(r.outcome.value for r in outcomes) == ["created", "skipped_duplicate"]
-        assert _live_counts([url], [street]) == (1, 1, 0)
+        assert _live_counts([url], []) == (1, 1, 0)
+        created_ids = [r.property_id for r in outcomes if r.outcome.value == "created"]
+        assert len(created_ids) == 1
+        rows = _live_evidence_by_url(url)
+        assert len(rows) == 1
+        assert str(rows[0]["property_id"]) == created_ids[0]
+        # Either request may win. Request a carries area 120000 and the
+        # street; request b carries neither, so the stored area identifies
+        # the winner independently of completion order.
+        from app.properties_db import get_property
+
+        winner = get_property(UUID(created_ids[0]))
+        assert winner is not None
+        if winner["building_area_sqft_estimated"] is not None:
+            assert float(winner["building_area_sqft_estimated"]) == 120000
+            assert winner["street_address"] == street
+        else:
+            assert winner["street_address"] is None
     finally:
         _live_cleanup_urls_streets([url], [street])
 
