@@ -1357,7 +1357,7 @@ Foundation for human-approved, evidence-gated reconciliation of
 function, no transitions, no writes of any kind.
 
 - **Migration 007** (`migrations/007_reconciliation_decisions.sql`,
-  file only, not yet applied): append-only
+  applied on the Ubuntu development server): append-only
   `reconciliation_decisions` with decision UUID, action/attempt
   foreign keys, one-decision-per-attempt uniqueness, definitive
   outcome plus matching asserted outcome, prior outcome pinned
@@ -1388,6 +1388,55 @@ function, no transitions, no writes of any kind.
   returns the existing decision and writes nothing; renewed
   approvals by the same principal/reference discover it;
   anything else conflicts fail-closed.
+
+### Phase 3C-3B-3B-2 — Transaction-safe human-approved reconciliation
+
+Internal `record_reconciliation(...)` in
+`app/external_action_reconcile.py` resolves one `UNKNOWN` action
+to `SUCCEEDED` or `FAILED`. No execution, retry, requeue,
+worker, or public route: the function signature accepts only
+reconciliation inputs, so no executor or orchestrator credential
+can substitute for human approval.
+
+- **Pre-connection gates:** identifier shape, evidence parsing
+  and outcome consistency, canonical digest binding,
+  observation timing, and Ed25519 approval verification
+  against `RECONCILER_PUBLIC_KEYS` all pass before any
+  database connection opens.
+- **One indivisible transaction:** lock the action and attempt
+  rows (`SELECT ... FOR UPDATE`), confirm the attempt belongs
+  and is latest, replay an existing decision if one is
+  committed, and otherwise — only after the action and attempt
+  both validate as `UNKNOWN` — insert the decision, flip the
+  action to the definitive outcome, and insert the permanent
+  `external_action.reconciled` audit via
+  `insert_event_in_transaction`, then commit. Any failure
+  rolls everything back; the SQLite outbox is never a
+  fallback here. The attempt row is never written: its
+  `UNKNOWN` outcome is the preserved history of an uncertain
+  execution, while the decision row carries the reviewed
+  outcome.
+- **Replay:** an identical resubmission (a renewed valid
+  approval may carry fresh timestamps) returns the committed
+  decision and writes nothing — no new decision, audit, or
+  transition — after confirming the decision matches, the
+  action sits in its terminal state, and the attempt still
+  carries `UNKNOWN`. Replay still requires a currently valid
+  approval; a different principal, reference, outcome, or
+  digest raises `ReconciliationConflictError`.
+- **Concurrency:** row locks plus `UNIQUE(attempt_id)` admit
+  exactly one winner; simultaneous identical requests yield
+  one decision and one audit, rivals fail closed.
+- **Preserved restrictions:** no `ATTEMPTING` reconciliation,
+  no requeue to `PENDING`/`ATTEMPTING`, no `FAILED` retry;
+  the deferred generic transitions stay deferred, and
+  GRW-EXT-001/GRW-EXT-002 hold throughout.
+
+Tests: `tests/test_external_action_reconcile.py` covers the
+record path against a fake backend mimicking PG row locks and
+`ON CONFLICT` replay, plus live-PostgreSQL tests gated by
+`GROWUP_PG_INTEGRATION=1` (migrations 005–007 applied; each
+test removes its own rows).
 
 ---
 
