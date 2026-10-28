@@ -738,31 +738,41 @@ def test_credential_env_access_confined_to_identity() -> None:
 def test_routes_reference_no_identity_or_ledger_surface() -> None:
     from pathlib import Path
 
+    # Mutation, execution, credential, and scope machinery is
+    # forbidden in every route module without exception.
+    forbidden_everywhere = (
+        "sign_approval", "verify_human_approval",
+        "verify_executor", "may_enqueue",
+        "may_inspect", "load_wondrue_reader_id",
+        "verify_reconciliation_approval", "sign_reconciliation_approval",
+        "may_reconcile", "ReconciliationEvidence",
+        "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS", "ORCHESTRATOR_KEYS",
+        "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES", "WONDRUE_READER_ID",
+        "RECONCILER_PUBLIC_KEYS",
+        "external_actions_db", "external_action_reconcile",
+        "record_authorization", "claim_action",
+        "transition_action", "record_reconciliation",
+        "get_action", "list_attempts",
+        "list_own_open_attempts", "find_stale_attempting",
+        "stale_summary", "list_unknown_actions",
+        "unknown_summary",
+    )
+    # The reviewed read-only review endpoint is the single route
+    # allowed to touch the dossier reader and its presentation.
+    # Every other route module must reference none of these.
+    review_route_only = (
+        "app.identity", "verify_orchestrator",
+        "external_action_reads", "get_reconciliation_case",
+        "external_action_review", "build_reconciliation_review",
+    )
     offenders = []
     for source in sorted(Path("app/routes").glob("*.py")):
         text = source.read_text(encoding="utf-8")
-        hits = [
-            token for token in (
-                "app.identity", "sign_approval", "verify_human_approval",
-                "verify_executor", "verify_orchestrator", "may_enqueue",
-                "may_inspect", "load_wondrue_reader_id",
-                "verify_reconciliation_approval", "sign_reconciliation_approval",
-                "may_reconcile", "ReconciliationEvidence",
-                "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS", "ORCHESTRATOR_KEYS",
-                "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES", "WONDRUE_READER_ID",
-                "RECONCILER_PUBLIC_KEYS",
-                "external_actions_db", "external_action_reads",
-                "external_action_reconcile",
-                "record_authorization", "claim_action",
-                "transition_action", "record_reconciliation",
-                "get_action", "list_attempts",
-                "list_own_open_attempts", "find_stale_attempting",
-                "stale_summary", "list_unknown_actions",
-                "unknown_summary", "get_reconciliation_case",
-                "external_action_review", "build_reconciliation_review",
-            )
-            if token in text
-        ]
+        if source.name == "external_actions.py":
+            tokens = forbidden_everywhere
+        else:
+            tokens = forbidden_everywhere + review_route_only
+        hits = [token for token in tokens if token in text]
         if hits:
             offenders.append((source.name, hits))
     assert offenders == [], offenders

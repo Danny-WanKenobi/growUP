@@ -1575,6 +1575,51 @@ malformed dossiers, sensitive-field exclusion,
 immutability, determinism, and structural purity guards —
 no PostgreSQL needed.
 
+### Phase 3B-3 — Controlled human review access
+
+One authenticated, read-only endpoint in the new
+`app/routes/external_actions.py` (registered in `app/main.py`):
+
+`GET /external-actions/{action_id}/review`
+
+- **Authentication:** requires `X-Orchestrator-ID` and
+  `X-Orchestrator-Proof` headers, verified with the
+  existing orchestrator mechanism; executor credentials
+  never authenticate here. Missing, empty, or invalid
+  credentials return 401 before any dossier retrieval.
+- **Authorization:** unchanged reader scope rules —
+  Wondrue's designee reads all types, others only their
+  grants. Missing and unauthorized actions both read as
+  404 and are indistinguishable.
+- **Response:** 200 with only the sanitized
+  `build_reconciliation_review()` dictionary; the raw
+  dossier, credentials, and signatures never leave the
+  server. Errors use generic identifiers: 401
+  `unauthorized`, 404 `review_not_found`, 409
+  `review_conflict`, 503 `database_not_configured` /
+  `database_unavailable`.
+- **No-store everywhere:** a path-scoped ASGI middleware
+  (`app/middleware.py`, registered in `app/main.py`) stamps
+  `Cache-Control: no-store` on every response for the exact
+  review path — route responses and framework 401/404/405/
+  422 rejections alike, valid or malformed UUID (malformed
+  UUIDs never reach the database). Unrelated endpoints are
+  untouched. One honest boundary: 500s from unhandled
+  exceptions are emitted outside all user middleware by
+  Starlette itself and cannot be stamped without
+  reimplementing framework error handling; the route maps
+  every known failure to a handled, stamped response.
+- **Read-only:** no authorize/claim/execute/retry/
+  reconcile capability; GRW-EXT-001 and GRW-EXT-002
+  preserved. No new environment variables or services.
+
+Tests: `tests/test_external_action_review_route.py`
+exercises auth, scoping, indistinguishability, the full
+error map, header presence, sanitization, middleware
+path-matching and body preservation, and the thin/
+read-only structural posture with a mocked reader;
+existing endpoints are re-verified in the same file.
+
 ---
 
 ## 🎥 Demonstration
