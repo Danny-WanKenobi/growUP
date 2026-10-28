@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -46,6 +47,8 @@ from app.agents.gabriel.dedup import (
 from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError, acquire_intake_locks
+from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
+from app.observability.store import insert_event_in_transaction
 from app.listings_db import (
     create_distress_observations_in_transaction,
     create_listing_evidence_in_transaction,
@@ -89,6 +92,35 @@ FUTURE_SKEW_TOLERANCE = timedelta(hours=1)
 
 class IntakeError(ValueError):
     """Intake input failed semantic validation (maps to HTTP 422)."""
+
+    def __init__(self, message: str = "", *, reason_code: str = "VALIDATION_FAILED") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+DECISION_EVENT_TYPE = "gabriel.intake.decision"
+
+OUTCOME_REJECTED = "rejected"
+OUTCOME_ATTEMPT_FAILED = "attempt_failed"
+
+MUTATION_NOT_ATTEMPTED = "NOT_ATTEMPTED"
+MUTATION_COMMITTED = "COMMITTED"
+MUTATION_ROLLED_BACK = "ROLLED_BACK"
+
+REASON_NEW_IDENTITY = "NEW_IDENTITY"
+REASON_NULL_FILL = "NULL_FILL"
+REASON_EVIDENCE_ONLY = "EVIDENCE_ONLY"
+REASON_MERGE_VALIDATION_CONFLICT = "MERGE_VALIDATION_CONFLICT"
+REASON_DUPLICATE_URL = "DUPLICATE_URL"
+REASON_DUPLICATE_ADDRESS_RECORDED = "DUPLICATE_ADDRESS_RECORDED"
+REASON_AMBIGUOUS_ADDRESS = "AMBIGUOUS_ADDRESS"
+REASON_NAME_CONFLICT = "NAME_CONFLICT"
+REASON_URL_CONFLICT = "URL_CONFLICT"
+REASON_URL_MULTI_ASSOC = "URL_MULTI_ASSOC"
+REASON_URL_ADDRESS_DISAGREEMENT = "URL_ADDRESS_DISAGREEMENT"
+REASON_VALIDATION_FAILED = "VALIDATION_FAILED"
+REASON_RACED_STATE = "RACED_STATE"
+REASON_DATABASE_FAILURE = "DATABASE_FAILURE"
 
 
 class ListingType(str, Enum):
@@ -248,6 +280,7 @@ class IntakeResult(BaseModel):
     listing_evidence_id: str | None = None
     distress_observation_ids: list[str] = []
     message: str
+    reason_code: str = ""
     run_id: str = ""
     correlation_id: str = ""
 
@@ -412,9 +445,18 @@ def _street_conflicts(data: dict[str, Any], existing: dict[str, Any]) -> bool:
     return bool(incoming) and bool(stored) and incoming != stored
 
 
+@dataclass(frozen=True)
+class _DecisionMeta:
+    """Identity references behind one intake outcome (provenance only)."""
+
+    reason_code: str
+    considered: tuple[str, ...] = ()
+    conflicting: tuple[str, ...] = ()
+
+
 def _resolve_url_association(
     body: ListingIntakeRequest, data: dict[str, Any], source_url: str
-) -> IntakeResult | None:
+) -> tuple[IntakeResult | None, _DecisionMeta]:
     """Check global URL associations for a listing with no address match.
 
     Returns a duplicate or review outcome with zero writes, or None
@@ -426,40 +468,221 @@ def _resolve_url_association(
     """
     associated = find_evidence_by_url(source_url)
     if len(associated) > 1:
-        return IntakeResult(
-            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
-            property_id="",
-            message=(
-                "listing URL already associated with multiple properties; "
-                "identity is ambiguous, nothing was changed, no evidence "
-                "attached; human identity review required"
+        pids = tuple(str(link["property_id"]) for link in associated)
+        return (
+            IntakeResult(
+                outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+                property_id="",
+                message=(
+                    "listing URL already associated with multiple properties; "
+                    "identity is ambiguous, nothing was changed, no evidence "
+                    "attached; human identity review required"
+                ),
+                reason_code=REASON_URL_MULTI_ASSOC,
             ),
+            _DecisionMeta(REASON_URL_MULTI_ASSOC, considered=pids, conflicting=pids),
         )
     if not associated:
-        return None
+        return None, _DecisionMeta("")
     property_id = str(associated[0]["property_id"])
     existing = get_property(UUID(property_id))
     if existing is None:  # pragma: no cover - raced deletion; fail closed
-        raise IntakeError("associated property disappeared; resubmit the listing")
+        raise IntakeError(
+            "associated property disappeared; resubmit the listing",
+            reason_code=REASON_RACED_STATE,
+        )
     if (
         _identity_ambiguous(body, existing)
         or _location_conflicts(body, existing)
         or _street_conflicts(data, existing)
     ):
-        return IntakeResult(
-            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
-            property_id="",
-            message=(
-                "listing URL already recorded for a conflicting property "
-                "identity; nothing was changed, no evidence attached; "
-                "human identity review required"
+        return (
+            IntakeResult(
+                outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+                property_id="",
+                message=(
+                    "listing URL already recorded for a conflicting property "
+                    "identity; nothing was changed, no evidence attached; "
+                    "human identity review required"
+                ),
+                reason_code=REASON_URL_CONFLICT,
             ),
+            _DecisionMeta(REASON_URL_CONFLICT, considered=(property_id,), conflicting=(property_id,)),
         )
-    return IntakeResult(
-        outcome=IntakeOutcome.SKIPPED_DUPLICATE,
-        property_id=property_id,
-        message="duplicate listing URL already recorded; nothing changed",
+    return (
+        IntakeResult(
+            outcome=IntakeOutcome.SKIPPED_DUPLICATE,
+            property_id=property_id,
+            message="duplicate listing URL already recorded; nothing changed",
+            reason_code=REASON_DUPLICATE_URL,
+        ),
+        _DecisionMeta(REASON_DUPLICATE_URL, considered=(property_id,)),
     )
+
+
+@dataclass
+class _DecisionContext:
+    """Per-request decision state shared by the locked intake path."""
+
+    body: ListingIntakeRequest
+    conn: Any
+    run_id: str
+    started: float
+    source_url: str
+    writes_attempted: bool = False
+
+
+def _observed_identity(body: ListingIntakeRequest, source_url: str) -> dict[str, Any]:
+    """Explicitly supplied identity fields, verbatim (None when absent).
+
+    No stripping or case folding: whitespace is preserved exactly as
+    submitted so the record shows what Gabriel observed. Normalized
+    forms belong in the inferred section only.
+    """
+    return {
+        "source_name": body.source_name,
+        "external_id": None,
+        "name": body.name if body.name else None,
+        "street_address": body.street_address if body.street_address else None,
+        "city": body.city if body.city else None,
+        "state": body.state if body.state else None,
+        "zip_code": body.zip_code if body.zip_code else None,
+        "listing_url": source_url,
+        "observed_at": body.observed_at.isoformat(),
+    }
+
+
+def _inferred_identity(body: ListingIntakeRequest) -> dict[str, Any]:
+    """Normalized identity fields exactly as matching observes them.
+
+    Empty string mirrors ``normalize_text`` on absent input; these are
+    derived matching inputs, never directly observed values.
+    """
+    explicit_name = body.name if (body.name or "").strip() else ""
+    return {
+        "name": normalize_text(explicit_name),
+        "street_address": normalize_text(body.street_address),
+        "city": normalize_text(body.city),
+        "state": normalize_text(body.state),
+        "zip_code": normalize_text(body.zip_code),
+    }
+
+
+def _decision_event(
+    ctx: _DecisionContext,
+    outcome: str,
+    reason_code: str,
+    message: str,
+    mutation_status: str,
+    considered: tuple[str, ...],
+    conflicting: tuple[str, ...],
+    result: IntakeResult | None,
+    severity: Severity = Severity.INFO,
+) -> AgentEvent:
+    """Build (validating, no I/O) one permanent intake decision event."""
+    body = ctx.body
+    try:
+        known_property: UUID | None = UUID(str(result.property_id)) if result is not None else None
+    except (ValueError, AttributeError):
+        known_property = None
+    return AgentEvent(
+        agent=AgentId.GABRIEL,
+        run_id=ctx.run_id,
+        event_type=DECISION_EVENT_TYPE,
+        summary=f"intake decision: {outcome} ({reason_code})",
+        severity=severity,
+        retention_class=RetentionClass.PERMANENT,
+        details={
+            "outcome": outcome,
+            "reason_code": reason_code,
+            "message": message,
+            "mutation_status": mutation_status,
+            "observed": _observed_identity(body, ctx.source_url),
+            "inferred": _inferred_identity(body),
+            "considered_property_ids": list(considered),
+            "conflicting_property_ids": list(conflicting),
+            "result": {
+                "property_id": result.property_id if result is not None else "",
+                "evidence_id": result.listing_evidence_id if result is not None else None,
+                "distress_ids": list(result.distress_observation_ids) if result is not None else [],
+                "filled_fields": list(result.filled_fields) if result is not None else [],
+            },
+            "duration_ms": round((time.perf_counter() - ctx.started) * 1000, 1),
+        },
+        correlation_id=body.correlation_id or "",
+        property_id=known_property,
+        evidence_refs=[{"kind": "listing_url", "ref": ctx.source_url[:500]}],
+    )
+
+
+def _persist_decision_dedicated(event: AgentEvent) -> None:
+    """Persist one decision event in its own transaction (commits once).
+
+    Used only when no business transaction is open. Raises
+    :class:`DatabaseUnavailableError` when persistence fails.
+    """
+    with get_connection() as conn:
+        insert_event_in_transaction(conn, event)
+        conn.commit()
+
+
+def _best_effort_decision(event: AgentEvent) -> bool:
+    """Attempt one failure-event write without masking the real outcome."""
+    try:
+        _persist_decision_dedicated(event)
+    except Exception as exc:
+        logger.warning(
+            "gabriel decision event not persisted: %s (%s)", event.event_id, type(exc).__name__
+        )
+        return False
+    return True
+
+
+def _finish_decision(
+    ctx: _DecisionContext,
+    *,
+    outcome: IntakeOutcome,
+    reason_code: str,
+    property_id: str,
+    message: str,
+    commit: bool,
+    considered: tuple[str, ...] = (),
+    conflicting: tuple[str, ...] = (),
+    filled: list[str] | None = None,
+    evidence_id: str | None = None,
+    distress_ids: list[str] | None = None,
+) -> tuple[IntakeResult, AgentEvent | None]:
+    """Build one outcome plus its permanent decision event.
+
+    Mutating outcomes insert the event on the locked connection and
+    commit once here. Read-only outcomes return the event for a
+    dedicated post-transaction write, leaving the locked transaction
+    free of business writes.
+    """
+    result = IntakeResult(
+        outcome=outcome,
+        property_id=property_id,
+        filled_fields=list(filled or []),
+        listing_evidence_id=evidence_id,
+        distress_observation_ids=list(distress_ids or []),
+        message=message,
+        reason_code=reason_code,
+    )
+    event = _decision_event(
+        ctx,
+        outcome.value,
+        reason_code,
+        message,
+        MUTATION_COMMITTED if commit else MUTATION_NOT_ATTEMPTED,
+        considered,
+        conflicting,
+        result,
+    )
+    if commit:
+        insert_event_in_transaction(ctx.conn, event)
+        ctx.conn.commit()
+        return result, None
+    return result, event
 
 
 def process_intake(body: ListingIntakeRequest) -> IntakeResult:
@@ -473,8 +696,22 @@ def process_intake(body: ListingIntakeRequest) -> IntakeResult:
     correlation_id = body.correlation_id or ""
     started = time.perf_counter()
     try:
-        result = _process_intake(body)
+        result, pending = _process_intake(body, started, run_id)
     except IntakeError as exc:
+        ctx = _DecisionContext(body=body, conn=None, run_id=run_id, started=started, source_url=str(body.listing_url))
+        _best_effort_decision(
+            _decision_event(
+                ctx,
+                OUTCOME_REJECTED,
+                exc.reason_code,
+                str(exc)[:500],
+                MUTATION_NOT_ATTEMPTED,
+                (),
+                (),
+                None,
+                Severity.WARNING,
+            )
+        )
         note_warning(
             run_id, "gabriel.intake.rejected",
             f"listing rejected: {exc}"[:300],
@@ -486,6 +723,27 @@ def process_intake(body: ListingIntakeRequest) -> IntakeResult:
             correlation_id=correlation_id,
         )
         raise
+    if pending is not None:
+        try:
+            _persist_decision_dedicated(pending)
+        except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
+            ctx = _DecisionContext(
+                body=body, conn=None, run_id=run_id, started=started, source_url=str(body.listing_url)
+            )
+            _best_effort_decision(
+                _decision_event(
+                    ctx,
+                    OUTCOME_ATTEMPT_FAILED,
+                    REASON_DATABASE_FAILURE,
+                    "permanent decision event could not be persisted; decision not durably recorded",
+                    MUTATION_NOT_ATTEMPTED,
+                    (),
+                    (),
+                    None,
+                    Severity.ERROR,
+                )
+            )
+            raise DatabaseUnavailableError("decision_event_failed") from exc
     result.run_id = run_id
     result.correlation_id = correlation_id
     try:
@@ -542,64 +800,99 @@ def _intake_lock_keys(data: dict[str, Any], source_url: str) -> list[str]:
     return keys
 
 
-def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
-    """Validate one listing, then decide and persist inside a locked transaction."""
+def _process_intake(
+    body: ListingIntakeRequest, started: float, run_id: str
+) -> tuple[IntakeResult, AgentEvent | None]:
+    """Validate one listing, then decide and persist inside a locked transaction.
+
+    Returns the outcome plus a pending decision event when the locked
+    transaction made no business writes (the caller persists it on a
+    dedicated transaction). Mutating outcomes commit their event on the
+    locked connection and return no pending event.
+    """
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
     try:
         validated = PropertyCreate.model_validate(build_property_payload(body))
     except Exception as exc:
-        raise IntakeError(f"listing failed operational validation: {exc}") from exc
+        raise IntakeError(
+            f"listing failed operational validation: {exc}",
+            reason_code=REASON_VALIDATION_FAILED,
+        ) from exc
     data = validated.model_dump()
     mapped = [key for key in ESTIMATED_FIELDS if data.get(key) is not None]
     evidence_payload = build_evidence_payload(body, mapped)
     distress_rows = build_distress_rows(body)
     source_url = str(body.listing_url)
     keys = _intake_lock_keys(data, source_url)
-    with get_connection() as conn:
-        try:
-            with conn.cursor() as cur:
-                acquire_intake_locks(cur, keys)
-            return _process_intake_locked(
-                conn, body, data, mapped, evidence_payload, distress_rows, source_url
+    ctx = _DecisionContext(body=body, conn=None, run_id=run_id, started=started, source_url=source_url)
+    try:
+        with get_connection() as conn:
+            ctx.conn = conn
+            try:
+                with conn.cursor() as cur:
+                    acquire_intake_locks(cur, keys)
+                return _process_intake_locked(ctx, data, mapped, evidence_payload, distress_rows)
+            except (IntakeError, ValueError, DatabaseNotConfiguredError, DatabaseUnavailableError):
+                _rollback_quietly(conn)
+                raise
+            except Exception as exc:
+                _rollback_quietly(conn)
+                raise DatabaseUnavailableError("database_error") from exc
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
+        _best_effort_decision(
+            _decision_event(
+                ctx,
+                OUTCOME_ATTEMPT_FAILED,
+                REASON_DATABASE_FAILURE,
+                f"intake database failure: {type(exc).__name__}",
+                MUTATION_ROLLED_BACK if ctx.writes_attempted else MUTATION_NOT_ATTEMPTED,
+                (),
+                (),
+                None,
+                Severity.ERROR,
             )
-        except (IntakeError, ValueError, DatabaseNotConfiguredError, DatabaseUnavailableError):
-            _rollback_quietly(conn)
-            raise
-        except Exception as exc:
-            _rollback_quietly(conn)
-            raise DatabaseUnavailableError("database_error") from exc
+        )
+        raise
 
 
 def _process_intake_locked(
-    conn: Any,
-    body: ListingIntakeRequest,
+    ctx: _DecisionContext,
     data: dict[str, Any],
     mapped: list[str],
     evidence_payload: dict[str, Any],
     distress_rows: list[dict[str, Any]],
-    source_url: str,
-) -> IntakeResult:
+) -> tuple[IntakeResult, AgentEvent | None]:
     """Decide and persist one listing inside a locked transaction.
 
     Runs after advisory locks are held, so every identity check below
     observes post-lock state and no same-key operation can commit
-    concurrently. Write paths commit exactly once; read-only outcomes
-    return without writing.
+    concurrently. Write paths commit exactly once (business rows plus
+    the decision event together); read-only outcomes return their
+    decision event for a dedicated post-transaction write.
     """
+    body = ctx.body
+    conn = ctx.conn
+    source_url = ctx.source_url
     address_match = match_existing_address(data)
     if address_match.status is AddressMatchStatus.AMBIGUOUS:
         # Several stored properties share this normalized address: select
         # none of them. No enrichment, no evidence, no new record -- the
         # ambiguity itself is the finding, for human identity review.
-        return IntakeResult(
+        candidates = tuple(address_match.candidate_ids)
+        return _finish_decision(
+            ctx,
             outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            reason_code=REASON_AMBIGUOUS_ADDRESS,
             property_id="",
             message=(
                 "address matches multiple stored properties; identity is "
                 "ambiguous, nothing was changed, no evidence attached; "
                 "human identity review required"
             ),
+            commit=False,
+            considered=candidates,
+            conflicting=candidates,
         )
     if address_match.status is AddressMatchStatus.NONE:
         if source_url:
@@ -607,9 +900,20 @@ def _process_intake_locked(
             # another property, whether addressed or addressless.
             # Missing/unusable URLs keep existing behavior (the request
             # model requires a valid URL).
-            duplicate = _resolve_url_association(body, data, source_url)
+            duplicate, meta = _resolve_url_association(body, data, source_url)
             if duplicate is not None:
-                return duplicate
+                event = _decision_event(
+                    ctx,
+                    duplicate.outcome.value,
+                    meta.reason_code,
+                    duplicate.message,
+                    MUTATION_NOT_ATTEMPTED,
+                    meta.considered,
+                    meta.conflicting,
+                    duplicate,
+                )
+                return duplicate, event
+        ctx.writes_attempted = True
         row = create_property_in_transaction(conn, data)
         property_id = str(row["id"])
         evidence = create_listing_evidence_in_transaction(
@@ -622,72 +926,98 @@ def _process_intake_locked(
             payload=evidence_payload,
         )
         distress_ids = create_distress_observations_in_transaction(conn, property_id, distress_rows)
-        conn.commit()
-        return IntakeResult(
+        return _finish_decision(
+            ctx,
             outcome=IntakeOutcome.CREATED,
+            reason_code=REASON_NEW_IDENTITY,
             property_id=property_id,
-            filled_fields=mapped,
-            listing_evidence_id=str(evidence["id"]),
-            distress_observation_ids=distress_ids,
             message="listing accepted; new operational record created",
+            commit=True,
+            filled=mapped,
+            evidence_id=str(evidence["id"]),
+            distress_ids=distress_ids,
         )
 
     # Duplicate address: enrich NULL estimated fields only, never overwrite.
     existing_id = address_match.property_id
     if existing_id is None:  # pragma: no cover - UNIQUE always carries the id
-        raise IntakeError("address match lost its identity; resubmit the listing")
+        raise IntakeError(
+            "address match lost its identity; resubmit the listing",
+            reason_code=REASON_RACED_STATE,
+        )
     existing = get_property(UUID(str(existing_id)))
     if existing is None:  # pragma: no cover - raced deletion; fail closed
-        raise IntakeError("duplicate target disappeared; resubmit the listing")
+        raise IntakeError(
+            "duplicate target disappeared; resubmit the listing",
+            reason_code=REASON_RACED_STATE,
+        )
     if _identity_ambiguous(body, existing):
         # Same address but a materially different building name: the two
         # listings may describe different buildings. Preserve everything
         # unchanged -- no enrichment, no evidence, no second record -- and
         # require human identity review.
-        return IntakeResult(
+        return _finish_decision(
+            ctx,
             outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            reason_code=REASON_NAME_CONFLICT,
             property_id=str(existing_id),
             message=(
                 "same address but a materially different building name; "
                 "identity is ambiguous, existing record preserved unchanged, "
                 "no evidence attached; human identity review required"
             ),
+            commit=False,
+            considered=(str(existing_id),),
+            conflicting=(str(existing_id),),
         )
     url_associated = find_evidence_by_url(source_url)
-    if any(str(link["property_id"]) != str(existing_id) for link in url_associated):
+    foreign = sorted({str(link["property_id"]) for link in url_associated if str(link["property_id"]) != str(existing_id)})
+    if foreign:
         # This listing URL already evidences a different property while
         # the address matches this one: the signals disagree. Review
         # with zero writes; select neither property.
-        return IntakeResult(
+        parties = (str(existing_id), *foreign)
+        return _finish_decision(
+            ctx,
             outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            reason_code=REASON_URL_ADDRESS_DISAGREEMENT,
             property_id="",
             message=(
                 "listing URL already recorded for a different property; "
                 "nothing was changed, no evidence attached; "
                 "human identity review required"
             ),
+            commit=False,
+            considered=parties,
+            conflicting=parties,
         )
     fills = {
         key: data[key] for key in ESTIMATED_FIELDS
         if data.get(key) is not None and existing.get(key) is None
     }
     message = "duplicate address; existing record preserved"
+    fills_dropped = False
     if fills:
         merged = {**existing, **fills}
         try:
             PropertyCreate.model_validate(merged)
         except Exception:
             fills = {}
+            fills_dropped = True
             message = (
                 "duplicate address; conflicting values skipped to protect "
                 "the existing record"
             )
     already_recorded = get_listing_evidence(str(existing_id), source_url) is not None
     if not fills and already_recorded:
-        return IntakeResult(
+        return _finish_decision(
+            ctx,
             outcome=IntakeOutcome.SKIPPED_DUPLICATE,
+            reason_code=REASON_DUPLICATE_ADDRESS_RECORDED,
             property_id=str(existing_id),
             message="duplicate listing already recorded; nothing changed",
+            commit=False,
+            considered=(str(existing_id),),
         )
     new_refs = {key: _field_reference(body) for key in fills}
     stored_evidence = existing.get("field_evidence")
@@ -698,6 +1028,7 @@ def _process_intake_locked(
         **{k: v for k, v in new_refs.items() if k not in stored_evidence},
     }
     merged_status = derive_data_status({**existing, **fills}).value
+    ctx.writes_attempted = True
     filled = enrich_property_estimates_in_transaction(conn, UUID(str(existing_id)), fills, merged_evidence or None, merged_status)
     evidence_id: str | None = None
     distress_ids: list[str] = []
@@ -713,12 +1044,21 @@ def _process_intake_locked(
         )
         evidence_id = str(evidence["id"])
         distress_ids = create_distress_observations_in_transaction(conn, str(existing_id), distress_rows)
-    conn.commit()
-    return IntakeResult(
+    if filled:
+        reason_code = REASON_NULL_FILL
+    elif fills_dropped:
+        reason_code = REASON_MERGE_VALIDATION_CONFLICT
+    else:
+        reason_code = REASON_EVIDENCE_ONLY
+    return _finish_decision(
+        ctx,
         outcome=IntakeOutcome.ENRICHED,
+        reason_code=reason_code,
         property_id=str(existing_id),
-        filled_fields=filled,
-        listing_evidence_id=evidence_id,
-        distress_observation_ids=distress_ids,
         message=message if not fills else "existing record enriched with new attributable values",
+        commit=True,
+        considered=(str(existing_id),),
+        filled=filled,
+        evidence_id=evidence_id,
+        distress_ids=distress_ids,
     )

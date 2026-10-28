@@ -314,7 +314,9 @@ def test_match_existing_address_tri_state(monkeypatch) -> None:
         AddressMatchStatus.UNIQUE, "stored-id-1"
     )
     rows.append({"id": "stored-id-2"})
-    assert match_existing_address(payload) == AddressMatch(AddressMatchStatus.AMBIGUOUS)
+    assert match_existing_address(payload) == AddressMatch(
+        AddressMatchStatus.AMBIGUOUS, None, ("stored-id-1", "stored-id-2")
+    )
 
 
 # --- Service orchestration ---

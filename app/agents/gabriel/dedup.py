@@ -82,6 +82,7 @@ class AddressMatch:
 
     status: AddressMatchStatus
     property_id: UUID | str | None = None
+    candidate_ids: tuple[str, ...] = ()
 
 
 def match_existing_address(payload: dict[str, Any]) -> AddressMatch:
@@ -107,7 +108,9 @@ def match_existing_address(payload: dict[str, Any]) -> AddressMatch:
         return AddressMatch(AddressMatchStatus.NONE)
     if len(rows) == 1:
         return AddressMatch(AddressMatchStatus.UNIQUE, rows[0]["id"])
-    return AddressMatch(AddressMatchStatus.AMBIGUOUS)
+    return AddressMatch(
+        AddressMatchStatus.AMBIGUOUS, None, tuple(str(row["id"]) for row in rows)
+    )
 
 
 def intake_url_lock_key(source_url: str) -> str:

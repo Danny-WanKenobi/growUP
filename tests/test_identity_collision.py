@@ -40,6 +40,7 @@ class _CollisionStore:
         self.properties: dict[str, dict[str, Any]] = {}
         self.evidence: list[dict[str, Any]] = []
         self.distress: list[dict[str, Any]] = []
+        self.events: list[dict[str, Any]] = []
         self.queries: list[str] = []
         self.params: list[dict[str, Any]] = []
         self.fail_on: str | None = None
@@ -168,6 +169,9 @@ class _FakeCursor:
             row["field_evidence"] = params["field_evidence"]
             row["data_status"] = params["data_status"]
             return [{"id": str(params["id"])}]
+        if "INSERT INTO agent_events" in query:
+            store.events.append(dict(params))
+            return []
         raise AssertionError(f"unexpected query in collision repro: {query[:100]!r}")
 
 
@@ -180,7 +184,7 @@ class _FakeConnection:
 
     def __enter__(self) -> _FakeConnection:
         self._snapshot = copy.deepcopy(
-            (self._store.properties, self._store.evidence, self._store.distress)
+            (self._store.properties, self._store.evidence, self._store.distress, self._store.events)
         )
         return self
 
@@ -197,10 +201,11 @@ class _FakeConnection:
     def rollback(self) -> None:
         self.rollbacks += 1
         if self._snapshot is not None:
-            properties, evidence, distress = copy.deepcopy(self._snapshot)
+            properties, evidence, distress, events = copy.deepcopy(self._snapshot)
             self._store.properties = properties
             self._store.evidence = evidence
             self._store.distress = distress
+            self._store.events = events
             self._snapshot = None
 
 
@@ -732,6 +737,8 @@ def _live_cleanup_street(street: str) -> None:
     is recorded for id-based cleanup. The street embeds a full per-run
     UUID and the match is exact -- no wildcards, no prefixes, no
     name-based deletion -- so only this execution's rows can match.
+    Also removes this execution's intake decision events, matched by
+    the same exact observed street.
     """
     from app.properties_db import get_connection
 
@@ -739,6 +746,11 @@ def _live_cleanup_street(street: str) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM properties WHERE street_address = %(street)s",
+                {"street": street},
+            )
+            cur.execute(
+                "DELETE FROM agent_events WHERE event_type = 'gabriel.intake.decision' "
+                "AND details->'observed'->>'street_address' = %(street)s",
                 {"street": street},
             )
         conn.commit()
@@ -811,7 +823,8 @@ def _live_cleanup_url(url: str) -> None:
     Fallback for addressless tests, which have no street for
     street-scoped cleanup. The URL embeds a per-run UUID and the match
     is exact, so only this execution's rows can match. Evidence rows
-    cascade from the property delete.
+    cascade from the property delete. Also removes this execution's
+    intake decision events, matched by the same exact observed URL.
     """
     from app.properties_db import get_connection
 
@@ -820,6 +833,11 @@ def _live_cleanup_url(url: str) -> None:
             cur.execute(
                 "DELETE FROM properties WHERE id IN ("
                 "SELECT property_id FROM listing_evidence WHERE source_url = %(url)s)",
+                {"url": url},
+            )
+            cur.execute(
+                "DELETE FROM agent_events WHERE event_type = 'gabriel.intake.decision' "
+                "AND details->'observed'->>'listing_url' = %(url)s",
                 {"url": url},
             )
         conn.commit()

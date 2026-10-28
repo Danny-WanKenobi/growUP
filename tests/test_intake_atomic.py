@@ -177,9 +177,19 @@ def _live_cleanup_urls_streets(urls: list[str], streets: list[str]) -> None:
                     "SELECT property_id FROM listing_evidence WHERE source_url = ANY(%(u)s))",
                     {"u": urls},
                 )
+                cur.execute(
+                    "DELETE FROM agent_events WHERE event_type = 'gabriel.intake.decision' "
+                    "AND details->'observed'->>'listing_url' = ANY(%(u)s)",
+                    {"u": urls},
+                )
             for street in streets:
                 cur.execute(
                     "DELETE FROM properties WHERE street_address = %(street)s",
+                    {"street": street},
+                )
+                cur.execute(
+                    "DELETE FROM agent_events WHERE event_type = 'gabriel.intake.decision' "
+                    "AND details->'observed'->>'street_address' = %(street)s",
                     {"street": street},
                 )
         conn.commit()
