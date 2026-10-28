@@ -754,15 +754,16 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
         "transition_action", "record_reconciliation",
         "get_action", "list_attempts",
         "list_own_open_attempts", "find_stale_attempting",
-        "stale_summary", "list_unknown_actions",
-        "unknown_summary",
+        "stale_summary", "unknown_summary",
     )
-    # The reviewed read-only review endpoint is the single route
-    # allowed to touch the dossier reader and its presentation.
-    # Every other route module must reference none of these.
+    # The reviewed read-only review endpoints are the single route
+    # module allowed to touch the dossier reader, the UNKNOWN queue
+    # reader, and the dossier presentation. Every other route module
+    # must reference none of these.
     review_route_only = (
         "app.identity", "verify_orchestrator",
         "external_action_reads", "get_reconciliation_case",
+        "list_unknown_actions",
         "external_action_review", "build_reconciliation_review",
     )
     offenders = []

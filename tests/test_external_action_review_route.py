@@ -391,6 +391,7 @@ def test_framework_405_gains_no_store_and_keeps_body() -> None:
     "/external-actions/{aid}/reviews",
     "/external-actions/{aid}/review/extra",
     "/external-actions//review",
+    "/external-actions/review-queue/extra",
     # No trailing-slash entry: the client normalizes it to the canonical
     # path, which is covered by the positive no-store tests instead.
 ])
@@ -474,6 +475,16 @@ def test_middleware_stamps_matching_path_regardless_of_id() -> None:
         assert (b"cache-control", b"no-store") in start["headers"]
 
 
+def test_middleware_stamps_review_queue_path() -> None:
+    for path in ("/external-actions/review-queue",
+                 "/external-actions/review-queue/"):
+        _, sent = _run_middleware(path, status=200, body=b'{"cases":[]}')
+        start, body_msg = _start_headers(sent)
+        assert start["status"] == 200
+        assert body_msg["body"] == b'{"cases":[]}'
+        assert (b"cache-control", b"no-store") in start["headers"]
+
+
 def test_middleware_replaces_cache_control_and_keeps_rest() -> None:
     _, sent = _run_middleware(
         f"/external-actions/{uuid4()}/review", status=200, body=b"report",
@@ -496,6 +507,10 @@ def test_middleware_replaces_cache_control_and_keeps_rest() -> None:
     "/external-actions//review", "/other/abc/review", "",
     "/external-actions//abc/review", "/external-actions/abc//review",
     "/external-actions/abc/review//", "//external-actions/abc/review",
+    "/external-actions/review-queue/extra",
+    "/external-actions/review-queue//",
+    "/external-actions//review-queue",
+    "/external-actions/review-queues",
 ])
 def test_middleware_ignores_non_matching_paths(path) -> None:
     _, sent = _run_middleware(path)

@@ -1,10 +1,12 @@
-"""Path-scoped Cache-Control middleware for the review endpoint.
+"""Path-scoped Cache-Control middleware for the review endpoints.
 
 Applies ``Cache-Control: no-store`` to every HTTP response emitted
-for GET /external-actions/{action_id}/review -- including
+for GET /external-actions/{action_id}/review and
+GET /external-actions/review-queue -- including
 framework-generated 401/404/405/422 rejections -- without
 touching any other route. Matching is syntactic and strict:
-exactly /external-actions/{id}/review with at most one
+exactly /external-actions/{id}/review or
+/external-actions/review-queue, each with at most one
 trailing slash; UUID validity is irrelevant, so
 malformed-UUID 422s are covered too. Request bodies, headers,
 statuses, and unrelated response headers pass through untouched,
@@ -15,7 +17,7 @@ exceptions are emitted by Starlette's ServerErrorMiddleware,
 which wraps outside all user middleware, so a 500 from an
 unexpected bug cannot be stamped here without reimplementing
 framework error handling (rejected as unauditable). The review
-endpoint maps every known failure to a handled response, all of
+endpoints map every known failure to a handled response, all of
 which this middleware covers.
 """
 
@@ -38,6 +40,21 @@ def _is_review_path(path: object) -> bool:
     )
 
 
+def _is_review_queue_path(path: object) -> bool:
+    """Match the exact queue path, optionally with one trailing slash."""
+    if not isinstance(path, str):
+        return False
+
+    segments = path.removesuffix("/").split("/")
+
+    return (
+        len(segments) == 3
+        and segments[0] == ""
+        and segments[1] == "external-actions"
+        and segments[2] == "review-queue"
+    )
+
+
 class ReviewNoStoreMiddleware:
     """Stamp no-store on review-endpoint responses (pure ASGI)."""
 
@@ -45,8 +62,9 @@ class ReviewNoStoreMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope.get("type") != "http" or not _is_review_path(
-            scope.get("path", "")
+        path = scope.get("path", "")
+        if scope.get("type") != "http" or not (
+            _is_review_path(path) or _is_review_queue_path(path)
         ):
             await self.app(scope, receive, send)
             return
