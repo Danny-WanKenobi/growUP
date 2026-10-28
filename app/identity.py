@@ -44,6 +44,12 @@ Two identity kinds, two mechanisms -- the asymmetry is deliberate:
   be designated (``WONDRUE_READER_ID``) as the read-only
   system-wide inspector; the name alone confers nothing without
   a verified credential.
+- RECONCILERS are humans enrolled separately (``RECONCILER_PUBLIC_KEYS``)
+  whose purpose-bound approvals (``growup-reconcile-v1:``) resolve
+  UNKNOWN outcomes with digest-bound evidence. An authorization
+  signature can never verify as a reconciliation approval. The
+  approval proves the HUMAN's signed statement plus evidence
+  integrity -- never provider truth itself.
 
 SINGLE-PROCESS LIMITATION (read carefully): this module genuinely
 stops credential-less forgery -- fabricating a principal object or
@@ -69,12 +75,15 @@ that migration.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
+from uuid import UUID
 
 AUTHORIZER_PUBLIC_KEYS_ENV_VAR = "AUTHORIZER_PUBLIC_KEYS"
 EXECUTOR_KEYS_ENV_VAR = "EXECUTOR_KEYS"
@@ -82,10 +91,13 @@ ORCHESTRATOR_KEYS_ENV_VAR = "ORCHESTRATOR_KEYS"
 EXECUTOR_SCOPES_ENV_VAR = "EXECUTOR_SCOPES"
 ORCHESTRATOR_SCOPES_ENV_VAR = "ORCHESTRATOR_SCOPES"
 WONDRUE_READER_ID_ENV_VAR = "WONDRUE_READER_ID"
+RECONCILER_PUBLIC_KEYS_ENV_VAR = "RECONCILER_PUBLIC_KEYS"
 
 # Approval signature domain separator: binds signatures to this exact
 # protocol so they cannot be transplanted from any other signed flow.
 _APPROVAL_DOMAIN = b"growup-approval-v1:"
+_RECONCILIATION_DOMAIN = b"growup-reconcile-v1:"
+_SHA256_TAGGED_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Canonical identity names: stable lowercase handles (usernames,
 # service ids). Canonicalization happens at the verification boundary
@@ -95,7 +107,9 @@ MAX_IDENTITY_ENTRIES = 64
 
 # Human approvals are short-lived capabilities, not sessions.
 MAX_APPROVAL_TTL_SECONDS = 24 * 60 * 60
+MAX_RECONCILIATION_TTL_SECONDS = 24 * 60 * 60
 CLOCK_SKEW_SECONDS = 60
+MAX_RECONCILIATION_REFERENCE_CHARS = 256
 
 # Executor service secrets: long enough to resist guessing, bounded
 # to keep config parsing safe.
@@ -162,6 +176,23 @@ class OrchestratorPrincipal:
     method: str = "orchestrator-key"
 
 
+@dataclass(frozen=True)
+class VerifiedReconciliationApproval:
+    """One verified reconciliation approval plus its key material.
+
+    Returned only by :func:`verify_reconciliation_approval`: the
+    enrolled principal, the fingerprint identifying the EXACT
+    verifying key, and that key's raw bytes as hex. Public
+    verification material (stored on the decision row for
+    rotation-proof historical audit); never private keys or
+    bearer secrets.
+    """
+
+    principal: HumanPrincipal
+    key_fingerprint: str
+    public_key_hex: str
+
+
 def canonical_identity_name(value: object) -> str:
     """Canonicalize a claimed identity to its stable lowercase handle.
 
@@ -188,12 +219,14 @@ def _require_aware(moment: object, name: str) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
-def parse_authorizer_keys(raw: str | None) -> dict[str, bytes]:
+def parse_authorizer_keys(
+    raw: str | None, *, kind: str = "authorizer"
+) -> dict[str, bytes]:
     """Parse ``name:hex-pubkey`` entries into canonical name -> raw key bytes.
 
     Public keys are verification material, not secrets. Malformed maps
     fail closed (empty result denies everyone); callers never see keys
-    in error text.
+    in error text. The ``kind`` label names the map in errors.
     """
     entries: dict[str, bytes] = {}
     if raw is None or not raw.strip():
@@ -204,19 +237,29 @@ def parse_authorizer_keys(raw: str | None) -> dict[str, bytes]:
             continue
         name, sep, hexkey = item.partition(":")
         if not sep:
-            raise AuthenticationFailedError("authorizer map entry missing ':'")
+            raise AuthenticationFailedError(f"{kind} map entry missing ':'")
         try:
             canonical = canonical_identity_name(name)
         except ValueError:
-            raise AuthenticationFailedError("authorizer map has invalid name entry") from None
+            raise AuthenticationFailedError(f"{kind} map has invalid name entry") from None
         try:
             rawkey = bytes.fromhex(hexkey.strip())
         except ValueError:
-            raise AuthenticationFailedError("authorizer map has non-hex key") from None
+            raise AuthenticationFailedError(f"{kind} map has non-hex key") from None
         if len(rawkey) != 32 or canonical in entries or len(entries) >= MAX_IDENTITY_ENTRIES:
-            raise AuthenticationFailedError("authorizer map has invalid key entry")
+            raise AuthenticationFailedError(f"{kind} map has invalid key entry")
         entries[canonical] = rawkey
     return entries
+
+
+def parse_reconciler_keys(raw: str | None) -> dict[str, bytes]:
+    """Parse reconciler enrollment (same format, separate permission).
+
+    Reconciler keys authorize UNKNOWN-outcome reconciliation only;
+    authorizer keys authorize action recording only. Same parsing
+    rules, disjoint permission: neither enrollment implies the other.
+    """
+    return parse_authorizer_keys(raw, kind="reconciler")
 
 
 def _parse_service_keys(raw: str | None, *, kind: str) -> dict[str, str]:
@@ -317,6 +360,11 @@ def load_authorizer_keys() -> dict[str, bytes]:
     return parse_authorizer_keys(os.getenv(AUTHORIZER_PUBLIC_KEYS_ENV_VAR))
 
 
+def load_reconciler_keys() -> dict[str, bytes]:
+    """Load reconciler public keys from the environment (separate enrollment)."""
+    return parse_reconciler_keys(os.getenv(RECONCILER_PUBLIC_KEYS_ENV_VAR))
+
+
 def load_executor_keys() -> dict[str, str]:
     """Load executor service credentials from the environment."""
     return parse_executor_keys(os.getenv(EXECUTOR_KEYS_ENV_VAR))
@@ -353,6 +401,52 @@ def load_wondrue_reader_id() -> str | None:
         return canonical_identity_name(raw)
     except ValueError:
         raise AuthenticationFailedError("wondrue reader designation invalid") from None
+
+
+def key_fingerprint(public_key_bytes: bytes) -> str:
+    """Stable identifier for one enrolled public key (``sha256:`` + hex).
+
+    Fingerprints identify the EXACT key that verified a signature,
+    so historical verification survives rotation: names may be
+    re-enrolled under new keys, but a fingerprint always names one
+    key. Public verification material, never secret.
+    """
+    if not isinstance(public_key_bytes, bytes) or len(public_key_bytes) != 32:
+        raise ValueError("public key must be 32 raw bytes")
+    return "sha256:" + hashlib.sha256(public_key_bytes).hexdigest()
+
+
+def validate_key_fingerprint(value: object) -> str:
+    """Validate a ``sha256:``-tagged fingerprint (fail closed on shape)."""
+    if not isinstance(value, str) or not _SHA256_TAGGED_RE.match(value):
+        raise ValueError("key fingerprint must match sha256:<64 hex>")
+    return value
+
+
+def canonical_evidence_digest(evidence: dict[str, Any]) -> str:
+    """Digest normalized evidence bytes (operator tooling shares this).
+
+    ``observed_at`` accepts any valid ISO-8601 spelling and is
+    normalized to canonical UTC before hashing, so equivalent
+    spellings digest identically. All other fields hash verbatim
+    (sorted keys); unknown keys change the digest, failing closed
+    on shape mismatch between signer and verifier.
+    """
+    if not isinstance(evidence, dict):
+        raise TypeError("evidence must be a dict of evidence fields")
+    normalized = dict(evidence)
+    raw_observed = normalized.get("observed_at")
+    if not isinstance(raw_observed, str):
+        raise ValueError("evidence observed_at must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(raw_observed.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("evidence observed_at must be an ISO-8601 string") from None
+    if parsed.tzinfo is None:
+        raise ValueError("evidence observed_at must be timezone-aware")
+    normalized["observed_at"] = parsed.astimezone(timezone.utc).isoformat()
+    blob = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def ensure_credential_namespaces_disjoint(
@@ -500,6 +594,164 @@ def verify_human_approval(
     except (InvalidSignature, ValueError):
         raise AuthenticationFailedError("approval signature mismatch") from None
     return HumanPrincipal(name=name)
+
+
+def _reconciliation_payload(
+    action_id: UUID | str,
+    attempt_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    reconciled_by: str,
+    reconciliation_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> bytes:
+    canonical = {
+        "action_id": str(action_id),
+        "attempt_id": str(attempt_id),
+        "proposed_outcome": proposed_outcome,
+        "evidence_digest": evidence_digest,
+        "reconciled_by": reconciled_by,
+        "reconciliation_reference": reconciliation_reference,
+        "issued_at": issued_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+    }
+    blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return _RECONCILIATION_DOMAIN + blob.encode("utf-8")
+
+
+def _require_reconciliation_shape(
+    action_id: UUID | str,
+    attempt_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    reconciliation_reference: str,
+) -> None:
+    for label, value in (("action_id", action_id), ("attempt_id", attempt_id)):
+        try:
+            UUID(str(value))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError(f"invalid {label}: {value!r}") from None
+    if proposed_outcome not in ("SUCCEEDED", "FAILED"):
+        raise ValueError(f"invalid proposed_outcome: {proposed_outcome!r}")
+    if not _SHA256_TAGGED_RE.match(evidence_digest or ""):
+        raise ValueError("evidence_digest must match sha256:<64 hex>")
+    if (
+        not isinstance(reconciliation_reference, str)
+        or not reconciliation_reference.strip()
+        or len(reconciliation_reference) > MAX_RECONCILIATION_REFERENCE_CHARS
+    ):
+        raise ValueError("reconciliation_reference must be a non-empty bounded string")
+
+
+def sign_reconciliation_approval(
+    *,
+    private_key_hex: str,
+    action_id: UUID | str,
+    attempt_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    reconciled_by: str,
+    reconciliation_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> str:
+    """Sign one reconciliation approval (operator-side helper; pure function).
+
+    Same offline pattern as :func:`sign_approval`: the private key
+    arrives as an argument from operator-held storage and never
+    exists in the application environment. The separate
+    ``growup-reconcile-v1:`` domain binds the signature to the
+    exact action, attempt, proposed outcome, and evidence digest --
+    an ordinary authorization signature can never verify here.
+    """
+    from cryptography.exceptions import InvalidKey
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+    except (ValueError, TypeError, InvalidKey):
+        raise ValueError("unusable reconciliation signing key") from None
+    _require_reconciliation_shape(
+        action_id, attempt_id, proposed_outcome,
+        evidence_digest, reconciliation_reference,
+    )
+    issued = _require_aware(issued_at, "issued_at")
+    expiry = _require_aware(expires_at, "expires_at")
+    payload = _reconciliation_payload(
+        action_id, attempt_id, proposed_outcome, evidence_digest,
+        canonical_identity_name(reconciled_by),
+        reconciliation_reference, issued, expiry,
+    )
+    return private.sign(payload).hex()
+
+
+def verify_reconciliation_approval(
+    *,
+    claimed_name: str,
+    action_id: UUID | str,
+    attempt_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    reconciliation_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+    signature_hex: str,
+    reconcilers: dict[str, bytes] | None = None,
+    now: datetime | None = None,
+) -> VerifiedReconciliationApproval:
+    """Verify one reconciliation approval against reconciler enrollment.
+
+    Purpose-bound to the exact action, attempt, proposed outcome,
+    and evidence digest under a domain no authorization signature
+    shares. Lifetime rules mirror human approvals (aware-only,
+    strict ordering, independent TTL cap, 60s skew both
+    directions). Returns the enrolled principal plus the exact
+    verifying key's fingerprint and hex for the decision row;
+    anything else raises :class:`AuthenticationFailedError` with
+    no key material in text.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    skew = timedelta(seconds=CLOCK_SKEW_SECONDS)
+    name = canonical_identity_name(claimed_name)
+    _require_reconciliation_shape(
+        action_id, attempt_id, proposed_outcome,
+        evidence_digest, reconciliation_reference,
+    )
+    moment = _utcnow() if now is None else _require_aware(now, "now")
+    issued = _require_aware(issued_at, "issued_at")
+    expiry = _require_aware(expires_at, "expires_at")
+    if expiry <= issued:
+        raise AuthenticationFailedError("approval expires_at must be later than issued_at")
+    if (expiry - issued).total_seconds() > MAX_RECONCILIATION_TTL_SECONDS:
+        raise AuthenticationFailedError("approval lifetime exceeds maximum TTL")
+    if issued > moment + skew:
+        raise AuthenticationFailedError("approval issued in the future")
+    if moment > expiry + skew:
+        raise AuthenticationFailedError("approval expired")
+    known = load_reconciler_keys() if reconcilers is None else reconcilers
+    rawkey = known.get(name)
+    if rawkey is None:
+        raise AuthenticationFailedError("unknown reconciler")
+    try:
+        signature = bytes.fromhex(signature_hex)
+    except (ValueError, TypeError):
+        raise AuthenticationFailedError("malformed approval signature") from None
+    payload = _reconciliation_payload(
+        action_id, attempt_id, proposed_outcome, evidence_digest,
+        name, reconciliation_reference, issued, expiry,
+    )
+    try:
+        Ed25519PublicKey.from_public_bytes(rawkey).verify(signature, payload)
+    except (InvalidSignature, ValueError):
+        raise AuthenticationFailedError("approval signature mismatch") from None
+    return VerifiedReconciliationApproval(
+        principal=HumanPrincipal(name=name),
+        key_fingerprint=key_fingerprint(rawkey),
+        public_key_hex=rawkey.hex(),
+    )
 
 
 def verify_executor(
@@ -725,4 +977,24 @@ def ensure_may_inspect_type(
     if not may_inspect_type(principal, action_type, granted):
         raise AuthorizationDeniedError(
             "orchestrator is not permitted to inspect this action type"
+        )
+
+
+def may_reconcile(principal: object) -> bool:
+    """Only a verified human may reconcile UNKNOWN outcomes.
+
+    Same trust rule as :func:`may_authorize`: type check only, valid
+    solely for :func:`verify_reconciliation_approval` outputs (which
+    additionally require reconciler enrollment). The entry point
+    verifies proofs itself; executors and orchestrators can never
+    satisfy this policy.
+    """
+    return isinstance(principal, HumanPrincipal)
+
+
+def ensure_may_reconcile(principal: object) -> None:
+    """Enforce the reconciliation role policy (fail closed, explicit denial)."""
+    if not may_reconcile(principal):
+        raise AuthorizationDeniedError(
+            "reconciling an action requires a verified human reconciler"
         )

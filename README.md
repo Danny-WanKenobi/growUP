@@ -1350,6 +1350,45 @@ reads, executor ownership, stale scan/summary, read-only proof)
 skip unless `GROWUP_PG_INTEGRATION=1` with migrations 005–006
 applied.
 
+### Phase 3C-3B-3B-1 — Reconciliation schema, identity, evidence validation
+
+Foundation for human-approved, evidence-gated reconciliation of
+`UNKNOWN` outcomes. No executable path exists yet: no record
+function, no transitions, no writes of any kind.
+
+- **Migration 007** (`migrations/007_reconciliation_decisions.sql`,
+  file only, not yet applied): append-only
+  `reconciliation_decisions` with decision UUID, action/attempt
+  foreign keys, one-decision-per-attempt uniqueness, definitive
+  outcome plus matching asserted outcome, prior outcome pinned
+  to `UNKNOWN`, principal and case reference, Ed25519 approval
+  signature with signing public key and SHA-256 fingerprint
+  (rotation-proof historical verification), approval
+  timestamps, evidence kind/source/timestamp/digest/summary,
+  mandatory artifact reference, optional provider/storage
+  references, and tier pinned to `human_reviewed`. No existing
+  table is modified.
+- **Reconciliation identity:** separate `growup-reconcile-v1:`
+  signing domain and `RECONCILER_PUBLIC_KEYS` enrollment, so
+  authorization signatures can never verify as reconciliation
+  approvals and authorizers do not automatically reconcile.
+  Approvals bind the exact action, attempt, outcome, and
+  evidence digest with the established lifetime and skew rules
+  under an independent TTL constant.
+- **Evidence contract** (`app/external_action_reconcile.py`):
+  immutable provider-receipt / provider-status-reference model
+  with canonical digest binding, concrete artifact references,
+  outcome consistency, bounded fields, and timing guards
+  (no future observations; evidence must predate approval).
+  `system_verified` claims are rejected: Grow Up authenticates
+  the human and protects evidence integrity but does not
+  independently establish provider truth.
+- **Frozen replay contract** (documented for 3B-3B-2): identical
+  replay (same attempt, principal, reference, outcome, digest)
+  returns the existing decision and writes nothing; renewed
+  approvals by the same principal/reference discover it;
+  anything else conflicts fail-closed.
+
 ---
 
 ## 🎥 Demonstration

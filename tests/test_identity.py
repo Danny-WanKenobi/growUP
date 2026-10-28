@@ -725,6 +725,7 @@ def test_credential_env_access_confined_to_identity() -> None:
                 "EXECUTOR_SCOPES",
                 "ORCHESTRATOR_SCOPES",
                 "WONDRUE_READER_ID",
+                "RECONCILER_PUBLIC_KEYS",
             )
         ):
             offenders.append(str(source))
@@ -742,11 +743,16 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
                 "app.identity", "sign_approval", "verify_human_approval",
                 "verify_executor", "verify_orchestrator", "may_enqueue",
                 "may_inspect", "load_wondrue_reader_id",
+                "verify_reconciliation_approval", "sign_reconciliation_approval",
+                "may_reconcile", "ReconciliationEvidence",
                 "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS", "ORCHESTRATOR_KEYS",
                 "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES", "WONDRUE_READER_ID",
+                "RECONCILER_PUBLIC_KEYS",
                 "external_actions_db", "external_action_reads",
+                "external_action_reconcile",
                 "record_authorization", "claim_action",
-                "transition_action", "get_action", "list_attempts",
+                "transition_action", "record_reconciliation",
+                "get_action", "list_attempts",
                 "list_own_open_attempts", "find_stale_attempting",
                 "stale_summary",
             )
