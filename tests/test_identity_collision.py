@@ -19,6 +19,7 @@ same-name, same-address listing from a second source still enriches.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,6 +37,20 @@ class _CollisionStore:
     def __init__(self) -> None:
         self.properties: dict[str, dict[str, Any]] = {}
         self.evidence: list[dict[str, Any]] = []
+
+
+def _pg_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Emulate PostgreSQL JSONB round-trip on reads.
+
+    Real psycopg 3 parses JSONB columns back into Python objects on
+    SELECT, so a serialized ``field_evidence`` parameter loads back as a
+    dict. The in-memory store keeps params verbatim; this parses JSON
+    text back on row reads to match server behavior.
+    """
+    out = dict(row)
+    if isinstance(out.get("field_evidence"), str):
+        out["field_evidence"] = json.loads(out["field_evidence"])
+    return out
 
 
 class _FakeCursor:
@@ -95,10 +110,10 @@ class _FakeCursor:
             row.setdefault("created_at", "2026-10-20T00:00:00+00:00")
             row.setdefault("updated_at", "2026-10-20T00:00:00+00:00")
             store.properties[str(params["id"])] = row
-            return dict(row)
+            return _pg_row(row)
         if "FROM properties WHERE id" in query:
             row = store.properties.get(str(params["id"]))
-            return dict(row) if row is not None else None
+            return _pg_row(row) if row is not None else None
         if query.strip().upper().startswith("UPDATE PROPERTIES SET"):
             row = store.properties.get(str(params["id"]))
             if row is None:
@@ -346,6 +361,25 @@ def _live_cleanup(property_ids: list[str]) -> None:
         conn.commit()
 
 
+def _live_cleanup_street(street: str) -> None:
+    """Delete rows carrying this execution's unique synthetic street (exact match).
+
+    Fallback for intake failures that commit a property row before its id
+    is recorded for id-based cleanup. The street embeds a full per-run
+    UUID and the match is exact -- no wildcards, no prefixes, no
+    name-based deletion -- so only this execution's rows can match.
+    """
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM properties WHERE street_address = %(street)s",
+                {"street": street},
+            )
+        conn.commit()
+
+
 def _live_property(property_id: str) -> dict[str, Any] | None:
     from app.properties_db import get_property
 
@@ -419,6 +453,7 @@ def test_live_same_address_name_conflict_needs_review() -> None:
         assert _live_evidence_by_url(url_b) == []
     finally:
         _live_cleanup(created)
+        _live_cleanup_street(street)
 
 
 @needs_live_pg
@@ -445,6 +480,7 @@ def test_live_name_conflict_does_not_fill_null_area() -> None:
         assert _live_evidence_by_url(url_b) == []
     finally:
         _live_cleanup(created)
+        _live_cleanup_street(street)
 
 
 @needs_live_pg
@@ -474,3 +510,4 @@ def test_live_same_name_second_source_enriches() -> None:
         ]
     finally:
         _live_cleanup(created)
+        _live_cleanup_street(street)

@@ -10,6 +10,7 @@ linked to the property they describe. Error handling follows the
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -41,7 +42,7 @@ def create_listing_evidence(
         "source_url": source_url,
         "observed_at": observed_at,
         "listing_type": listing_type,
-        "payload": payload,
+        "payload": json.dumps(payload),  # JSONB takes serialized text (codebase convention)
     }
     try:
         with get_connection(config) as conn:

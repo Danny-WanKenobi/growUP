@@ -16,6 +16,7 @@ are never converted through float.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -101,6 +102,10 @@ def create_property(data: dict[str, Any], config: DatabaseConfig | None = None) 
     category = params.get("category")
     if category is not None and not isinstance(category, str):
         params["category"] = str(getattr(category, "value", category))
+    # JSONB columns take serialized text (established codebase convention);
+    # None stays None so unknown evidence remains SQL NULL.
+    if params.get("field_evidence") is not None:
+        params["field_evidence"] = json.dumps(params["field_evidence"])
     sql = (
         f"INSERT INTO properties ({columns}) VALUES ({placeholders}) "
         f"RETURNING {', '.join(_PROPERTY_COLUMNS)}"
@@ -217,7 +222,8 @@ def enrich_property_estimates(
         f"WHERE id = %(id)s AND {guards} "
         "RETURNING id"
     )
-    params = {"id": str(property_id), "field_evidence": field_evidence,
+    params = {"id": str(property_id),
+              "field_evidence": json.dumps(field_evidence) if field_evidence is not None else None,
               "data_status": data_status, **fills}
     try:
         with get_connection(config) as conn:
