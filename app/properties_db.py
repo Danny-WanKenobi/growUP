@@ -79,22 +79,13 @@ def get_connection(config: DatabaseConfig | None = None):  # type: ignore[no-unt
         raise DatabaseUnavailableError("connection_failed") from exc
 
 
-def create_property(data: dict[str, Any], config: DatabaseConfig | None = None) -> dict[str, Any]:
-    """Insert one operational property row and return it.
-
-    Server assigns id/timestamps and derives ``data_status`` from the
-    populated estimated/verified fields; a caller-provided label is
-    never trusted. Raises ValueError when the payload declares a
-    hypothetical status -- hypothetical values are rejected, never
-    stored in the authoritative store.
-    """
+def _property_insert_params(data: dict[str, Any]) -> dict[str, Any]:
+    """Validate payload shape and build INSERT params (no I/O)."""
     declared = data.get("data_status")
     if declared is not None:
         marker = str(getattr(declared, "value", declared)).strip().lower()
         if marker == "hypothetical":
             raise ValueError("hypothetical values are not permitted in operational records")
-    columns = ", ".join(_INSERT_COLUMNS)
-    placeholders = ", ".join(f"%({c})s" for c in _INSERT_COLUMNS)
     params = {c: data.get(c) for c in _INSERT_COLUMNS}
     params["id"] = str(uuid4())
     params["data_status"] = derive_data_status(params).value  # server-derived, never trusted
@@ -106,15 +97,36 @@ def create_property(data: dict[str, Any], config: DatabaseConfig | None = None) 
     # None stays None so unknown evidence remains SQL NULL.
     if params.get("field_evidence") is not None:
         params["field_evidence"] = json.dumps(params["field_evidence"])
+    return params
+
+
+def _insert_property_cursor(cur: Any, params: dict[str, Any]) -> dict[str, Any] | None:
+    """Execute the property INSERT on a caller-managed cursor (no commit)."""
+    columns = ", ".join(_INSERT_COLUMNS)
+    placeholders = ", ".join(f"%({c})s" for c in _INSERT_COLUMNS)
     sql = (
         f"INSERT INTO properties ({columns}) VALUES ({placeholders}) "
         f"RETURNING {', '.join(_PROPERTY_COLUMNS)}"
     )
+    cur.execute(sql, params)
+    row = cur.fetchone()
+    return dict(row) if row is not None else None
+
+
+def create_property(data: dict[str, Any], config: DatabaseConfig | None = None) -> dict[str, Any]:
+    """Insert one operational property row and return it.
+
+    Server assigns id/timestamps and derives ``data_status`` from the
+    populated estimated/verified fields; a caller-provided label is
+    never trusted. Raises ValueError when the payload declares a
+    hypothetical status -- hypothetical values are rejected, never
+    stored in the authoritative store.
+    """
+    params = _property_insert_params(data)
     try:
         with get_connection(config) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, params)
-                row = cur.fetchone()
+                row = _insert_property_cursor(cur, params)
             conn.commit()
     except (DatabaseNotConfiguredError, DatabaseUnavailableError):
         raise
@@ -122,7 +134,22 @@ def create_property(data: dict[str, Any], config: DatabaseConfig | None = None) 
         raise DatabaseUnavailableError("database_error") from exc
     if row is None:  # pragma: no cover - defensive; INSERT..RETURNING always returns a row
         raise DatabaseUnavailableError("database_error")
-    return dict(row)
+    return row
+
+
+def create_property_in_transaction(conn: Any, data: dict[str, Any]) -> dict[str, Any]:
+    """Insert one property on the caller's connection (no commit).
+
+    Same validation and row shape as :func:`create_property`; the
+    caller owns commit/rollback so several writes can share one
+    transaction.
+    """
+    params = _property_insert_params(data)
+    with conn.cursor() as cur:
+        row = _insert_property_cursor(cur, params)
+    if row is None:  # pragma: no cover - defensive; INSERT..RETURNING always returns a row
+        raise DatabaseUnavailableError("database_error")
+    return row
 
 
 def list_properties(

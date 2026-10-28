@@ -360,8 +360,10 @@ def test_run_creates_new_and_skips_duplicates(monkeypatch) -> None:
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+        gabriel_service, "_create_with_observation",
+        lambda payload, canonical, external_id: created.append(payload) or {"id": f"id-{len(created)}"},
     )
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
 
     def _existing(payload):
         if payload.get("street_address") == "200 Main St":
@@ -391,10 +393,12 @@ def test_run_reports_ambiguity_without_selecting(monkeypatch) -> None:
         lambda payload: AddressMatch(AddressMatchStatus.AMBIGUOUS),
     )
 
-    def _must_not_create(data):
+    def _must_not_create(*args):
         raise AssertionError("ambiguous matches must not create records")
 
+    monkeypatch.setattr(gabriel_service, "_create_with_observation", _must_not_create)
     monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 0
     assert result.counts.skipped_duplicate == 1
@@ -416,8 +420,10 @@ def test_run_keeps_distinct_addressless_candidates(monkeypatch) -> None:
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+        gabriel_service, "_create_with_observation",
+        lambda payload, canonical, external_id: created.append(payload) or {"id": f"id-{len(created)}"},
     )
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
     # Real matcher: addressless payloads return NONE without touching the DB.
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 2
@@ -509,10 +515,11 @@ def test_run_skips_candidates_failing_validation_gate(monkeypatch) -> None:
     stub = _StubSource(listings=[bad])
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
 
-    def _must_not_create(data):
+    def _must_not_create(*args):
         raise AssertionError("invalid candidates must not persist")
 
     monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "_create_with_observation", _must_not_create)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.skipped_unusable == 1
     assert result.counts.created == 0

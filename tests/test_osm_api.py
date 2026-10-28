@@ -245,8 +245,10 @@ def test_osm_api_run_through_existing_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeResponse(text=SAMPLE_OSM_XML))
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+        gabriel_service, "_create_with_observation",
+        lambda payload, canonical, external_id: created.append(payload) or {"id": f"id-{len(created)}"},
     )
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
     monkeypatch.setattr(
         gabriel_service, "match_existing_address",
         lambda payload: AddressMatch(AddressMatchStatus.NONE),
@@ -286,8 +288,10 @@ def test_osm_api_run_skips_stored_duplicates(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeResponse(text=SAMPLE_OSM_XML))
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": "new"}
+        gabriel_service, "_create_with_observation",
+        lambda payload, canonical, external_id: created.append(payload) or {"id": "new"},
     )
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
 
     def _existing(payload):
         if (payload.get("street_address") or "") == "100 Main St":
