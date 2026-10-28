@@ -177,7 +177,7 @@ def test_f_multiple_buildings_never_merged() -> None:
     for prop in intel.properties:
         assert set(prop.model_fields) <= {
             "name", "street_address", "city", "state", "zip_code",
-            "category", "evidence",
+            "category", "unit_designator", "evidence",
         }
 
 

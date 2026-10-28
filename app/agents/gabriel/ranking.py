@@ -681,6 +681,10 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
                 )
             continue
         evidence = _collect_candidate(group.key, group.members, items)
+        for reason in group.review_reasons:
+            evidence.unresolved.append(f"identity review: {reason}")
+        if group.needs_review and not group.review_reasons:
+            evidence.unresolved.append("identity review: grouped observations require identity review")
         if any(len(items[index].properties) > 1 for index in group.members):
             evidence.unresolved.append(
                 "source discusses multiple properties; shared observations left unattributed for review"
@@ -702,6 +706,10 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
         )
         _evaluate_qc(candidate, evidence, items)
         candidate.next_steps = _next_steps(candidate, evidence)
+        if group.needs_review:
+            candidate.next_steps.append(
+                "Raphael: confirm the grouped sources describe a single building before relying on attributed facts"
+            )
         if evidence.asking and candidate.qc_status is not QCStatus.EXCLUDE:
             amount = max(entry[0] for entry in evidence.asking)
             _, item, excerpt = next(entry for entry in evidence.asking if entry[0] == amount)

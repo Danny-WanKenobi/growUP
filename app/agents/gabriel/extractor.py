@@ -114,6 +114,7 @@ class ExtractedProperty(BaseModel):
     state: str | None = None
     zip_code: str | None = None
     category: PropertyCategory | None = None
+    unit_designator: str | None = None
     evidence: str = ""
 
 
@@ -313,6 +314,31 @@ _NAME_RE = re.compile(
     r"\b([A-Z][\w&']*(?:\s+[A-Z][\w&']*){0,3}\s+"
     r"(?:Tower|Towers|Plaza|Center|Centre|Building|Place|Exchange|Park|Commons|Station|Hub|Square))\b"
 )
+_UNIT_RE = re.compile(
+    r"\b(suites?|ste\.?|units?|floors?|fl\.?|buildings?|bldg\.?)\s*(#?)\s*([a-z0-9][a-z0-9-]*)",
+    re.IGNORECASE,
+)
+
+
+def _extract_designator(text: str) -> str | None:
+    """Capture an explicitly stated suite/unit/floor/building designator.
+
+    Narrow by design: the token must contain a digit, carry a '#' prefix,
+    or be a single character ending the clause. Plain-language matches
+    such as "building a new lobby" are rejected. First match wins; an
+    absent designator stays None and is never fabricated.
+    """
+    for match in _UNIT_RE.finditer(text):
+        token = match.group(3)
+        has_digit = any(char.isdigit() for char in token)
+        hash_prefix = match.group(2) == "#"
+        after = text[match.end(3) : match.end(3) + 1]
+        terminal = after in ("", ",", ".", ")", ";", ":")
+        if has_digit or hash_prefix or (len(token) == 1 and terminal):
+            keyword = match.group(1)
+            designator = f"{keyword} {match.group(2)}{token}".strip()
+            return " ".join(designator.split())
+    return None
 _CATEGORY_KEYWORDS: tuple[tuple[PropertyCategory, tuple[str, ...]], ...] = (
     (PropertyCategory.HIGH_RISE, ("high-rise", "high rise", "skyscraper", "tower", "stories")),
     (PropertyCategory.WAREHOUSE_INDUSTRIAL, ("warehouse", "industrial", "distribution", "logistics")),
@@ -351,6 +377,7 @@ def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
             ExtractedProperty(
                 name=unique_names[0], street_address=address, city=city,
                 state=state, zip_code=zip_code, category=category,
+                unit_designator=_extract_designator(combined),
                 evidence=f"named building '{unique_names[0]}'"
                 + (f" at '{address}'" if address else ""),
             )
@@ -817,11 +844,16 @@ def _domain_of_url(url: str) -> str:
 
 
 class PropertyGroup(BaseModel):
-    """Conservatively matched observations; attributes never merged."""
+    """Provisionally grouped observations; attributes never merged.
+
+    Grouping organizes evidence for review. It never asserts that grouped
+    observations describe the same physical building.
+    """
 
     key: str
-    basis: str  # "exact_address" or "name_plus_city"
+    basis: str  # "exact_address", "same_document", or "no_identity"
     needs_review: bool = False
+    review_reasons: list[str] = []
     members: list[int] = []  # indices into the intelligence list
 
 
@@ -831,56 +863,128 @@ def _normalize_identity(value: str | None) -> str:
     return _norm(value)
 
 
-def group_by_property(items: list[ResultIntelligence]) -> list[PropertyGroup]:
-    """Group results by exact address or name+city (conservative).
+def _address_key(prop: ExtractedProperty) -> str | None:
+    street = _normalize_identity(prop.street_address)
+    if not street:
+        return None
+    city = _normalize_identity(prop.city)
+    state = _normalize_identity(prop.state)
+    zip_code = _normalize_identity(prop.zip_code)
+    return f"addr:{street}|{city}|{state}|{zip_code}"
 
-    Source observations stay separate; grouping only records shared
-    identity evidence. Anything ambiguous gets its own group flagged
-    for review.
+
+def _identity_signature(item: ResultIntelligence) -> tuple[tuple[str, str, str, str, str], ...] | None:
+    """Complete normalized identity signature for addressless grouping."""
+    parts = []
+    for prop in item.properties:
+        part = (
+            _normalize_identity(prop.name),
+            _normalize_identity(prop.city),
+            _normalize_identity(prop.state),
+            _normalize_identity(prop.zip_code),
+            _normalize_identity(prop.unit_designator),
+        )
+        if any(part):
+            parts.append(part)
+    if not parts:
+        return None
+    return tuple(sorted(parts))
+
+
+def _refresh_address_group(group: PropertyGroup, items: list[ResultIntelligence]) -> None:
+    """Recompute identity conflicts for one address group (deterministic).
+
+    Only props at this group's address, or with no address at all, inform
+    the verdict; props explicitly at another address belong to that group.
+    """
+    names: set[str] = set()
+    designators: set[str] = set()
+    designator_absent = False
+    portfolio = False
+    for index in group.members:
+        item = items[index]
+        keys = {key for key in (_address_key(prop) for prop in item.properties) if key}
+        if len(keys) > 1:
+            portfolio = True
+        for prop in item.properties:
+            key = _address_key(prop)
+            if key is not None and key != group.key:
+                continue
+            name = _normalize_identity(prop.name)
+            if name:
+                names.add(name)
+            designator = _normalize_identity(prop.unit_designator)
+            if designator:
+                designators.add(designator)
+            else:
+                designator_absent = True
+    reasons = []
+    if len(names) > 1:
+        quoted = ", ".join(f"'{name}'" for name in sorted(names))
+        reasons.append(f"conflicting observed building names: {quoted}")
+    if len(designators) > 1:
+        quoted = ", ".join(f"'{designator}'" for designator in sorted(designators))
+        reasons.append(f"conflicting observed unit/building designators: {quoted}")
+    elif designators and designator_absent:
+        reasons.append("unit/building designator present in some observations but absent in others")
+    if portfolio:
+        reasons.append("multi-building portfolio association spanning multiple address groups")
+    group.review_reasons = reasons
+    group.needs_review = bool(reasons)
+
+
+def group_by_property(items: list[ResultIntelligence]) -> list[PropertyGroup]:
+    """Group results by exact address or repeated identical observation.
+
+    Addressed observations group by normalized address only; names and
+    URLs never join them. Addressless observations group only when the
+    exact source URL and the complete normalized identity signature both
+    match. Anything else stays separate. Grouping is provisional evidence
+    organization, never proof of physical-building identity.
     """
     groups: dict[str, PropertyGroup] = {}
     order: list[str] = []
     for index, item in enumerate(items):
-        addr_keys: list[tuple[str, str]] = []
-        name_keys: list[tuple[str, str]] = []
+        addr_keys: list[str] = []
         for prop in item.properties:
-            street = _normalize_identity(prop.street_address)
-            if street:
-                city = _normalize_identity(prop.city)
-                state = _normalize_identity(prop.state)
-                zip_code = _normalize_identity(prop.zip_code)
-                addr_keys.append((f"addr:{street}|{city}|{state}|{zip_code}", "exact_address"))
-            name = _normalize_identity(prop.name)
-            city = _normalize_identity(prop.city)
-            if name and city:
-                name_keys.append((f"name:{name}|{city}", "name_plus_city"))
-        keys = addr_keys + name_keys  # exact addresses take precedence
-        name_only = False
-        if not keys:
-            # Fallback: exact normalized name alone. Weaker than an address,
-            # so groups created this way are always flagged for review.
-            for prop in item.properties:
-                name = _normalize_identity(prop.name)
-                if name:
-                    keys.append((f"name-only:{name}", "name_only"))
-                    name_only = True
-                    break
-        if not keys:
-            key = f"ungrouped:{index}"
-            groups[key] = PropertyGroup(key=key, basis="no_identity", needs_review=True, members=[index])
-            order.append(key)
+            key = _address_key(prop)
+            if key is not None and key not in addr_keys:
+                addr_keys.append(key)
+        if addr_keys:
+            touched: list[str] = []
+            for key in addr_keys:
+                if key in groups:
+                    if index not in groups[key].members:
+                        groups[key].members.append(index)
+                else:
+                    groups[key] = PropertyGroup(key=key, basis="exact_address", members=[index])
+                    order.append(key)
+                touched.append(key)
+            for key in touched:
+                _refresh_address_group(groups[key], items)
             continue
-        placed = False
-        for key, basis in keys:
+        signature = _identity_signature(item)
+        url = (item.result_url or "").strip()
+        if signature is not None and url:
+            # Full repr keeps equality collision-safe; the key is opaque
+            # downstream (only the "ungrouped:" prefix is interpreted).
+            key = f"doc:{url}|{signature!r}"
             if key in groups:
-                groups[key].members.append(index)
-                placed = True
-        if not placed:
-            key, basis = keys[0]
-            groups[key] = PropertyGroup(key=key, basis=basis, members=[index])
-            order.append(key)
-            if len(keys) > 1 or name_only:
-                groups[key].needs_review = True
+                if index not in groups[key].members:
+                    groups[key].members.append(index)
+            else:
+                groups[key] = PropertyGroup(key=key, basis="same_document", members=[index])
+                order.append(key)
+            continue
+        key = f"ungrouped:{index}"
+        groups[key] = PropertyGroup(
+            key=key,
+            basis="no_identity",
+            needs_review=True,
+            review_reasons=["insufficient identity evidence to group this observation"],
+            members=[index],
+        )
+        order.append(key)
     return [groups[key] for key in order]
 
 
