@@ -44,6 +44,13 @@ separate human-approved reconciliation path may resolve it.
 Every queued entry must carry a latest attempt whose outcome is
 still UNKNOWN -- anything else fails closed rather than hide.
 
+Case dossier (Phase 3C-3B-3B-3B-1): one action's action record,
+attempt history, reconciliation decision (if any), and permanent
+lifecycle audits, read on one connection in a single REPEATABLE
+READ READ ONLY transaction with a conservative interpretation.
+Orchestrator-only, same scope rules as the scans; contradictory
+records fail closed; the dossier authorizes nothing.
+
 Internal-only: no routes reference this module (pinned by test).
 Authorization is enforced inside the SQL statements themselves, so
 a caller cannot distinguish "absent" from "unauthorized": both
@@ -128,6 +135,13 @@ def _coerce_uuid(value: UUID | str, name: str) -> UUID:
 def _quiet_close(conn: Any) -> None:
     try:
         conn.close()
+    except Exception:
+        pass  # cleanup must not mask the real outcome
+
+
+def _quiet_rollback(conn: Any) -> None:
+    try:
+        conn.rollback()
     except Exception:
         pass  # cleanup must not mask the real outcome
 
@@ -746,4 +760,275 @@ def unknown_summary(
     except Exception as exc:
         raise DatabaseUnavailableError("unknown_summary_failed") from exc
     finally:
+        _quiet_close(conn)
+
+
+# Reconciliation case dossier (Phase 3C-3B-3B-3B-1): explicit,
+# restated column mirrors -- this module does not import the
+# ledger, reconcile, or event-store modules.
+_LIFECYCLE_EVENT_TYPES = (
+    "external_action.authorized",
+    "external_action.claimed",
+    "external_action.transitioned",
+    "external_action.reconciled",
+)
+_DOSSIER_DECISION_COLUMNS = (
+    "decision_id",
+    "attempt_id",
+    "outcome",
+    "prior_outcome",
+    "reconciled_by",
+    "reconciliation_reference",
+    "evidence_kind",
+    "evidence_source",
+    "evidence_observed_at",
+    "evidence_digest",
+    "evidence_summary",
+    "artifact_ref",
+    "provider_reference",
+    "storage_ref",
+    "verification_tier",
+    "decided_at",
+)
+_SELECT_DOSSIER_DECISION = ", ".join(f"d.{name}" for name in _DOSSIER_DECISION_COLUMNS)
+
+
+def _interpret_case(
+    action: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    latest: dict[str, Any] | None,
+    attempt_total: int,
+    decisions: list[dict[str, Any]],
+    *,
+    moment: datetime,
+) -> tuple[str, str]:
+    """Classify one dossier, or fail closed on contradiction.
+
+    Every branch below restates a lifecycle invariant: a
+    reconciliation decision must match its terminal action and
+    resolve the latest attempt (whose UNKNOWN outcome is
+    preserved history, never rewritten); an UNKNOWN action with
+    no decision needs a latest attempt still UNKNOWN; a terminal
+    action with no decision needs the attempt to carry that
+    terminal outcome; ATTEMPTING needs an open latest attempt;
+    pre-execution states need no latest attempt, no attempt
+    rows, and a zero attempt count. Anything else is a state
+    the ledger cannot produce. The latest attempt is read
+    separately from the bounded page so classification never
+    depends on page position, and the unbounded attempt count
+    proves the full history: total == max == attempt_count, over
+    UNIQUE positive attempt numbers, admits exactly 1..N.
+    """
+    if len(decisions) > 1:
+        raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+    decision = decisions[0] if decisions else None
+    if attempt_total != action["attempt_count"]:
+        raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+    if latest is not None and latest["attempt_number"] != action["attempt_count"]:
+        raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+    state = action["state"]
+    if decision is not None:
+        if (
+            decision["outcome"] != state
+            or latest is None
+            or decision["attempt_id"] != latest["attempt_id"]
+            or latest["outcome"] != "UNKNOWN"
+        ):
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        return (
+            "reconciled",
+            f"Human-reviewed reconciliation recorded {state} for action"
+            f" {action['action_id']} (decision {decision['decision_id']});"
+            f" the attempt's UNKNOWN outcome is preserved history, and"
+            f" human_reviewed evidence was reviewed, not independently"
+            f" verified by Grow Up.",
+        )
+    if state == "UNKNOWN":
+        if latest is None or latest["outcome"] != "UNKNOWN":
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        return (
+            "unresolved_unknown",
+            f"Action {action['action_id']} is UNKNOWN with no reconciliation"
+            f" decision: human investigation of provider evidence is"
+            f" required. This record authorizes no execution, retry, or"
+            f" reconciliation.",
+        )
+    if state == "ATTEMPTING":
+        if latest is None or latest["outcome"] is not None:
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        claimed = latest["claimed_at"]
+        if claimed is None:
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        age = int((moment - claimed).total_seconds())
+        if age > DEFAULT_STALE_AFTER_SECONDS:
+            return (
+                "stale_attempting",
+                f"Attempt {latest['attempt_id']} was claimed {age} seconds"
+                f" ago with no recorded outcome: investigation may be"
+                f" warranted, but elapsed time is not proof of failure"
+                f" and never permits a retry.",
+            )
+        return (
+            "attempting",
+            f"Attempt {latest['attempt_id']} was claimed {age} seconds"
+            f" ago; execution outcome not yet established.",
+        )
+    if state in ("SUCCEEDED", "FAILED"):
+        if latest is None or latest["outcome"] != state:
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        return (
+            "terminal",
+            f"Action {action['action_id']} is {state} by directly recorded"
+            f" outcome; no reconciliation decision exists.",
+        )
+    if state in ("AUTHORIZED", "PENDING"):
+        if latest is not None or attempts or action["attempt_count"] != 0:
+            raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+        return (
+            state.lower(),
+            f"Action {action['action_id']} is {state}; execution has not"
+            f" started and no outcome exists.",
+        )
+    raise DatabaseUnavailableError("reconciliation_case_inconsistent")
+
+
+def get_reconciliation_case(
+    *,
+    action_id: UUID | str,
+    orchestrator_id: str,
+    orchestrator_proof: str,
+    audit_limit: int = DEFAULT_READ_LIMIT,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any] | None:
+    """Return one action's reconciliation case dossier, or None.
+
+    Orchestrator-only (the Wondrue designee reads any type, other
+    orchestrators only their exact scope grants, enforced inside
+    the action SELECT): nonexistent and unauthorized actions both
+    read as None, with no existence disclosure. Executor
+    credentials cannot reach this function. The dossier is
+    strictly informational -- it authorizes no execution, retry,
+    or reconciliation (GRW-EXT-001/GRW-EXT-002).
+
+    All six reads (action, attempt page, latest attempt,
+    unbounded attempt count, reconciliation decision, permanent
+    audits) run on one connection inside a single REPEATABLE
+    READ READ ONLY transaction, so the dossier is a consistent
+    snapshot; the transaction always rolls back and the
+    connection always closes. Attempts are bounded (oldest
+    attempt number first) with truncation reported -- a
+    truncated page is reported, never mistaken for corruption,
+    while the separate count plus latest attempt prove the full
+    history complete. Audits are bounded by audit_limit
+    (capped, chronological, truncated reported), and the
+    reconciliation decision omits approval signatures, signing
+    keys, and other verification internals. Contradictory ledger
+    records fail closed instead of manufacturing a coherent
+    case. The returned generated_at marks dossier assembly
+    time, not the instant PostgreSQL acquired the snapshot.
+    """
+    aid = _coerce_uuid(action_id, "action_id")
+    capped_audit = _require_limit(audit_limit)
+    _, grants = _resolve_scan_scope(
+        orchestrator_id=orchestrator_id, orchestrator_proof=orchestrator_proof
+    )
+    if grants is not None and not grants:
+        return None
+    params: dict[str, Any] = {"action_id": aid}
+    type_clause = ""
+    if grants is not None:
+        type_clause = " AND a.action_type = ANY(%(types)s)"
+        params["types"] = sorted(grants)
+    conn = get_connection(config)
+    try:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_ACTIONS} FROM external_actions a"
+                " WHERE a.action_id = %(action_id)s" + type_clause,
+                params,
+            )
+            action = cur.fetchone()
+        if action is None:
+            return None
+        action = dict(action)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_ATTEMPTS} FROM external_action_attempts t"
+                " WHERE t.action_id = %(action_id)s"
+                " ORDER BY t.attempt_number ASC, t.attempt_id ASC"
+                " LIMIT %(limit)s",
+                {"action_id": aid, "limit": DEFAULT_READ_LIMIT + 1},
+            )
+            attempt_rows = [dict(row) for row in (cur.fetchall() or [])]
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_ATTEMPTS} FROM external_action_attempts t"
+                " WHERE t.action_id = %(action_id)s"
+                " ORDER BY t.attempt_number DESC, t.attempt_id DESC"
+                " LIMIT 1",
+                {"action_id": aid},
+            )
+            latest_row = cur.fetchone()
+        latest = dict(latest_row) if latest_row is not None else None
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) AS n FROM external_action_attempts t"
+                " WHERE t.action_id = %(action_id)s",
+                {"action_id": aid},
+            )
+            attempt_total = cur.fetchone()["n"]
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_SELECT_DOSSIER_DECISION} FROM reconciliation_decisions d"
+                " WHERE d.action_id = %(action_id)s",
+                {"action_id": aid},
+            )
+            decision_rows = [dict(row) for row in (cur.fetchall() or [])]
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.event_id, e.occurred_at, e.event_type, e.severity,"
+                " e.summary FROM agent_events e"
+                " WHERE e.retention_class = 'permanent'"
+                " AND e.event_type = ANY(%(types)s)"
+                " AND e.correlation_id = %(key)s"
+                " AND e.details->>'action_id' = %(action_id)s"
+                " ORDER BY e.occurred_at ASC, e.event_id ASC"
+                " LIMIT %(limit)s",
+                {
+                    "types": list(_LIFECYCLE_EVENT_TYPES),
+                    "key": action["idempotency_key"],
+                    "action_id": str(aid),
+                    "limit": capped_audit + 1,
+                },
+            )
+            audit_rows = [dict(row) for row in (cur.fetchall() or [])]
+        moment = _utcnow()
+        status, detail = _interpret_case(
+            action, attempt_rows, latest, attempt_total, decision_rows,
+            moment=moment,
+        )
+        return {
+            "action": action,
+            "attempts": attempt_rows[:DEFAULT_READ_LIMIT],
+            "attempts_truncated": len(attempt_rows) > DEFAULT_READ_LIMIT,
+            "reconciliation": decision_rows[0] if decision_rows else None,
+            "audits": audit_rows[:capped_audit],
+            "audits_truncated": len(audit_rows) > capped_audit,
+            "interpretation": {"status": status, "detail": detail},
+            "generated_at": moment,
+        }
+    except (
+        DatabaseNotConfiguredError,
+        DatabaseUnavailableError,
+        AuthenticationFailedError,
+        AuthorizationDeniedError,
+        ValueError,
+        TypeError,
+    ):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("reconciliation_case_failed") from exc
+    finally:
+        _quiet_rollback(conn)
         _quiet_close(conn)

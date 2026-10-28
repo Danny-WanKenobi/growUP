@@ -676,6 +676,7 @@ def test_constructed_principals_confer_no_ledger_path() -> None:
         reads.get_action, reads.list_attempts, reads.list_own_open_attempts,
         reads.find_stale_attempting, reads.stale_summary,
         reads.list_unknown_actions, reads.unknown_summary,
+        reads.get_reconciliation_case,
     ):
         params = inspect.signature(fn).parameters
         assert "principal" not in params
@@ -756,7 +757,7 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
                 "get_action", "list_attempts",
                 "list_own_open_attempts", "find_stale_attempting",
                 "stale_summary", "list_unknown_actions",
-                "unknown_summary",
+                "unknown_summary", "get_reconciliation_case",
             )
             if token in text
         ]

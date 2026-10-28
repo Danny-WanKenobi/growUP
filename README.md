@@ -1478,6 +1478,52 @@ live-PostgreSQL tests in `tests/test_external_action_reads.py`
 reconciliation rows are created, and cleanup removes each
 test's actions, attempts, and audit events).
 
+### Phase 3C-3B-3B-3B-1 — Read-only reconciliation case dossier
+
+Internal `get_reconciliation_case(...)` in
+`app/external_action_reads.py` returns one action's dossier:
+the action record, its attempt history, the reconciliation
+decision if one exists, the matching permanent lifecycle
+audits, and a conservative interpretation. Strictly
+informational — no routes, no execution, no retry, no
+reconciliation, no writes of any kind.
+
+- **Authorization:** orchestrator-only, reusing the scan
+  rules: the `WONDRUE_READER_ID` designee reads any type,
+  other orchestrators only their exact scope grants
+  (enforced inside the action SELECT), executor credentials
+  rejected. Nonexistent and unauthorized actions both read
+  as `None`.
+- **Consistent snapshot:** action, attempt page, latest
+  attempt, an unbounded attempt count, decision, and audits
+  are read on one connection in a single `REPEATABLE READ
+  READ ONLY` transaction, which always rolls back. Attempts
+  and audits are explicitly bounded with truncation
+  reported; audits are permanent lifecycle events matched
+  by correlation key plus `details.action_id`,
+  chronological, metadata only. The count plus latest
+  attempt prove the full 1..N history complete (a
+  truncated page alone never implies corruption), and
+  `generated_at` marks dossier assembly time, not the
+  instant PostgreSQL acquired the snapshot.
+- **Decision subset:** identifiers, outcomes, principal,
+  reference, evidence fields, tier, and decision time.
+  Approval signatures, signing keys, and other verification
+  internals are never selected, and `human_reviewed` is
+  never presented as independently verified.
+- **Interpretation:** `unresolved_unknown`, `attempting`,
+  `stale_attempting` (elapsed time is not failure and
+  never permits retry), `reconciled`, `terminal`,
+  `authorized`, `pending`. The attempt's `UNKNOWN` history
+  is never presented as rewritten; contradictory ledger
+  records fail closed.
+
+Tests: fake-backend dossier coverage plus gated
+live-PostgreSQL tests in `tests/test_external_action_reads.py`
+(`GROWUP_PG_INTEGRATION=1`; migrations 005–006, plus 007 for
+the reconciled-dossier test, which removes its decision row
+before the shared cleanup).
+
 ---
 
 ## 🎥 Demonstration
