@@ -59,6 +59,31 @@ def create_listing_evidence(
     return dict(row)
 
 
+def find_evidence_by_url(source_url: str, config: Any = None) -> list[dict[str, Any]]:
+    """Return the distinct properties linked to a source URL (at most two).
+
+    Exact URL match only -- no canonicalization, no fuzzy matching.
+    Zero rows (no association), one row (single association), or two
+    rows (more than one association exists -- ambiguous, never treated
+    as unique). Callers must not infer property identity from a URL.
+    """
+    sql = (
+        "SELECT DISTINCT property_id FROM listing_evidence "
+        "WHERE source_url = %(source_url)s "
+        "LIMIT 2"
+    )
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {"source_url": source_url})
+                rows = cur.fetchall()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    return [dict(row) for row in rows]
+
+
 def get_listing_evidence(
     property_id: str, source_url: str, config: Any = None
 ) -> dict[str, Any] | None:

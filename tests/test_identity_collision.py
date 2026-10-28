@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,6 +38,7 @@ class _CollisionStore:
     def __init__(self) -> None:
         self.properties: dict[str, dict[str, Any]] = {}
         self.evidence: list[dict[str, Any]] = []
+        self.distress: list[dict[str, Any]] = []
 
 
 def _pg_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -82,10 +84,17 @@ class _FakeCursor:
         query = self._query
         params = self._params
         if "FROM listing_evidence" in query and query.strip().upper().startswith("SELECT"):
+            if "property_id" in params:
+                for row in store.evidence:
+                    if row["property_id"] == str(params["property_id"]) and row["source_url"] == params["source_url"]:
+                        return [{"id": row["id"]}]
+                return []
+            # Global URL lookup: distinct property ids, at most two (LIMIT 2).
+            seen: list[str] = []
             for row in store.evidence:
-                if row["property_id"] == str(params["property_id"]) and row["source_url"] == params["source_url"]:
-                    return [{"id": row["id"]}]
-            return []
+                if row["source_url"] == params["source_url"] and row["property_id"] not in seen:
+                    seen.append(row["property_id"])
+            return [{"property_id": pid} for pid in seen[:2]]
         if "INSERT INTO listing_evidence" in query:
             store.evidence.append(
                 {
@@ -97,6 +106,9 @@ class _FakeCursor:
             )
             return [{"id": params["id"]}]
         if "INSERT INTO distress_observations" in query:
+            store.distress.append(
+                {"id": params["id"], "property_id": str(params["property_id"])}
+            )
             return [{"id": params["id"]}]
         if (
             "FROM properties" in query
@@ -195,9 +207,10 @@ def _listing(
     url: str,
     area: float | None,
     months_listed: int | None = None,
-    street: str = "500 Commerce Street",
+    street: str | None = "500 Commerce Street",
     city: str = "Dallas",
     zip_code: str | None = "75202",
+    distress: list[dict[str, Any]] | None = None,
 ) -> ListingIntakeRequest:
     body: dict[str, Any] = {
         "name": name,
@@ -214,7 +227,12 @@ def _listing(
         body["advertised_building_area_sqft"] = area
     if months_listed is not None:
         body["months_listed_for_sale"] = months_listed
+    if distress is not None:
+        body["distress_observations"] = distress
     return ListingIntakeRequest.model_validate(body)
+
+
+_DISTRESS_ONE = [{"indicator_type": "other", "description": "Long enough description here."}]
 
 
 def _diagnostics(store: _CollisionStore) -> str:
@@ -405,6 +423,90 @@ def test_nameless_listing_matching_two_records_needs_review(
     assert collision_store.evidence == []
 
 
+def test_addressless_url_resubmission_is_duplicate(
+    collision_store: _CollisionStore,
+) -> None:
+    """Resubmitting an addressless URL creates nothing further."""
+    url = "https://example.com/listings/url-resubmit"
+    first = process_intake(_listing("URL Hall", url, None, street=None, distress=_DISTRESS_ONE))
+    assert first.outcome.value == "created"
+    assert len(collision_store.properties) == 1
+    assert len(collision_store.evidence) == 1
+    assert len(collision_store.distress) == 1
+    second = process_intake(_listing("URL Hall", url, None, street=None, distress=_DISTRESS_ONE))
+    assert second.outcome.value == "skipped_duplicate", _diagnostics(collision_store)
+    assert second.property_id == first.property_id
+    assert second.filled_fields == []
+    assert second.listing_evidence_id is None
+    assert second.distress_observation_ids == []
+    assert len(collision_store.properties) == 1, _diagnostics(collision_store)
+    assert len(collision_store.evidence) == 1
+    assert len(collision_store.distress) == 1
+
+
+def test_addressless_url_conflicting_identity_needs_review(
+    collision_store: _CollisionStore,
+) -> None:
+    """A URL reused for a conflicting identity is reviewed, not merged."""
+    url = "https://example.com/listings/url-conflict"
+    first = process_intake(_listing("URL Hall A", url, None, street=None))
+    assert first.outcome.value == "created"
+    renamed = process_intake(_listing("URL Hall B", url, None, street=None))
+    assert renamed.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert renamed.property_id == ""
+    assert "conflicting property identity" in renamed.message
+    relocated = process_intake(_listing("URL Hall A", url, None, street=None, city="Irving"))
+    assert relocated.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert relocated.property_id == ""
+    assert len(collision_store.properties) == 1, _diagnostics(collision_store)
+    assert len(collision_store.evidence) == 1
+    assert len(collision_store.distress) == 0
+
+
+def test_addressless_url_multiple_properties_needs_review(
+    collision_store: _CollisionStore,
+) -> None:
+    """A URL linked to two properties selects neither."""
+    from app.listings_db import create_listing_evidence
+    from app.properties_db import create_property
+
+    url = "https://example.com/listings/url-multi"
+    observed = datetime(2026, 10, 20, tzinfo=timezone.utc)
+    base = {
+        "city": "Dallas",
+        "state": "TX",
+        "zip_code": "75202",
+        "category": "downtown_commercial",
+        "provenance": "synthetic legacy seed record for URL multi-match tests",
+    }
+    row_a = create_property({**base, "name": "URL Hall A", "street_address": None})
+    row_b = create_property({**base, "name": "URL Hall B", "street_address": None})
+    for row in (row_a, row_b):
+        create_listing_evidence(
+            property_id=str(row["id"]),
+            source_name="Legacy Seed Records",
+            source_url=url,
+            observed_at=observed,
+            listing_type="unknown",
+            payload={},
+        )
+    result = process_intake(_listing("URL Hall A", url, None, street=None))
+    assert result.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert result.property_id == ""
+    assert "multiple properties" in result.message
+    assert len(collision_store.properties) == 2, _diagnostics(collision_store)
+    assert len(collision_store.evidence) == 2
+    assert len(collision_store.distress) == 0
+
+
+def test_addressless_unusable_url_rejected() -> None:
+    """An addressless listing without a usable URL is rejected, not created."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _listing("URL Hall", "not-a-url", None, street=None)
+
+
 # --- Live PostgreSQL integration (GROWUP_PG_INTEGRATION=1) ---
 #
 # Same gate and conventions as the existing live-DB tests (e.g.
@@ -516,6 +618,41 @@ def _live_evidence_by_url(url: str) -> list[dict[str, Any]]:
                 {"url": url},
             )
             return [dict(row) for row in cur.fetchall()]
+
+
+def _live_distress_count(property_id: str) -> int:
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM distress_observations "
+                "WHERE property_id = %(id)s",
+                {"id": str(property_id)},
+            )
+            row = cur.fetchone()
+    assert row is not None
+    return int(row["n"])
+
+
+def _live_cleanup_url(url: str) -> None:
+    """Delete properties evidencing this execution's unique URL (exact match).
+
+    Fallback for addressless tests, which have no street for
+    street-scoped cleanup. The URL embeds a per-run UUID and the match
+    is exact, so only this execution's rows can match. Evidence rows
+    cascade from the property delete.
+    """
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM properties WHERE id IN ("
+                "SELECT property_id FROM listing_evidence WHERE source_url = %(url)s)",
+                {"url": url},
+            )
+        conn.commit()
 
 
 @needs_live_pg
@@ -759,3 +896,32 @@ def test_live_multiple_matches_require_review() -> None:
         _live_cleanup(created)
         for street in streets:
             _live_cleanup_street(street)
+
+
+@needs_live_pg
+def test_live_addressless_url_resubmission_is_duplicate() -> None:
+    """Live PG: resubmitting an addressless URL writes nothing further."""
+    _live_config()
+    _require_live_tables()
+    url = f"https://example.com/listings/live-url-{uuid4().hex}"
+    created: list[str] = []
+    try:
+        first = process_intake(
+            _listing("Live URL Hall", url, None, street=None, distress=_DISTRESS_ONE)
+        )
+        assert first.outcome.value == "created"
+        created.append(first.property_id)
+        before = _live_property(first.property_id)
+        assert before is not None
+        second = process_intake(
+            _listing("Live URL Hall", url, None, street=None, distress=_DISTRESS_ONE)
+        )
+        assert second.outcome.value == "skipped_duplicate"
+        assert second.property_id == first.property_id
+        assert _live_property_count(created) == 1
+        assert _live_property(first.property_id) == before
+        assert len(_live_evidence_by_url(url)) == 1
+        assert _live_distress_count(first.property_id) == 1
+    finally:
+        _live_cleanup(created)
+        _live_cleanup_url(url)

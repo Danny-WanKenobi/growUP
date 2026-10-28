@@ -43,6 +43,7 @@ from app.db import DatabaseNotConfiguredError
 from app.listings_db import (
     create_distress_observations,
     create_listing_evidence,
+    find_evidence_by_url,
     get_listing_evidence,
 )
 from app.properties import (
@@ -374,6 +375,67 @@ def _identity_ambiguous(body: ListingIntakeRequest, existing: dict[str, Any]) ->
     return bool(incoming) and bool(stored) and incoming != stored
 
 
+def _location_conflicts(body: ListingIntakeRequest, existing: dict[str, Any]) -> bool:
+    """True when a present location component contradicts the stored one.
+
+    Only compares city, state, and ZIP when both sides supply them;
+    missing information is never a contradiction. Exact normalized
+    comparison only -- no fuzzy matching, no invented components.
+    """
+    for field in ("city", "state", "zip_code"):
+        incoming = normalize_text(getattr(body, field))
+        stored = normalize_text(existing.get(field))
+        if incoming and stored and incoming != stored:
+            return True
+    return False
+
+
+def _resolve_addressless_url(
+    body: ListingIntakeRequest, source_url: str
+) -> IntakeResult | None:
+    """Check global URL associations for an addressless listing.
+
+    Returns a duplicate or review outcome with zero writes, or None
+    when no previous association exists and intake may proceed. A URL
+    alone never proves property identity: a single association without
+    contradicting identity information is reported as a duplicate of
+    the recorded listing (nothing changed); anything conflicting or
+    ambiguous requires human identity review.
+    """
+    associated = find_evidence_by_url(source_url)
+    if len(associated) > 1:
+        return IntakeResult(
+            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            property_id="",
+            message=(
+                "listing URL already associated with multiple properties; "
+                "identity is ambiguous, nothing was changed, no evidence "
+                "attached; human identity review required"
+            ),
+        )
+    if not associated:
+        return None
+    property_id = str(associated[0]["property_id"])
+    existing = get_property(UUID(property_id))
+    if existing is None:  # pragma: no cover - raced deletion; fail closed
+        raise IntakeError("associated property disappeared; resubmit the listing")
+    if _identity_ambiguous(body, existing) or _location_conflicts(body, existing):
+        return IntakeResult(
+            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            property_id="",
+            message=(
+                "listing URL already recorded for a conflicting property "
+                "identity; nothing was changed, no evidence attached; "
+                "human identity review required"
+            ),
+        )
+    return IntakeResult(
+        outcome=IntakeOutcome.SKIPPED_DUPLICATE,
+        property_id=property_id,
+        message="duplicate listing URL already recorded; nothing changed",
+    )
+
+
 def process_intake(body: ListingIntakeRequest) -> IntakeResult:
     """Validate, dedup, and persist one listing (instrumented, nonfatal).
 
@@ -453,6 +515,13 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
             ),
         )
     if address_match.status is AddressMatchStatus.NONE:
+        if not normalize_text(data.get("street_address")) and source_url:
+            # Addressless with no address match: a repeated listing URL
+            # must not mint another property. Missing/unusable URLs keep
+            # existing behavior (the request model requires a valid URL).
+            duplicate = _resolve_addressless_url(body, source_url)
+            if duplicate is not None:
+                return duplicate
         row = create_property(data)
         property_id = str(row["id"])
         evidence = create_listing_evidence(
