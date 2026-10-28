@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from app.agents.gabriel.extractor import ResearchIntelligence, extract_research_intelligence
+from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER, display_name
 from app.agents.gabriel.observe import (
     new_run_id,
     note_activity,
@@ -29,7 +30,9 @@ from app.agents.gabriel.ranking import PropertyRanking, rank_intelligence
 from app.agents.gabriel.planner import (
     PLANNED_CATEGORIES,
     PLANNER_VERSION,
+    PlannerConfig,
     SearchAssignment,
+    plan_initial_searches,
 )
 from app.agents.gabriel.sources.brave import (
     BraveError,
@@ -58,10 +61,34 @@ class ResearchError(ValueError):
     """Invalid research selection (maps to HTTP 422)."""
 
 
+def _executable_canonical_plans() -> tuple[list[SearchAssignment], ...]:
+    """Regenerate the executable canonical plans server-side.
+
+    Only fixed presets are executable: the default 30-assignment
+    baseline and the Dallas-only plan. Any other configuration
+    would need client-supplied parameters to regenerate, so such
+    plans are explicitly rejected rather than trusted.
+    """
+    return (
+        plan_initial_searches(),
+        plan_initial_searches(PlannerConfig(include_secondary_counties=False)),
+    )
+
+
+def _matches_canonical(ordered: list[SearchAssignment]) -> bool:
+    """Exact full-field match against one executable canonical plan."""
+    for canonical in _executable_canonical_plans():
+        if len(ordered) != len(canonical):
+            continue
+        if all(a == b for a, b in zip(ordered, canonical)):
+            return True
+    return False
+
+
 class ResearchRunRequest(BaseModel):
     """Assignments to research (planner output only, never raw queries)."""
 
-    assignments: list[SearchAssignment] = Field(min_length=1, max_length=25)
+    assignments: list[SearchAssignment] = Field(min_length=1, max_length=30)
     timeout_seconds: float = Field(default=15.0, ge=5.0, le=60.0)
     include_intelligence: bool = True
     include_ranking: bool = False
@@ -69,8 +96,9 @@ class ResearchRunRequest(BaseModel):
     rotation: int = Field(
         default=0,
         ge=0,
-        description="Per-category sweep offset; later explicit runs pass 1, 2, ... "
-        "to reach counties beyond the first assignment per category.",
+        description="County rotation; rotations 0-9 execute the three "
+        "categories for one ten-county baseline county in priority "
+        "order (0 Dallas, 1 Tarrant, ...).",
     )
 
 
@@ -107,33 +135,80 @@ class ResearchRunResult(BaseModel):
 def select_assignments(
     assignments: list[SearchAssignment], rotation: int = 0
 ) -> list[SearchAssignment]:
-    """Select one assignment per primary category, priority order.
+    """Select one county batch for a rotation (validated, fail-closed).
 
-    Rotation 0 (the default) keeps the legacy behavior: the first
-    assignment per category. A later explicitly requested run passes a
-    higher rotation to execute the next assignment per category instead
-    (modulo each category's group size), sweeping counties and strategies
-    across runs without widening any single run. Rejects non-planner
-    input (wrong planner version) and caps the selection at MAX_PER_RUN.
-    Deterministic for identical inputs.
+    County-batch contract: the submitted plan must decompose, in
+    priority order, into complete triples -- one county and exactly
+    the three planned categories (high-rise, downtown commercial,
+    warehouse/industrial, in planner order) per triple -- with
+    sequential 1..N priorities, unique ids, and the current planner
+    version throughout. The whole baseline is validated before
+    anything is selected: duplicate ids or priorities, gaps, mixed
+    or miscategorized triples, and trailing partial triples all
+    raise ResearchError instead of yielding a partial batch.
+
+    Rotation r addresses operating county COUNTY_PRIORITY_ORDER[r]:
+    rotations 0-9 select that county's earliest-priority triple
+    (Dallas at 0 through Wise at 9 on the standard baseline), so no
+    run is ever wider than MAX_PER_RUN. Rotation 10 or greater is
+    rejected -- never wrapped -- as is a rotation whose county the
+    plan does not cover (for example rotation 1 against a
+    Dallas-only plan). Deterministic for identical inputs.
+
+    Canonical verification: beyond structural shape, the submitted
+    assignments must exactly equal a server-regenerated canonical
+    plan -- the default 30-assignment baseline or the Dallas-only
+    plan -- compared field by field (id, query, county, market,
+    category, strategy, priority, intent, planner version, downtown
+    flag, depth, parent id). Altered, substituted, missing, extra,
+    or reordered assignments fail closed, as do nonstandard plans
+    that cannot be regenerated from a fixed preset.
     """
     if rotation < 0:
         raise ResearchError("rotation must be non-negative")
+    if rotation >= len(COUNTY_PRIORITY_ORDER):
+        raise ResearchError(
+            f"rotation {rotation} is out of range "
+            f"for {len(COUNTY_PRIORITY_ORDER)} operating counties"
+        )
     for assignment in assignments:
         if assignment.planner_version != PLANNER_VERSION:
             raise ResearchError(f"unsupported planner version: {assignment.planner_version}")
-    planned = set(PLANNED_CATEGORIES)
-    grouped: dict[object, list[SearchAssignment]] = {}
-    for assignment in sorted(assignments, key=lambda item: item.priority):
-        if assignment.category in planned:
-            grouped.setdefault(assignment.category, []).append(assignment)
-    selected = sorted(
-        (group[rotation % len(group)] for group in grouped.values()),
-        key=lambda item: item.priority,
-    )
-    if not selected:
+    if not assignments:
         raise ResearchError("no primary-category assignments to research")
-    return selected[:MAX_PER_RUN]
+    ids = [assignment.id for assignment in assignments]
+    if len(set(ids)) != len(ids):
+        raise ResearchError("duplicate assignment ids in submitted plan")
+    ordered = sorted(assignments, key=lambda item: item.priority)
+    priorities = [assignment.priority for assignment in ordered]
+    if len(set(priorities)) != len(priorities):
+        raise ResearchError("duplicate priorities in submitted plan")
+    if priorities != list(range(1, len(ordered) + 1)):
+        raise ResearchError("priorities must run 1..N with no gaps")
+    want_categories = list(PLANNED_CATEGORIES)
+    if len(ordered) % len(want_categories) != 0:
+        raise ResearchError("plan ends in a partial triple; refusing partial batch")
+    triples = [
+        ordered[index:index + len(want_categories)]
+        for index in range(0, len(ordered), len(want_categories))
+    ]
+    for triple in triples:
+        counties = {assignment.county for assignment in triple}
+        if len(counties) != 1:
+            raise ResearchError("mixed-county triple in submitted plan")
+        if [assignment.category for assignment in triple] != want_categories:
+            raise ResearchError(
+                "triple must hold exactly the three planned categories in order"
+            )
+    if not _matches_canonical(ordered):
+        raise ResearchError(
+            "submitted plan does not match an executable canonical plan"
+        )
+    target = display_name(COUNTY_PRIORITY_ORDER[rotation])
+    for triple in triples:
+        if triple[0].county == target:
+            return list(triple)
+    raise ResearchError(f"county {target} is not covered by the submitted plan")
 
 
 def _error_code(exc: BraveError) -> str:

@@ -20,11 +20,11 @@ auditable rules. Everything uncertain stays eligible as RESEARCH_REQUIRED
 with explicit next steps for Raphael, Onesimus, and Priscilla -- whose
 conclusions Gabriel never fabricates.
 
-Geography (MVP-004B-5 correction): the operating area is Dallas County
-(primary territory) plus six adjacent counties (secondary territory).
-Properties reliably outside all seven counties are DEFERRED from the
-active queue with evidence retained -- never silently discarded. Unknown
-county is never a disqualification.
+Geography (ten-county expansion): the operating area is Dallas County
+(primary territory) plus nine secondary counties. Properties reliably
+outside all ten counties are DEFERRED from the active queue with
+evidence retained -- never silently discarded. Unknown county is never
+a disqualification.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ _SEVERE_DISTRESS = {"bankruptcy", "foreclosure", "receivership"}
 
 
 class CountyEligibility(str, Enum):
-    """Geographic research priority (MVP-004B-5 seven-county model).
+    """Geographic research priority (ten-county model).
 
     Compatibility note: ``inside_county``/``outside_county`` from
     MVP-004B-4 were replaced by ``primary_area``/``secondary_area``/
@@ -412,7 +412,7 @@ def _evaluate_qc(
                 rule="outside_operating_area",
                 evidence=f"explicit county evidence '{county}'",
                 source_url=item.result_url,
-                why_sufficient="reliable county evidence places the property outside the seven-county operating area",
+                why_sufficient="reliable county evidence places the property outside the ten-county operating area",
                 identity=identity,
                 date=_item_date(item),
             )
@@ -439,7 +439,7 @@ def _next_steps(candidate: RankedCandidate, evidence: _CandidateEvidence) -> lis
         ]
     steps: list[str] = []
     if candidate.county is CountyEligibility.COUNTY_UNKNOWN:
-        steps.append("Raphael: verify county location within the seven-county operating area via appraisal district or parcel records")
+        steps.append("Raphael: verify county location within the ten-county operating area via appraisal district or parcel records")
     if not evidence.asking:
         steps.append("Gabriel: seek a current advertised asking price from listing sources")
     if not evidence.occupancy:

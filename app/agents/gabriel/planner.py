@@ -1,16 +1,18 @@
-"""Gabriel commercial listing search planner (MVP-004B-1, seven-county 004B-5).
+"""Gabriel commercial listing search planner (MVP-004B-1, ten-county expansion).
 
 Generates structured, deterministic research assignments for finding
 commercial properties offered for sale. Listings first. Value driven.
 Distress focused.
 
-Coverage spans the seven-county operating area: Dallas County holds
-primary priority (every other slot, starting first) while the six
-adjacent counties rotate through the remaining slots, so the default
-12-assignment plan names every county without multiplying search costs.
-Downtown stays a bounded secondary refinement: every fourth slot, plus
-a Dallas-county downtown every eighth slot so the primary territory's
-downtown is covered too.
+Coverage spans the ten-county operating area in shared priority order
+(Dallas first, then Tarrant, Collin, Denton, Ellis, Rockwall, Kaufman,
+Johnson, Parker, Wise): counties process sequentially with all three
+categories completing in one county before advancing, so the default
+plan is exactly 30 baseline assignments (3 categories x 10 counties)
+prioritizing properties advertised for sale. Downtown is an opt-in
+refinement of Dallas County slots only, using the explicitly
+configured municipality -- county-based downtown labels are never
+generated.
 
 This phase plans only: it executes no searches, scrapes nothing, calls
 no AI models, writes no database records, and makes no network requests.
@@ -30,21 +32,21 @@ from pydantic import BaseModel, Field
 
 from app.agents.gabriel.geography import (
     PRIMARY_COUNTY_DISPLAY,
-    secondary_county_names,
+    ordered_county_names,
 )
 from app.properties import PropertyCategory
 
-PLANNER_VERSION = "004B-1.1"
+PLANNER_VERSION = "004B-1.2"
 
 # Absolute budget caps (configurations outside these are rejected).
-MAX_TOTAL_QUERIES = 54  # bounded well within the 3 x 9 x 7 x 2 query space
+MAX_TOTAL_QUERIES = 54  # bounded well within the 10 x 3 x 9 query space
 MAX_PER_CATEGORY_QUERIES = 18
 MAX_FOLLOWUP_QUERIES = 50
 MAX_DEPTH_CAP = 5
 
 # Conservative defaults for a future metered search API.
-DEFAULT_TOTAL_QUERIES = 12
-DEFAULT_PER_CATEGORY_QUERIES = 4
+DEFAULT_TOTAL_QUERIES = 30
+DEFAULT_PER_CATEGORY_QUERIES = 10
 DEFAULT_FOLLOWUP_QUERIES = 6
 DEFAULT_MAX_DEPTH = 2
 
@@ -122,7 +124,7 @@ class PlannerConfig(BaseModel):
     )
     followup_max: int = Field(default=DEFAULT_FOLLOWUP_QUERIES, ge=0, le=MAX_FOLLOWUP_QUERIES)
     max_depth: int = Field(default=DEFAULT_MAX_DEPTH, ge=0, le=MAX_DEPTH_CAP)
-    downtown_refinement: bool = True
+    downtown_refinement: bool = False
     include_secondary_counties: bool = True
     city: str = Field(default="Dallas", min_length=1, max_length=200)
     state: str = Field(default="TX", min_length=1, max_length=100)
@@ -162,21 +164,21 @@ def _stable_id(*parts: str) -> str:
     return f"gsp-{digest}"
 
 
-def _slot_county(slot: int, include_secondary: bool) -> str:
-    """Display county for a plan slot (Dallas primary, neighbors rotate)."""
-    if not include_secondary or slot % 2 == 0:
-        return PRIMARY_COUNTY_DISPLAY
-    secondaries = secondary_county_names()
-    return secondaries[(slot // 2) % len(secondaries)]
-
-
 def _market_label(county: str, state: str, downtown: bool, city: str) -> str:
+    """Render a market label (downtown uses the configured municipality).
+
+    Countywide markets name the county; downtown markets name the
+    explicitly configured city. Downtown refinement outside Dallas
+    County is rejected outright: no caller may produce a county-based
+    downtown label, and falling back silently would lie about the
+    flag the assignment carries.
+    """
     base = f"{county}, {state.strip()}"
     if not downtown:
         return base
-    if county == PRIMARY_COUNTY_DISPLAY:
-        return f"Downtown {city.strip()}, {state.strip()}"
-    return f"Downtown {base}"
+    if county != PRIMARY_COUNTY_DISPLAY:
+        raise ValueError(f"downtown refinement is Dallas County only, not {county!r}")
+    return f"Downtown {city.strip()}, {state.strip()}"
 
 
 def _render_query(strategy: SearchStrategy, category: PropertyCategory, market: str) -> str:
@@ -188,75 +190,69 @@ def _dedupe_key(query: str, category: PropertyCategory) -> str:
 
 
 def plan_initial_searches(config: PlannerConfig | None = None) -> list[SearchAssignment]:
-    """Generate the initial balanced assignment set (deterministic).
+    """Generate the initial sequential assignment set (deterministic).
 
-    Round-robin across the three primary categories keeps allocation
-    balanced; strategies cycle deterministically per category. Counties
-    alternate Dallas-first with a fixed secondary rotation, so the
-    default plan names all seven counties at no extra search cost.
-    Downtown appears only as a bounded secondary refinement (every
-    fourth slot, plus a Dallas-county downtown every eighth slot).
-    Identical queries are never emitted twice; when the unique query
-    space is exhausted, fewer assignments are returned.
+    Counties process in shared priority order with all three
+    categories completing in one county before advancing, so the
+    default plan is exactly 30 baseline assignments (3 x 10). The
+    first pass uses FOR_SALE throughout -- the baseline prioritizes
+    commercial properties advertised for sale -- and further passes
+    advance one strategy per full county sweep when larger budgets
+    request them. Downtown appears only as an explicitly configured
+    refinement of Dallas County slots. Identical queries are never
+    emitted twice; when the unique query space is exhausted, fewer
+    assignments are returned.
     """
     cfg = config or PlannerConfig()
     city = cfg.city.strip()
     state = cfg.state.strip()
+    counties = (
+        [PRIMARY_COUNTY_DISPLAY]
+        if not cfg.include_secondary_counties
+        else list(ordered_county_names())
+    )
     assignments: list[SearchAssignment] = []
     seen: set[str] = set()
-    per_cat = cfg.per_category_max
-    for round_index in range(per_cat):
-        for cat_index, category in enumerate(PLANNED_CATEGORIES):
-            if len(assignments) >= cfg.total_max_queries:
-                return assignments
-            slot = round_index * len(PLANNED_CATEGORIES) + cat_index
-            county = _slot_county(slot, cfg.include_secondary_counties)
-            # Every fourth slot refines downtown; the eighth-slot rule adds
-            # a Dallas-county downtown (odd fourth-slots would otherwise
-            # only ever hit secondary counties). Combined density stays
-            # below one half of the plan.
+    per_cat_count = {category: 0 for category in PLANNED_CATEGORIES}
+    pass_index = 0
+    while len(assignments) < cfg.total_max_queries:
+        strategy = STRATEGIES[pass_index % len(STRATEGIES)]
+        progressed = False
+        for county in counties:
             downtown = bool(
-                cfg.downtown_refinement and (slot % 4 == 3 or slot % 8 == 4)
+                cfg.downtown_refinement and county == PRIMARY_COUNTY_DISPLAY
             )
-            base = (round_index + cat_index * per_cat) % len(STRATEGIES)
-            chosen: tuple[SearchStrategy, bool] | None = None
-            # Prefer the planned market variant, then the flipped one, so
-            # high budgets backfill instead of colliding; at default budgets
-            # the first candidate always wins and output is unchanged.
-            for flip in (False, True):
-                if not cfg.downtown_refinement and flip:
-                    break
-                variant = downtown != flip
-                for offset in range(len(STRATEGIES)):
-                    candidate = STRATEGIES[(base + offset) % len(STRATEGIES)]
-                    market = _market_label(county, state, variant, city)
-                    query = _render_query(candidate, category, market)
-                    if _dedupe_key(query, category) not in seen:
-                        chosen = (candidate, variant)
-                        break
-                if chosen is not None:
-                    break
-            if chosen is None:
-                continue  # unique query space exhausted for this slot
-            strategy, downtown = chosen
-            market = _market_label(county, state, downtown, city)
-            query = _render_query(strategy, category, market)
-            seen.add(_dedupe_key(query, category))
-            seq = len(assignments)
-            assignments.append(
-                SearchAssignment(
-                    id=_stable_id(PLANNER_VERSION, market, category.value, strategy.value, f"{seq:04d}"),
-                    query=query,
-                    market=market,
-                    county=county,
-                    category=category,
-                    strategy=strategy,
-                    priority=seq + 1,
-                    intent=_STRATEGY_INTENTS[strategy],
-                    downtown=downtown,
-                    depth=0,
+            for category in PLANNED_CATEGORIES:
+                if len(assignments) >= cfg.total_max_queries:
+                    return assignments
+                if per_cat_count[category] >= cfg.per_category_max:
+                    continue
+                market = _market_label(county, state, downtown, city)
+                query = _render_query(strategy, category, market)
+                key = _dedupe_key(query, category)
+                if key in seen:
+                    continue
+                seen.add(key)
+                per_cat_count[category] += 1
+                progressed = True
+                seq = len(assignments)
+                assignments.append(
+                    SearchAssignment(
+                        id=_stable_id(PLANNER_VERSION, market, category.value, strategy.value, f"{seq:04d}"),
+                        query=query,
+                        market=market,
+                        county=county,
+                        category=category,
+                        strategy=strategy,
+                        priority=seq + 1,
+                        intent=_STRATEGY_INTENTS[strategy],
+                        downtown=downtown,
+                        depth=0,
+                    )
                 )
-            )
+        if not progressed:
+            return assignments  # unique query space exhausted
+        pass_index += 1
     return assignments
 
 
@@ -307,7 +303,9 @@ def plan_followups(
 
     Single step only: at most ``followup_max`` assignments, none beyond
     ``max_depth``, none duplicating ``known`` query keys or each other.
-    Follow-ups stay in the parent assignment's county.
+    Follow-ups stay in the parent assignment's county, and moves that
+    would need a county-based downtown label are skipped (secondary
+    counties stay countywide; only Dallas County refines downtown).
     """
     cfg = config or PlannerConfig()
     if parent.depth + 1 > cfg.max_depth:
@@ -320,6 +318,8 @@ def plan_followups(
     for index, (strategy, downtown) in enumerate(_followup_moves(parent, feedback.outcome)):
         if len(followups) >= cfg.followup_max:
             break
+        if downtown and county != PRIMARY_COUNTY_DISPLAY:
+            continue  # never a county-based downtown label
         market = _market_label(county, state, downtown, city)
         query = _render_query(strategy, parent.category, market)
         key = _dedupe_key(query, parent.category)

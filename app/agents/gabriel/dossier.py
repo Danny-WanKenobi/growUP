@@ -531,9 +531,9 @@ def _identity_sentence(dossier: PropertyDossier) -> str:
     identity = ", ".join(bits) if bits else "Unidentified candidate"
     county = {
         CountyEligibility.PRIMARY_AREA: "in Dallas County (primary territory)",
-        CountyEligibility.SECONDARY_AREA: "in an adjacent county (secondary territory)",
+        CountyEligibility.SECONDARY_AREA: "in a secondary county (secondary territory)",
         CountyEligibility.COUNTY_UNKNOWN: "with unknown county",
-        CountyEligibility.OUTSIDE_OPERATING_AREA: "outside the seven-county operating area",
+        CountyEligibility.OUTSIDE_OPERATING_AREA: "outside the ten-county operating area",
     }[dossier.county]
     return f"{identity}, {county}."
 

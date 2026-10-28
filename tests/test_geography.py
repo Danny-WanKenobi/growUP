@@ -1,9 +1,9 @@
-"""Seven-county geographic regression tests (MVP-004B-5 correction).
+"""Ten-county geographic regression tests (ten-county expansion).
 
 Deterministic; no network, no database. Dallas County is the primary
-territory, six adjacent counties are eligible secondary territory,
-unknown county stays eligible, and confirmed out-of-area leads are
-deferred with evidence retained -- never silently discarded.
+territory, nine secondary counties are eligible territory, unknown
+county stays eligible, and confirmed out-of-area leads are deferred
+with evidence retained -- never silently discarded.
 """
 
 from __future__ import annotations
@@ -51,6 +51,33 @@ def _only_candidate(ranking):
     return ranking.candidates[0]
 
 
+# --- 0. Shared priority order is exact ---
+
+
+def test_county_priority_order_is_exact() -> None:
+    from app.agents.gabriel.geography import (
+        COUNTY_PRIORITY_ORDER,
+        SECONDARY_COUNTIES,
+        ordered_county_names,
+    )
+
+    assert COUNTY_PRIORITY_ORDER == (
+        "dallas county",
+        "tarrant county",
+        "collin county",
+        "denton county",
+        "ellis county",
+        "rockwall county",
+        "kaufman county",
+        "johnson county",
+        "parker county",
+        "wise county",
+    )
+    assert set(COUNTY_PRIORITY_ORDER[1:]) == set(SECONDARY_COUNTIES)
+    assert ordered_county_names()[0] == "Dallas County"
+    assert len(ordered_county_names()) == 10
+
+
 # --- 1. Dallas County eligibility (primary territory) ---
 
 
@@ -70,21 +97,24 @@ def test_dallas_county_primary_area() -> None:
     assert "primary territory" in candidate.county_evidence
 
 
-# --- 2. Each adjacent county is eligible secondary territory ---
+# --- 2. Each secondary county is eligible secondary territory ---
 
 
 @pytest.mark.parametrize(
     "county,city",
     [
+        ("Tarrant County", "Fort Worth"),
         ("Collin County", "Plano"),
         ("Denton County", "Denton"),
-        ("Tarrant County", "Fort Worth"),
         ("Ellis County", "Waxahachie"),
-        ("Kaufman County", "Kaufman"),
         ("Rockwall County", "Rockwall"),
+        ("Kaufman County", "Kaufman"),
+        ("Johnson County", "Cleburne"),
+        ("Parker County", "Weatherford"),
+        ("Wise County", "Decatur"),
     ],
 )
-def test_adjacent_counties_secondary_area(county: str, city: str) -> None:
+def test_secondary_counties_secondary_area(county: str, city: str) -> None:
     ranking = _rank(
         _result(
             f"{city} offices listed",

@@ -126,9 +126,9 @@ def submit_listing(
 
 @router.get("/discovery/search-plan", response_model=list[SearchAssignment])
 def preview_search_plan(
-    total: int = 12,
-    per_category: int = 4,
-    downtown: bool = True,
+    total: int = 30,
+    per_category: int = 10,
+    downtown: bool = False,
     secondary_counties: bool = True,
 ) -> list:
     """Preview Gabriel research assignments (read-only, no execution).

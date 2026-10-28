@@ -395,19 +395,19 @@ def test_selection_rotation_picks_nth_per_category() -> None:
 
 
 def test_rotations_sweep_all_counties() -> None:
-    from app.agents.gabriel.geography import (
-        PRIMARY_COUNTY_DISPLAY,
-        secondary_county_names,
-    )
+    from app.agents.gabriel.geography import ordered_county_names
     from app.agents.gabriel.planner import SearchAssignment
 
     assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
-    covered = {
-        a.county
-        for rotation in range(4)
-        for a in research.select_assignments(assignments, rotation)
-    }
-    assert covered == {PRIMARY_COUNTY_DISPLAY, *secondary_county_names()}
+    assert len(assignments) == 30
+    covered = []
+    for rotation in range(10):
+        selected = research.select_assignments(assignments, rotation)
+        assert len(selected) == 3  # per-run Brave limit holds every rotation
+        assert {a.county for a in selected} == {ordered_county_names()[rotation]}
+        assert len({a.category for a in selected}) == 3
+        covered.append(selected[0].county)
+    assert covered == list(ordered_county_names())  # exact order, no duplication
 
 
 def test_selection_rejects_negative_rotation() -> None:
@@ -429,6 +429,245 @@ def test_selection_rejects_non_planner_input() -> None:
     bad["planner_version"] = "forged-9.9"
     with pytest.raises(research.ResearchError):
         research.select_assignments([SearchAssignment.model_validate(bad)])
+
+
+# --- County-batch selection hardening ---
+
+
+def _validated_plan():
+    from app.agents.gabriel.planner import SearchAssignment
+
+    return [SearchAssignment.model_validate(a) for a in _plan_assignments()]
+
+
+def test_selection_rotation_ten_and_beyond_rejected() -> None:
+    assignments = _validated_plan()
+    for rotation in (10, 11, 99):
+        with pytest.raises(research.ResearchError, match="out of range"):
+            research.select_assignments(assignments, rotation)
+
+
+def test_research_endpoint_rejects_rotation_ten(monkeypatch) -> None:
+    _env(monkeypatch)
+    response = client.post(
+        "/discovery/research-runs",
+        json={"assignments": _plan_assignments(), "rotation": 10},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
+    )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_research_request"}
+
+
+def test_selection_rejects_duplicate_ids() -> None:
+    assignments = _validated_plan()
+    assignments[1] = assignments[1].model_copy(update={"id": assignments[0].id})
+    with pytest.raises(research.ResearchError, match="duplicate assignment ids"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_duplicate_priorities() -> None:
+    assignments = _validated_plan()
+    assignments[1] = assignments[1].model_copy(update={"priority": 1})
+    with pytest.raises(research.ResearchError, match="duplicate priorities"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_priority_gap() -> None:
+    assignments = _validated_plan()
+    assignments[5] = assignments[5].model_copy(update={"priority": 99})
+    with pytest.raises(research.ResearchError, match="no gaps"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_partial_trailing_triple() -> None:
+    assignments = _validated_plan()[:29]
+    with pytest.raises(research.ResearchError, match="partial triple"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_mixed_county_triple() -> None:
+    assignments = _validated_plan()
+    # Swap priorities across the Dallas/Tarrant boundary: triple 0
+    # becomes Dallas, Dallas, Tarrant.
+    dallas_last = assignments[2].model_copy(update={"priority": 4})
+    tarrant_first = assignments[3].model_copy(update={"priority": 3})
+    assignments[2], assignments[3] = dallas_last, tarrant_first
+    with pytest.raises(research.ResearchError, match="mixed-county"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_scrambled_category_order() -> None:
+    assignments = _validated_plan()
+    # Swap priorities within the Dallas triple: downtown first.
+    first = assignments[0].model_copy(update={"priority": 2})
+    second = assignments[1].model_copy(update={"priority": 1})
+    assignments[0], assignments[1] = first, second
+    with pytest.raises(research.ResearchError, match="in order"):
+        research.select_assignments(assignments)
+
+
+def test_selection_requires_exact_county_display_form() -> None:
+    assignments = _validated_plan()
+    for index in range(3):
+        assignments[index] = assignments[index].model_copy(
+            update={"county": "dallas county"}
+        )
+    # Triple shape survives, but no canonical plan carries the
+    # tampered label.
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments, 0)
+
+
+def test_dallas_only_plan_supports_rotation_zero_only() -> None:
+    from app.agents.gabriel.planner import (
+        PlannerConfig,
+        SearchAssignment,
+        plan_initial_searches,
+    )
+
+    dumped = [
+        a.model_dump()
+        for a in plan_initial_searches(
+            PlannerConfig(include_secondary_counties=False)
+        )
+    ]
+    only = [SearchAssignment.model_validate(a) for a in dumped]
+    assert len(only) == 27
+    selected = research.select_assignments(only, 0)
+    assert [a.county for a in selected] == ["Dallas County"] * 3
+    assert [a.strategy.value for a in selected] == ["for_sale"] * 3
+    with pytest.raises(research.ResearchError, match="not covered"):
+        research.select_assignments(only, 1)
+
+
+def test_selection_rejects_noncanonical_multipass_plan() -> None:
+    from app.agents.gabriel.planner import (
+        PlannerConfig,
+        SearchAssignment,
+        plan_initial_searches,
+    )
+
+    dumped = [
+        a.model_dump()
+        for a in plan_initial_searches(
+            PlannerConfig(total_max_queries=54, per_category_max=18)
+        )
+    ]
+    assignments = [SearchAssignment.model_validate(a) for a in dumped]
+    assert len(assignments) == 54
+    # Structurally perfect (18 complete triples) yet not an
+    # executable canonical plan: strategy passes need client-named
+    # configuration to regenerate, so they are rejected outright.
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments, 0)
+
+
+# --- Canonical plan verification ---
+
+
+def test_untouched_canonical_baseline_succeeds() -> None:
+    assignments = _validated_plan()
+    assert len(assignments) == 30
+    dallas = research.select_assignments(assignments, 0)
+    assert [a.county for a in dallas] == ["Dallas County"] * 3
+
+
+def test_selection_rejects_substituted_query() -> None:
+    assignments = _validated_plan()
+    assignments[0] = assignments[0].model_copy(
+        update={"query": "arbitrary attacker query buy cheap land now"}
+    )
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_substituted_id() -> None:
+    assignments = _validated_plan()
+    assignments[0] = assignments[0].model_copy(update={"id": "gsp-forged000001"})
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_changed_strategy() -> None:
+    from app.agents.gabriel.planner import SearchStrategy
+
+    assignments = _validated_plan()
+    assignments[0] = assignments[0].model_copy(
+        update={"strategy": SearchStrategy.DISTRESSED}
+    )
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_changed_market() -> None:
+    assignments = _validated_plan()
+    assignments[0] = assignments[0].model_copy(
+        update={
+            "market": "Austin, TX",
+            "query": "high-rise office building for sale in Austin, TX",
+        }
+    )
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments)
+
+
+def test_selection_rejects_changed_county() -> None:
+    assignments = _validated_plan()
+    for index in range(3):
+        assignments[index] = assignments[index].model_copy(
+            update={"county": "Travis County"}
+        )
+    # Whole-triple county swap keeps triple shape but names a county
+    # no canonical plan covers.
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(assignments, 0)
+
+
+def test_selection_rejects_extra_assignments() -> None:
+    assignments = _validated_plan()
+    extras = [
+        assignments[index].model_copy(
+            update={"id": f"gsp-extra-{index:06d}", "priority": 31 + index}
+        )
+        for index in range(3)
+    ]
+    bloated = assignments + extras
+    with pytest.raises(research.ResearchError, match="canonical plan"):
+        research.select_assignments(bloated)
+
+
+def test_selection_failure_touches_no_budget_or_network(monkeypatch) -> None:
+    _env(monkeypatch)
+
+    def _reserve_bomb(n):
+        raise AssertionError("no reservation after selection failure")
+
+    def _execute_bomb(*args, **kwargs):
+        raise AssertionError("no network after selection failure")
+
+    monkeypatch.setattr(research, "reserve_requests", _reserve_bomb)
+    monkeypatch.setattr(research, "execute_query", _execute_bomb)
+    good = {"assignments": _plan_assignments()}
+    with pytest.raises(research.ResearchError):
+        research.run_research(
+            research.ResearchRunRequest.model_validate(
+                {**good, "rotation": 10}
+            )
+        )
+    scrambled = [dict(a) for a in _plan_assignments()]
+    scrambled[0]["priority"], scrambled[1]["priority"] = (
+        scrambled[1]["priority"], scrambled[0]["priority"],
+    )
+    with pytest.raises(research.ResearchError):
+        research.run_research(
+            research.ResearchRunRequest.model_validate({"assignments": scrambled})
+        )
+    forged = [dict(a) for a in _plan_assignments()]
+    forged[0]["query"] = "arbitrary attacker query buy cheap land now"
+    with pytest.raises(research.ResearchError):
+        research.run_research(
+            research.ResearchRunRequest.model_validate({"assignments": forged})
+        )
 
 
 def test_run_research_success(monkeypatch) -> None:
@@ -510,8 +749,8 @@ def test_run_research_honors_rotation(monkeypatch) -> None:
     )
     assert first.request_count == rotated.request_count == 3
     assert [e.query for e in first.executed] != [e.query for e in rotated.executed]
-    assert any("Denton County" in query for query in calls)
-    assert any("Ellis County" in query for query in calls)
+    assert any("Dallas County" in query for query in calls)
+    assert any("Tarrant County" in query for query in calls)
 
 
 def test_run_research_requires_database_first(monkeypatch) -> None:
