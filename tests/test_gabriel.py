@@ -265,7 +265,23 @@ def test_normalize_text_and_keys() -> None:
     key_a = dedup_key({"street_address": "500 Commerce St.", "city": "Dallas"})
     key_b = dedup_key({"street_address": "500 commerce st", "city": "dallas "})
     assert key_a == key_b
-    assert dedup_key({"name": "X", "city": "Dallas"}).startswith("name:")
+    assert dedup_key({"name": "X", "city": "Dallas"}) is None
+
+
+def test_dedup_key_addressless_identifiers() -> None:
+    payload = {"name": "Twin Hall", "city": "Dallas"}
+    # Provider element id distinguishes same-name candidates.
+    key_1 = dedup_key(payload, source="overpass", external_id="way/1")
+    assert key_1 == dedup_key(payload, source="overpass", external_id="way/1")
+    assert key_1 != dedup_key(payload, source="overpass", external_id="way/2")
+    # Exact coordinates distinguish when no element id exists.
+    geo_1 = dedup_key(payload, latitude=32.78, longitude=-96.79)
+    assert geo_1 == dedup_key(payload, latitude=32.78, longitude=-96.79)
+    assert geo_1 != dedup_key(payload, latitude=32.79, longitude=-96.79)
+    assert dedup_key(payload, latitude=32.78, longitude=None) is None
+    # Addressed keys ignore identifiers entirely (behavior unchanged).
+    addr = {"street_address": "500 Commerce St.", "city": "Dallas"}
+    assert dedup_key(addr, external_id="way/1") == dedup_key(addr, external_id="way/2")
 
 
 def test_match_existing_address_skips_addressless(monkeypatch) -> None:
@@ -386,6 +402,67 @@ def test_run_reports_ambiguity_without_selecting(monkeypatch) -> None:
     assert "multiple stored properties" in result.skipped[0].reason
     assert "ambiguous" in result.skipped[0].reason
     assert "property " not in result.skipped[0].reason  # no id claimed
+
+
+def test_run_keeps_distinct_addressless_candidates(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    stub = _StubSource(
+        listings=[
+            _listing(external_id="way/1", name="Twin Hall", street_address=None),
+            _listing(external_id="way/2", name="Twin Hall", street_address=None),
+            _listing(external_id="way/1", name="Twin Hall", street_address=None),
+        ]
+    )
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    created: list = []
+    monkeypatch.setattr(
+        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+    )
+    # Real matcher: addressless payloads return NONE without touching the DB.
+    result = gabriel_service.run_discovery(_run_request())
+    assert result.counts.created == 2
+    assert result.counts.skipped_duplicate == 1
+    assert "within this run" in result.skipped[0].reason
+
+
+def test_run_distinguishes_addressless_candidates_by_coordinates(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    stub = _StubSource(
+        listings=[
+            _listing(external_id=None, name="Twin Hall", street_address=None,
+                     latitude=32.780, longitude=-96.790),
+            _listing(external_id=None, name="Twin Hall", street_address=None,
+                     latitude=32.790, longitude=-96.800),
+        ]
+    )
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    created: list = []
+    monkeypatch.setattr(
+        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+    )
+    result = gabriel_service.run_discovery(_run_request())
+    assert result.counts.created == 2
+    assert result.counts.skipped_duplicate == 0
+
+
+def test_run_never_discards_identifierless_candidates(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    stub = _StubSource(
+        listings=[
+            _listing(external_id=None, name="Twin Hall", street_address=None,
+                     latitude=None, longitude=None),
+            _listing(external_id=None, name="Twin Hall", street_address=None,
+                     latitude=None, longitude=None),
+        ]
+    )
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    created: list = []
+    monkeypatch.setattr(
+        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+    )
+    result = gabriel_service.run_discovery(_run_request())
+    assert result.counts.created == 2
+    assert result.counts.skipped_duplicate == 0
 
 
 def test_run_aborts_on_source_failure_without_persisting(monkeypatch) -> None:

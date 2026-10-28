@@ -4,7 +4,9 @@ Identity rule: a candidate whose normalized street address
 (city/state/ZIP when present) matches exactly one stored record refers
 to that record; several matches are reported as ambiguous and never
 resolved by selection here. Address-less candidates dedup within a run
-only, keyed by name and city, and are flagged for Raphael's review.
+only, keyed by reliable source identifiers (provider element id, then
+coordinates) -- never by name and city alone. Candidates without any
+reliable identifier are never deduplicated.
 
 Known limitation: normalization is intentionally simple (case,
 punctuation, whitespace). Abbreviation variants ("St" vs "Street")
@@ -32,17 +34,38 @@ def normalize_text(value: object) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
-def dedup_key(payload: dict[str, Any]) -> str:
-    """Build the identity key for a normalized candidate payload."""
+def dedup_key(
+    payload: dict[str, Any],
+    *,
+    source: object = None,
+    external_id: object = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> str | None:
+    """Build the in-run dedup key for a candidate, or None when unkeyable.
+
+    Addressed candidates key on the normalized address (identifiers
+    ignored). Address-less candidates key on the provider element id,
+    then on exact coordinates plus normalized name and city. Name and
+    city alone never form a key: without a reliable source identifier
+    or coordinates there is nothing to deduplicate on, so None keeps
+    every such candidate distinct instead of discarding it.
+    """
     street = normalize_text(payload.get("street_address"))
     if street:
         city = normalize_text(payload.get("city"))
         state = normalize_text(payload.get("state"))
         zip_code = normalize_text(payload.get("zip_code"))
         return f"addr:{street}|{city}|{state}|{zip_code}"
-    name = normalize_text(payload.get("name"))
-    city = normalize_text(payload.get("city"))
-    return f"name:{name}|{city}"
+    element = str(external_id).strip() if external_id is not None else ""
+    if element:
+        provider = str(source).strip() if source is not None else ""
+        return f"ext:{provider}|{element}"
+    if latitude is not None and longitude is not None:
+        name = normalize_text(payload.get("name"))
+        city = normalize_text(payload.get("city"))
+        return f"geo:{latitude!r}|{longitude!r}|{name}|{city}"
+    return None
 
 
 class AddressMatchStatus(str, Enum):

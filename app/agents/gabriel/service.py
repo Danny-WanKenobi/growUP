@@ -88,8 +88,14 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
                 )
             )
             continue
-        key = dedup_key(validated.model_dump())
-        if key in seen:
+        key = dedup_key(
+            validated.model_dump(),
+            source=item.source,
+            external_id=item.external_id,
+            latitude=item.latitude,
+            longitude=item.longitude,
+        )
+        if key is not None and key in seen:
             result.counts.skipped_duplicate += 1
             result.skipped.append(
                 SkippedCandidate(
@@ -100,7 +106,8 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
                 )
             )
             continue
-        seen.add(key)
+        if key is not None:
+            seen.add(key)
         address_match = match_existing_address(validated.model_dump())
         if address_match.status is AddressMatchStatus.AMBIGUOUS:
             # Several stored properties share this address: report the
