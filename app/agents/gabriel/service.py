@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from app.agents.gabriel.dedup import dedup_key, find_existing_id
+from app.agents.gabriel.dedup import AddressMatchStatus, dedup_key, match_existing_address
 from app.agents.gabriel.normalize import normalize_listing
 from app.agents.gabriel.schemas import (
     DISCOVERY_CATEGORIES,
@@ -101,14 +101,28 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
             )
             continue
         seen.add(key)
-        existing_id = find_existing_id(validated.model_dump())
-        if existing_id is not None:
+        address_match = match_existing_address(validated.model_dump())
+        if address_match.status is AddressMatchStatus.AMBIGUOUS:
+            # Several stored properties share this address: report the
+            # ambiguity accurately instead of claiming one of them.
+            # Write-free, as always: nothing is created or updated.
+            result.counts.skipped_duplicate += 1
+            result.skipped.append(
+                SkippedCandidate(
+                    external_id=item.external_id,
+                    reason="address matches multiple stored properties; identity ambiguous, held for review",
+                    name=item.name,
+                    street_address=item.street_address,
+                )
+            )
+            continue
+        if address_match.status is AddressMatchStatus.UNIQUE:
             # Never update: existing (possibly verified) values stand.
             result.counts.skipped_duplicate += 1
             result.skipped.append(
                 SkippedCandidate(
                     external_id=item.external_id,
-                    reason=f"address already stored as property {existing_id}",
+                    reason=f"address already stored as property {address_match.property_id}",
                     name=item.name,
                     street_address=item.street_address,
                 )

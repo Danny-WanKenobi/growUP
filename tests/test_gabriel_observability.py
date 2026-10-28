@@ -18,6 +18,7 @@ import pytest
 
 import app.agents.gabriel.intake as intake
 import app.agents.gabriel.investigation as investigation
+from app.agents.gabriel.dedup import AddressMatch, AddressMatchStatus
 import app.agents.gabriel.research as research
 import app.observability.emitter as emitter
 import app.routes.discovery as discovery_routes
@@ -360,7 +361,10 @@ def _configured(monkeypatch, module):
 def test_intake_accepted_event(monkeypatch) -> None:
     _configured(monkeypatch, intake)
     prop_id = str(uuid4())
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(
+        intake, "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.NONE),
+    )
     monkeypatch.setattr(intake, "create_property", lambda data: {"id": prop_id})
     monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-1"})
     monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
@@ -387,7 +391,8 @@ def test_intake_accepted_event(monkeypatch) -> None:
 def test_intake_rejected_event(monkeypatch) -> None:
     _configured(monkeypatch, intake)
     monkeypatch.setattr(
-        intake, "find_existing_id", lambda payload: "22345678-1234-5678-1234-567812345678"
+        intake, "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.UNIQUE, "22345678-1234-5678-1234-567812345678")
     )
     monkeypatch.setattr(intake, "get_property", lambda pid: None)
     calls = _tap(monkeypatch, intake, "note_activity", "note_warning")

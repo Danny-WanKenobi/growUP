@@ -36,7 +36,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
-from app.agents.gabriel.dedup import find_existing_id, normalize_text
+from app.agents.gabriel.dedup import AddressMatchStatus, match_existing_address, normalize_text
 from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError
@@ -425,7 +425,7 @@ def process_intake(body: ListingIntakeRequest) -> IntakeResult:
 
 
 def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
-    """Validate, dedup, and persist one listing (create, enrich, or skip)."""
+    """Validate, dedup, and persist one listing (create, enrich, skip, or review)."""
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
     try:
@@ -438,8 +438,21 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
     distress_rows = build_distress_rows(body)
     source_url = str(body.listing_url)
 
-    existing_id = find_existing_id(data)
-    if existing_id is None:
+    address_match = match_existing_address(data)
+    if address_match.status is AddressMatchStatus.AMBIGUOUS:
+        # Several stored properties share this normalized address: select
+        # none of them. No enrichment, no evidence, no new record -- the
+        # ambiguity itself is the finding, for human identity review.
+        return IntakeResult(
+            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            property_id="",
+            message=(
+                "address matches multiple stored properties; identity is "
+                "ambiguous, nothing was changed, no evidence attached; "
+                "human identity review required"
+            ),
+        )
+    if address_match.status is AddressMatchStatus.NONE:
         row = create_property(data)
         property_id = str(row["id"])
         evidence = create_listing_evidence(
@@ -461,6 +474,9 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
         )
 
     # Duplicate address: enrich NULL estimated fields only, never overwrite.
+    existing_id = address_match.property_id
+    if existing_id is None:  # pragma: no cover - UNIQUE always carries the id
+        raise IntakeError("address match lost its identity; resubmit the listing")
     existing = get_property(UUID(str(existing_id)))
     if existing is None:  # pragma: no cover - raced deletion; fail closed
         raise IntakeError("duplicate target disappeared; resubmit the listing")

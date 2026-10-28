@@ -9,7 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.agents.gabriel.intake as intake
+from app.agents.gabriel.dedup import AddressMatch, AddressMatchStatus
 from app.main import app
+
+_NO_MATCH = AddressMatch(AddressMatchStatus.NONE)
+
+
+def _unique_match(property_id: str) -> AddressMatch:
+    return AddressMatch(AddressMatchStatus.UNIQUE, property_id)
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -105,7 +112,7 @@ def test_valid_intake_creates_record_with_evidence(monkeypatch) -> None:
     created: dict = {}
     evidence: dict = {}
     distress: dict = {}
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(
         intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-1"}
     )
@@ -202,7 +209,7 @@ def test_identity_required() -> None:
 def test_missing_financials_stay_unknown(monkeypatch) -> None:
     _configured_env(monkeypatch)
     created: dict = {}
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(
         intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-2"}
     )
@@ -225,7 +232,7 @@ def test_available_area_preserved_as_evidence_only(monkeypatch) -> None:
     _configured_env(monkeypatch)
     created: dict = {}
     evidence: dict = {}
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(
         intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-3"}
     )
@@ -250,7 +257,7 @@ def test_asking_price_preserved_exactly_as_decimal_string(monkeypatch) -> None:
     _configured_env(monkeypatch)
     created: dict = {}
     evidence: dict = {}
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(
         intake, "create_property", lambda data: created.update(data) or {"id": "new-prop-4"}
     )
@@ -296,7 +303,7 @@ def test_distress_invalid_indicator_rejected() -> None:
 
 def test_duplicate_listing_skipped_without_changes(monkeypatch) -> None:
     _configured_env(monkeypatch)
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: "22345678-1234-5678-1234-567812345678")
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _unique_match("22345678-1234-5678-1234-567812345678"))
     monkeypatch.setattr(intake, "get_property", lambda pid: _stored_row(id="22345678-1234-5678-1234-567812345678"))
     monkeypatch.setattr(intake, "get_listing_evidence", lambda pid, url: {"id": "ev-old"})
 
@@ -320,7 +327,7 @@ def test_verified_values_protected_during_enrichment(monkeypatch) -> None:
         property_value_verified="900000.00",
         field_evidence={"property_value_verified": "county appraisal record"},
     )
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: "32345678-1234-5678-1234-567812345678")
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _unique_match("32345678-1234-5678-1234-567812345678"))
     monkeypatch.setattr(intake, "get_property", lambda pid: dict(existing))
     monkeypatch.setattr(intake, "get_listing_evidence", lambda pid, url: None)
     enriched: dict = {}
@@ -352,7 +359,7 @@ def test_verified_values_protected_during_enrichment(monkeypatch) -> None:
 def test_conflicting_enrichment_skipped_but_evidence_kept(monkeypatch) -> None:
     _configured_env(monkeypatch)
     existing = _stored_row(id="42345678-1234-5678-1234-567812345678", vacant_area_sqft_estimated=5000.0)
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: "42345678-1234-5678-1234-567812345678")
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _unique_match("42345678-1234-5678-1234-567812345678"))
     monkeypatch.setattr(intake, "get_property", lambda pid: dict(existing))
     monkeypatch.setattr(intake, "get_listing_evidence", lambda pid, url: None)
     monkeypatch.setattr(
@@ -408,7 +415,7 @@ def test_intake_fetches_nothing(monkeypatch) -> None:
 
     monkeypatch.setattr(httpx, "get", _must_not_fetch)
     monkeypatch.setattr(httpx, "post", _must_not_fetch)
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(intake, "create_property", lambda data: {"id": "new-prop-9"})
     monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-9"})
     monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
@@ -486,7 +493,7 @@ def test_intake_incorrect_header_rejected() -> None:
 
 def test_intake_valid_header_accepted(monkeypatch) -> None:
     _configured_env(monkeypatch)
-    monkeypatch.setattr(intake, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(intake, "match_existing_address", lambda payload: _NO_MATCH)
     monkeypatch.setattr(intake, "create_property", lambda data: {"id": "auth-prop-1"})
     monkeypatch.setattr(intake, "create_listing_evidence", lambda **kwargs: {"id": "ev-a"})
     monkeypatch.setattr(intake, "create_distress_observations", lambda pid, rows, **_: [])
@@ -644,7 +651,7 @@ def test_intake_database_failure_maps_to_503(monkeypatch) -> None:
     def _fail(*args, **kwargs):
         raise DatabaseUnavailableError("connection_failed")
 
-    monkeypatch.setattr(intake, "find_existing_id", _fail)
+    monkeypatch.setattr(intake, "match_existing_address", _fail)
     response = client.post("/discovery/intake", json=_body())
     assert response.status_code == 503
     assert response.json() == {"detail": "database_unavailable"}

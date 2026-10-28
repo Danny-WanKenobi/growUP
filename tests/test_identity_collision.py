@@ -58,6 +58,7 @@ class _FakeCursor:
         self._store = store
         self._query = ""
         self._params: dict[str, Any] = {}
+        self._rows: list[dict[str, Any]] = []
 
     def __enter__(self) -> _FakeCursor:
         return self
@@ -68,16 +69,23 @@ class _FakeCursor:
     def execute(self, query: str, params: dict[str, Any] | None = None) -> None:
         self._query = query
         self._params = dict(params or {})
+        self._rows = self._apply()
 
     def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+    def _apply(self) -> list[dict[str, Any]]:
         store = self._store
         query = self._query
         params = self._params
         if "FROM listing_evidence" in query and query.strip().upper().startswith("SELECT"):
             for row in store.evidence:
                 if row["property_id"] == str(params["property_id"]) and row["source_url"] == params["source_url"]:
-                    return {"id": row["id"]}
-            return None
+                    return [{"id": row["id"]}]
+            return []
         if "INSERT INTO listing_evidence" in query:
             store.evidence.append(
                 {
@@ -87,37 +95,45 @@ class _FakeCursor:
                     "source_url": params["source_url"],
                 }
             )
-            return {"id": params["id"]}
+            return [{"id": params["id"]}]
         if "INSERT INTO distress_observations" in query:
-            return {"id": params["id"]}
-        if "lower(btrim(street_address))" in query:
-            # Faithful to app.properties_db.find_by_address: exact match on
-            # lowercased/trimmed parts (no depunctuation, no unit handling).
-            def _norm(value: object) -> str:
-                return str(value or "").strip().lower()
+            return [{"id": params["id"]}]
+        if (
+            "FROM properties" in query
+            and "WHERE id" not in query
+            and query.strip().upper().startswith("SELECT")
+        ):
+            # Faithful to app.properties_db.find_by_address: stored parts
+            # normalized exactly like incoming values (shared normalize_text
+            # is idempotent, so re-normalizing the stored side mirrors SQL),
+            # returning every match up to two rows (LIMIT 2).
+            from app.agents.gabriel.dedup import normalize_text as _norm
 
+            matches = []
             for pid, row in store.properties.items():
+                if row.get("street_address") is None:
+                    continue  # SQL NULL never matches
                 if (
                     _norm(row.get("street_address")) == params["street"]
                     and _norm(row.get("city")) == params["city"]
                     and _norm(row.get("state")) == params["state"]
                     and _norm(row.get("zip_code")) == params["zip"]
                 ):
-                    return {"id": pid}
-            return None
+                    matches.append({"id": pid})
+            return matches[:2]
         if query.strip().upper().startswith("INSERT INTO PROPERTIES"):
             row = dict(params)
             row.setdefault("created_at", "2026-10-20T00:00:00+00:00")
             row.setdefault("updated_at", "2026-10-20T00:00:00+00:00")
             store.properties[str(params["id"])] = row
-            return _pg_row(row)
+            return [_pg_row(row)]
         if "FROM properties WHERE id" in query:
             row = store.properties.get(str(params["id"]))
-            return _pg_row(row) if row is not None else None
+            return [_pg_row(row)] if row is not None else []
         if query.strip().upper().startswith("UPDATE PROPERTIES SET"):
             row = store.properties.get(str(params["id"]))
             if row is None:
-                return None
+                return []
             fills = {
                 key: value
                 for key, value in params.items()
@@ -125,15 +141,12 @@ class _FakeCursor:
             }
             # Faithful to enrich_property_estimates: all-or-nothing IS NULL guards.
             if any(row.get(col) is not None for col in fills):
-                return None
+                return []
             row.update(fills)
             row["field_evidence"] = params["field_evidence"]
             row["data_status"] = params["data_status"]
-            return {"id": str(params["id"])}
+            return [{"id": str(params["id"])}]
         raise AssertionError(f"unexpected query in collision repro: {query[:100]!r}")
-
-    def fetchall(self) -> list:
-        return []
 
 
 class _FakeConnection:
@@ -158,7 +171,7 @@ def collision_store(monkeypatch: pytest.MonkeyPatch) -> _CollisionStore:
     """Route the real DB-access functions at an in-memory store.
 
     Only the driver-level `get_connection` is stubbed (both import sites);
-    `find_existing_id`, `create_property`, `get_property`,
+    `match_existing_address`, `create_property`, `get_property`,
     `enrich_property_estimates`, and the listing-evidence helpers all run
     their real code, including the real SQL text and real dedup logic.
     """
@@ -183,13 +196,15 @@ def _listing(
     area: float | None,
     months_listed: int | None = None,
     street: str = "500 Commerce Street",
+    city: str = "Dallas",
+    zip_code: str | None = "75202",
 ) -> ListingIntakeRequest:
     body: dict[str, Any] = {
         "name": name,
         "street_address": street,
-        "city": "Dallas",
+        "city": city,
         "state": "TX",
-        "zip_code": "75202",
+        "zip_code": zip_code,
         "category": "downtown_commercial",
         "source_name": "Harborline Brokerage Records",
         "listing_url": url,
@@ -311,6 +326,83 @@ def test_exact_same_name_same_address_second_source_enriches(
     assert (
         collision_store.properties[result_a.property_id]["months_on_market_estimated"] == 6
     )
+
+
+def _seed_legacy_pair() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Seed two same-normalized-address rows, bypassing intake matching.
+
+    Simulates legacy duplicates (e.g. created before symmetric
+    normalization): different raw spellings, different building names.
+    """
+    from app.properties_db import create_property
+
+    base = {
+        "city": "Dallas",
+        "state": "TX",
+        "zip_code": "75202",
+        "category": "downtown_commercial",
+        "provenance": "synthetic legacy seed record for multi-match tests",
+    }
+    row_a = create_property(
+        {**base, "name": "Legacy Tower A", "street_address": "500 Legacy Pair Way"}
+    )
+    row_b = create_property(
+        {**base, "name": "Legacy Tower B", "street_address": "500 Legacy Pair Way."}
+    )
+    return row_a, row_b
+
+
+def test_named_listing_matching_two_records_needs_review(
+    collision_store: _CollisionStore,
+) -> None:
+    """Even a name-matching listing is not resolved among two records."""
+    row_a, row_b = _seed_legacy_pair()
+    before_a = dict(collision_store.properties[str(row_a["id"])])
+    before_b = dict(collision_store.properties[str(row_b["id"])])
+    result = process_intake(
+        _listing(
+            "Legacy Tower A",
+            "https://example.com/listings/multi-named",
+            240000,
+            street="500 Legacy Pair Way",
+        )
+    )
+    assert result.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert result.property_id == ""
+    assert "multiple stored properties" in result.message
+    assert "human identity review required" in result.message
+    assert result.filled_fields == []
+    assert result.listing_evidence_id is None
+    assert len(collision_store.properties) == 2, _diagnostics(collision_store)
+    assert collision_store.properties[str(row_a["id"])] == before_a
+    assert collision_store.properties[str(row_b["id"])] == before_b
+    assert collision_store.evidence == []
+
+
+def test_nameless_listing_matching_two_records_needs_review(
+    collision_store: _CollisionStore,
+) -> None:
+    """A nameless listing must not enrich an arbitrary matching record."""
+    row_a, row_b = _seed_legacy_pair()
+    before_a = dict(collision_store.properties[str(row_a["id"])])
+    before_b = dict(collision_store.properties[str(row_b["id"])])
+    result = process_intake(
+        _listing(
+            None,
+            "https://example.com/listings/multi-nameless",
+            240000,
+            street="500 Legacy Pair Way",
+        )
+    )
+    assert result.outcome.value == "needs_identity_review", _diagnostics(collision_store)
+    assert result.property_id == ""
+    assert "multiple stored properties" in result.message
+    assert result.filled_fields == []
+    assert result.listing_evidence_id is None
+    assert len(collision_store.properties) == 2, _diagnostics(collision_store)
+    assert collision_store.properties[str(row_a["id"])] == before_a
+    assert collision_store.properties[str(row_b["id"])] == before_b
+    assert collision_store.evidence == []
 
 
 # --- Live PostgreSQL integration (GROWUP_PG_INTEGRATION=1) ---
@@ -484,6 +576,102 @@ def test_live_name_conflict_does_not_fill_null_area() -> None:
 
 
 @needs_live_pg
+def test_live_equivalent_spellings_match_in_sql() -> None:
+    """Live PG: punctuation, spacing, and case variants match one record.
+
+    Same building name within each pair, so only address normalization
+    decides: each B must enrich (not create, not review).
+    """
+    _live_config()
+    _require_live_tables()
+    punct_a = f"500 Norm Punct Way {uuid4().hex}."
+    space_a = f"700  Norm   Space  Way {uuid4().hex}"
+    case_a = f"900 norm case way {uuid4().hex}"
+    # (label, street_a, street_b, city_a, city_b); B is the cleaned form of A.
+    pairs = [
+        ("punct", punct_a, " ".join(punct_a.rstrip(".").split()), "Dallas", "Dallas"),
+        ("space", space_a, " ".join(space_a.split()), "Dallas", "Dallas"),
+        ("case", case_a, " ".join(case_a.split()).upper(), "dallas", "DALLAS"),
+    ]
+    created: list[str] = []
+    streets: list[str] = []
+    try:
+        for label, street_a, street_b, city_a, city_b in pairs:
+            name = f"Live Norm {label.title()} Tower"
+            result_a = process_intake(
+                _listing(name, f"https://example.com/listings/live-norm-{label}-a", None,
+                         street=street_a, city=city_a)
+            )
+            assert result_a.outcome.value == "created", label
+            created.append(result_a.property_id)
+            streets.append(street_a)
+            result_b = process_intake(
+                _listing(name, f"https://example.com/listings/live-norm-{label}-b", 240000,
+                         street=street_b, city=city_b)
+            )
+            assert result_b.outcome.value == "enriched", (
+                f"{label}: equivalent spellings must match "
+                f"({street_a!r} vs {street_b!r})"
+            )
+            assert result_b.property_id == result_a.property_id, label
+            stored = _live_property(result_a.property_id)
+            assert stored is not None
+            assert float(stored["building_area_sqft_estimated"] or 0) == 240000, label
+        assert _live_property_count(created) == len(created)
+    finally:
+        _live_cleanup(created)
+        for street in streets:
+            _live_cleanup_street(street)
+
+
+@needs_live_pg
+def test_live_material_differences_do_not_match_in_sql() -> None:
+    """Live PG: abbreviations, ZIP, suite, and directionals stay distinct.
+
+    Same building name within each pair, so a match would enrich; each B
+    must instead create its own record.
+    """
+    _live_config()
+    _require_live_tables()
+    base = uuid4().hex
+    pairs = [
+        ("abbrev", f"500 Norm {base} St", f"500 Norm {base} Street", "75202", "75202"),
+        ("zip", f"600 Norm {base} Way", f"600 Norm {base} Way", "75202", None),
+        ("suite", f"700 Norm {base} St Suite 100", f"700 Norm {base} St Suite 200",
+         "75202", "75202"),
+        ("directional", f"N Norm {base} St", f"Norm {base} St", "75202", "75202"),
+    ]
+    created: list[str] = []
+    streets: list[str] = []
+    try:
+        for label, street_a, street_b, zip_a, zip_b in pairs:
+            name = f"Live Distinct {label.title()} Tower"
+            result_a = process_intake(
+                _listing(name, f"https://example.com/listings/live-distinct-{label}-a", None,
+                         street=street_a, zip_code=zip_a)
+            )
+            assert result_a.outcome.value == "created", label
+            created.append(result_a.property_id)
+            streets.append(street_a)
+            result_b = process_intake(
+                _listing(name, f"https://example.com/listings/live-distinct-{label}-b", 240000,
+                         street=street_b, zip_code=zip_b)
+            )
+            assert result_b.outcome.value == "created", (
+                f"{label}: material differences must not match "
+                f"({street_a!r}/{zip_a} vs {street_b!r}/{zip_b})"
+            )
+            assert result_b.property_id != result_a.property_id, label
+            created.append(result_b.property_id)
+            streets.append(street_b)
+        assert _live_property_count(created) == len(created) == 8
+    finally:
+        _live_cleanup(created)
+        for street in streets:
+            _live_cleanup_street(street)
+
+
+@needs_live_pg
 def test_live_same_name_second_source_enriches() -> None:
     """Live PG: a confident same-name match still enriches persisted rows."""
     _live_config()
@@ -511,3 +699,63 @@ def test_live_same_name_second_source_enriches() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_street(street)
+
+
+@needs_live_pg
+def test_live_multiple_matches_require_review() -> None:
+    """Live PG: two same-normalized-address rows are never selected between.
+
+    Seeds a legacy-style pair directly (different raw spellings, different
+    names), then verifies named and nameless intakes both report ambiguity
+    with zero persisted changes.
+    """
+    from app.properties_db import create_property
+
+    _live_config()
+    _require_live_tables()
+    base = uuid4().hex
+    street_a = f"500 Live Multi Way {base}."
+    street_b = f"500 Live Multi Way {base}"
+    name_a = "Live Multi Tower A"
+    url_named = "https://example.com/listings/live-multi-named"
+    url_nameless = "https://example.com/listings/live-multi-nameless"
+    created: list[str] = []
+    streets = [street_a, street_b]
+    try:
+        seed = {
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75202",
+            "category": "downtown_commercial",
+            "provenance": "synthetic live multi-match seed record QA",
+        }
+        row_a = create_property(
+            {**seed, "name": name_a, "street_address": street_a,
+             "building_area_sqft_estimated": 120000.0,
+             "field_evidence": {"building_area_sqft_estimated": "live seed record"}}
+        )
+        row_b = create_property(
+            {**seed, "name": "Live Multi Tower B", "street_address": street_b}
+        )
+        created.extend([str(row_a["id"]), str(row_b["id"])])
+        before_a = _live_property(created[0])
+        before_b = _live_property(created[1])
+        assert before_a is not None and before_b is not None
+        named = process_intake(_listing(name_a, url_named, 240000, street=street_b))
+        assert named.outcome.value == "needs_identity_review"
+        assert named.property_id == ""
+        assert "multiple stored properties" in named.message
+        nameless = process_intake(_listing(None, url_nameless, 99999, street=street_b))
+        assert nameless.outcome.value == "needs_identity_review"
+        assert nameless.property_id == ""
+        assert "multiple stored properties" in nameless.message
+        # Persisted rows: both unchanged, nothing created, nothing attached.
+        assert _live_property_count(created) == 2
+        assert _live_property(created[0]) == before_a
+        assert _live_property(created[1]) == before_b
+        assert _live_evidence_by_url(url_named) == []
+        assert _live_evidence_by_url(url_nameless) == []
+    finally:
+        _live_cleanup(created)
+        for street in streets:
+            _live_cleanup_street(street)

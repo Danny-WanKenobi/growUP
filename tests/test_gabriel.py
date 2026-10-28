@@ -7,7 +7,13 @@ from fastapi.testclient import TestClient
 
 import app.agents.gabriel.service as gabriel_service
 import app.routes.discovery as discovery_routes
-from app.agents.gabriel.dedup import dedup_key, find_existing_id, normalize_text
+from app.agents.gabriel.dedup import (
+    AddressMatch,
+    AddressMatchStatus,
+    dedup_key,
+    match_existing_address,
+    normalize_text,
+)
 from app.agents.gabriel.normalize import normalize_listing
 from app.agents.gabriel.schemas import DiscoveryRunRequest
 from app.agents.gabriel.sources.base import (
@@ -262,7 +268,7 @@ def test_normalize_text_and_keys() -> None:
     assert dedup_key({"name": "X", "city": "Dallas"}).startswith("name:")
 
 
-def test_find_existing_id_skips_addressless(monkeypatch) -> None:
+def test_match_existing_address_skips_addressless(monkeypatch) -> None:
     called = []
 
     def _must_not_query(**kwargs):
@@ -270,21 +276,29 @@ def test_find_existing_id_skips_addressless(monkeypatch) -> None:
         raise AssertionError("no DB lookup without an address")
 
     monkeypatch.setattr("app.properties_db.find_by_address", _must_not_query)
-    assert find_existing_id({"name": "X"}) is None
+    assert match_existing_address({"name": "X"}) == AddressMatch(AddressMatchStatus.NONE)
     assert called == []
 
 
-def test_find_existing_id_returns_stored_id(monkeypatch) -> None:
+def test_match_existing_address_tri_state(monkeypatch) -> None:
     seen: dict = {}
+    rows: list = []
 
     def _fake_find(**kwargs):
         seen.update(kwargs)
-        return {"id": "stored-id-1"}
+        return list(rows)
 
     monkeypatch.setattr("app.properties_db.find_by_address", _fake_find)
-    assert find_existing_id({"street_address": "500 Commerce St.", "city": "Dallas"}) == "stored-id-1"
+    payload = {"street_address": "500 Commerce St.", "city": "Dallas"}
+    assert match_existing_address(payload) == AddressMatch(AddressMatchStatus.NONE)
     assert seen["street"] == "500 commerce st"
     assert seen["city"] == "dallas"
+    rows.append({"id": "stored-id-1"})
+    assert match_existing_address(payload) == AddressMatch(
+        AddressMatchStatus.UNIQUE, "stored-id-1"
+    )
+    rows.append({"id": "stored-id-2"})
+    assert match_existing_address(payload) == AddressMatch(AddressMatchStatus.AMBIGUOUS)
 
 
 # --- Service orchestration ---
@@ -335,10 +349,10 @@ def test_run_creates_new_and_skips_duplicates(monkeypatch) -> None:
 
     def _existing(payload):
         if payload.get("street_address") == "200 Main St":
-            return "stored-existing"
-        return None
+            return AddressMatch(AddressMatchStatus.UNIQUE, "stored-existing")
+        return AddressMatch(AddressMatchStatus.NONE)
 
-    monkeypatch.setattr(gabriel_service, "find_existing_id", _existing)
+    monkeypatch.setattr(gabriel_service, "match_existing_address", _existing)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.returned == 4
     assert result.counts.created == 1
@@ -349,6 +363,29 @@ def test_run_creates_new_and_skips_duplicates(monkeypatch) -> None:
     assert created[0]["street_address"] == "100 Main St"
     reasons = " ".join(item.reason for item in result.skipped)
     assert "already stored" in reasons and "within this run" in reasons
+
+
+def test_run_reports_ambiguity_without_selecting(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    stub = _StubSource(listings=[_listing(external_id="way/1")])
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    monkeypatch.setattr(
+        gabriel_service,
+        "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.AMBIGUOUS),
+    )
+
+    def _must_not_create(data):
+        raise AssertionError("ambiguous matches must not create records")
+
+    monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    result = gabriel_service.run_discovery(_run_request())
+    assert result.counts.created == 0
+    assert result.counts.skipped_duplicate == 1
+    assert len(result.skipped) == 1
+    assert "multiple stored properties" in result.skipped[0].reason
+    assert "ambiguous" in result.skipped[0].reason
+    assert "property " not in result.skipped[0].reason  # no id claimed
 
 
 def test_run_aborts_on_source_failure_without_persisting(monkeypatch) -> None:
@@ -431,7 +468,7 @@ class _FakeCursor:
         return self._row
 
     def fetchall(self):
-        return []
+        return [self._row] if self._row is not None else []
 
 
 class _FakeConnection:
@@ -462,11 +499,13 @@ def test_find_by_address_queries_normalized_parts(monkeypatch) -> None:
     monkeypatch.setattr(
         psycopg, "connect", lambda **kwargs: _FakeConnection(recorder, {"id": "abc"})
     )
-    assert store.find_by_address("500 commerce st", "dallas", config=config) == {"id": "abc"}
+    assert store.find_by_address("500 commerce st", "dallas", config=config) == [{"id": "abc"}]
     assert "lower(btrim(street_address))" in recorder["query"]
+    assert "regexp_replace" in recorder["query"]
+    assert "LIMIT 2" in recorder["query"]
     assert recorder["params"]["street"] == "500 commerce st"
     monkeypatch.setattr(psycopg, "connect", lambda **kwargs: _FakeConnection(recorder, None))
-    assert store.find_by_address("elsewhere", config=config) is None
+    assert store.find_by_address("elsewhere", config=config) == []
 
 
 # --- Discovery routes ---

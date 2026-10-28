@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.agents.gabriel.service as gabriel_service
+from app.agents.gabriel.dedup import AddressMatch, AddressMatchStatus
 from app.agents.gabriel.sources.base import (
     SOURCES,
     BoundingBox,
@@ -246,7 +247,10 @@ def test_osm_api_run_through_existing_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(
         gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
     )
-    monkeypatch.setattr(gabriel_service, "find_existing_id", lambda payload: None)
+    monkeypatch.setattr(
+        gabriel_service, "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.NONE),
+    )
     monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     response = client.post(
         "/discovery/runs",
@@ -287,10 +291,10 @@ def test_osm_api_run_skips_stored_duplicates(monkeypatch) -> None:
 
     def _existing(payload):
         if (payload.get("street_address") or "") == "100 Main St":
-            return "stored-existing"
-        return None
+            return AddressMatch(AddressMatchStatus.UNIQUE, "stored-existing")
+        return AddressMatch(AddressMatchStatus.NONE)
 
-    monkeypatch.setattr(gabriel_service, "find_existing_id", _existing)
+    monkeypatch.setattr(gabriel_service, "match_existing_address", _existing)
     monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     response = client.post(
         "/discovery/runs",

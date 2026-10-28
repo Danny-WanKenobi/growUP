@@ -147,37 +147,59 @@ def list_properties(
     return [dict(row) for row in rows]
 
 
+def _normalized_component_sql(column: str) -> str:
+    """SQL mirror of gabriel ``normalize_text`` for one address component.
+
+    Lowercases, maps ``[.,#/-]+`` to a space, collapses whitespace, and
+    trims -- the same contract callers apply to incoming values, so
+    equivalent spellings match without changing stored values. NULL
+    stays NULL (never matches); abbreviations, ZIP text, suite numbers,
+    and directionals are preserved exactly (never expanded or dropped).
+    """
+    return (
+        "btrim(regexp_replace(regexp_replace(lower(btrim(" + column + "))"
+        ", '[.,#/-]+', ' ', 'g'), '\\s+', ' ', 'g'))"
+    )
+
+
 def find_by_address(
     street: str,
     city: str = "",
     state: str = "",
     zip_code: str = "",
     config: DatabaseConfig | None = None,
-) -> dict[str, Any] | None:
-    """Return the id of the record matching a normalized address, or None.
+) -> list[dict[str, Any]]:
+    """Return the ids matching a normalized address (at most two).
 
-    Minimal Gabriel dedup lookup: compares lowercased, trimmed address
-    parts exactly. Callers normalize inputs first (see gabriel dedup).
+    Stored components are normalized in SQL exactly as callers
+    normalize inputs first (see gabriel dedup). Returns every match
+    up to two rows: zero (no match), one (unique match), or two (more
+    than one match exists -- ambiguous, never treated as unique).
+    Callers must not select among multiple matches.
     """
+    street_expr = _normalized_component_sql("street_address")
+    city_expr = _normalized_component_sql("COALESCE(city, '')")
+    state_expr = _normalized_component_sql("COALESCE(state, '')")
+    zip_expr = _normalized_component_sql("COALESCE(zip_code, '')")
     sql = (
         "SELECT id FROM properties "
-        "WHERE lower(btrim(street_address)) = %(street)s "
-        "AND lower(btrim(COALESCE(city, ''))) = %(city)s "
-        "AND lower(btrim(COALESCE(state, ''))) = %(state)s "
-        "AND lower(btrim(COALESCE(zip_code, ''))) = %(zip)s "
-        "LIMIT 1"
+        f"WHERE {street_expr} = %(street)s "
+        f"AND {city_expr} = %(city)s "
+        f"AND {state_expr} = %(state)s "
+        f"AND {zip_expr} = %(zip)s "
+        "LIMIT 2"
     )
     params = {"street": street, "city": city, "state": state, "zip": zip_code}
     try:
         with get_connection(config) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                row = cur.fetchone()
+                rows = cur.fetchall()
     except (DatabaseNotConfiguredError, DatabaseUnavailableError):
         raise
     except Exception as exc:
         raise DatabaseUnavailableError("database_error") from exc
-    return dict(row) if row is not None else None
+    return [dict(row) for row in rows]
 
 
 ENRICHABLE_ESTIMATED_FIELDS = (
