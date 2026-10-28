@@ -36,7 +36,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
-from app.agents.gabriel.dedup import find_existing_id
+from app.agents.gabriel.dedup import find_existing_id, normalize_text
 from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError
@@ -105,6 +105,7 @@ class IntakeOutcome(str, Enum):
     CREATED = "created"
     ENRICHED = "enriched"
     SKIPPED_DUPLICATE = "skipped_duplicate"
+    NEEDS_IDENTITY_REVIEW = "needs_identity_review"
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -358,6 +359,21 @@ def build_distress_rows(body: ListingIntakeRequest) -> list[dict[str, Any]]:
     return rows
 
 
+def _identity_ambiguous(body: ListingIntakeRequest, existing: dict[str, Any]) -> bool:
+    """True when the address matches but the building names conflict.
+
+    Conservative collision guard: an address match alone does not prove
+    the same physical building. Both names must be present and, after the
+    shared normalization (case/punctuation/whitespace-insensitive),
+    different. No fuzzy matching; no unit, parcel, coordinate, or
+    ownership inference. The incoming side uses the explicitly supplied
+    name only -- a derived display name ("street, city") is not evidence.
+    """
+    incoming = normalize_text(body.name) if (body.name or "").strip() else ""
+    stored = normalize_text(existing.get("name"))
+    return bool(incoming) and bool(stored) and incoming != stored
+
+
 def process_intake(body: ListingIntakeRequest) -> IntakeResult:
     """Validate, dedup, and persist one listing (instrumented, nonfatal).
 
@@ -448,6 +464,20 @@ def _process_intake(body: ListingIntakeRequest) -> IntakeResult:
     existing = get_property(UUID(str(existing_id)))
     if existing is None:  # pragma: no cover - raced deletion; fail closed
         raise IntakeError("duplicate target disappeared; resubmit the listing")
+    if _identity_ambiguous(body, existing):
+        # Same address but a materially different building name: the two
+        # listings may describe different buildings. Preserve everything
+        # unchanged -- no enrichment, no evidence, no second record -- and
+        # require human identity review.
+        return IntakeResult(
+            outcome=IntakeOutcome.NEEDS_IDENTITY_REVIEW,
+            property_id=str(existing_id),
+            message=(
+                "same address but a materially different building name; "
+                "identity is ambiguous, existing record preserved unchanged, "
+                "no evidence attached; human identity review required"
+            ),
+        )
     fills = {
         key: data[key] for key in ESTIMATED_FIELDS
         if data.get(key) is not None and existing.get(key) is None
