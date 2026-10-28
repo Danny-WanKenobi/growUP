@@ -143,6 +143,15 @@ def _live_counts(urls: list[str], streets: list[str]) -> tuple[int, int, int]:
                     {"s": streets},
                 )
                 props = int(cur.fetchone()["n"])
+            elif urls:
+                # Addressless properties have no street to count by: count
+                # the distinct properties linked to the exact test URLs.
+                cur.execute(
+                    "SELECT COUNT(DISTINCT property_id) AS n FROM listing_evidence "
+                    "WHERE source_url = ANY(%(u)s)",
+                    {"u": urls},
+                )
+                props = int(cur.fetchone()["n"])
             if urls:
                 cur.execute(
                     "SELECT COUNT(*) AS n FROM listing_evidence WHERE source_url = ANY(%(u)s)",
@@ -174,6 +183,19 @@ def _live_cleanup_urls_streets(urls: list[str], streets: list[str]) -> None:
                     {"street": street},
                 )
         conn.commit()
+
+
+def _live_evidence_by_url(url: str) -> list[dict]:
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, property_id, source_url FROM listing_evidence "
+                "WHERE source_url = %(url)s",
+                {"url": url},
+            )
+            return [dict(row) for row in cur.fetchall()]
 
 
 def _live_property_by_street(street: str) -> dict | None:
@@ -283,6 +305,11 @@ def test_live_concurrent_same_url_addressless_intake() -> None:
         assert errors == []
         assert sorted(r.outcome.value for r in outcomes) == ["created", "skipped_duplicate"]
         assert _live_counts([url], []) == (1, 1, 1)
+        created_ids = [r.property_id for r in outcomes if r.outcome.value == "created"]
+        assert len(created_ids) == 1
+        rows = _live_evidence_by_url(url)
+        assert len(rows) == 1
+        assert str(rows[0]["property_id"]) == created_ids[0]
     finally:
         _live_cleanup_urls_streets([url], [])
 
