@@ -1309,6 +1309,47 @@ denied-claim rollback with permitted reclaim, concurrent
 permitted/denied claims, non-owner outcome denial) skip unless
 `GROWUP_PG_INTEGRATION=1` with migrations 005–006 applied.
 
+### Phase 3C-3B-3A — Read-only external-action recovery foundation
+
+`app/external_action_reads.py` is a dedicated internal read module
+over the existing ledger tables — SELECT-only, no commits, no
+audit writes, no state changes, no execution. It does not import
+the ledger mutation module. No migration, no routes, no workers.
+
+- **Three read-access levels:** the orchestrator id named by
+  `WONDRUE_READER_ID` whose credential verifies reads across
+  action types (read-only by design, no state authority);
+  other verified orchestrators read only types their
+  `ORCHESTRATOR_SCOPES` grants cover (exact match, empty means
+  nothing); verified executors read only their own attempts
+  (SQL-side owner filter) and actions carrying them. Every
+  check runs before any data returns; cross-role credentials
+  fail by namespace separation.
+- **Five internal functions:** `get_action` (one row or None),
+  `list_attempts` (oldest-first, bounded), `list_own_open_attempts`
+  (executor-only, with action state/type/count context),
+  `find_stale_attempting` (open `ATTEMPTING` attempts older than
+  the threshold, oldest first, with computed age), and
+  `stale_summary` (bounded count plus oldest claim age, None —
+  never zero — when empty). All listings are explicitly
+  limited (default 50, clamped to 200); all SQL is parameterized.
+- **Staleness is detection only:** the default 15-minute
+  threshold flags actions that "may require investigation."
+  Staleness never implies failure, never authorizes a retry,
+  and never moves state — GRW-EXT-001 is preserved, and
+  recovering a record authorizes no execution.
+- **Boundaries:** no reconciliation writes, no transitions, no
+  Wondrue conversational interface (this phase establishes only
+  the authorization and read interfaces she will consume), and
+  no public routes (route-surface guards extended to the new
+  module). Structural tests pin the SELECT-only posture and the
+  mutation-module import ban.
+
+Four PostgreSQL-backed integration tests (system-wide vs scoped
+reads, executor ownership, stale scan/summary, read-only proof)
+skip unless `GROWUP_PG_INTEGRATION=1` with migrations 005–006
+applied.
+
 ---
 
 ## 🎥 Demonstration

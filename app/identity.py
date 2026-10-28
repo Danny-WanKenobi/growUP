@@ -40,7 +40,10 @@ Two identity kinds, two mechanisms -- the asymmetry is deliberate:
   outright (``ensure_credential_namespaces_disjoint``), so one
   bearer can never authenticate as both roles even under
   different names -- while identical names with distinct
-  secrets remain permitted.
+  secrets remain permitted. One orchestrator id may additionally
+  be designated (``WONDRUE_READER_ID``) as the read-only
+  system-wide inspector; the name alone confers nothing without
+  a verified credential.
 
 SINGLE-PROCESS LIMITATION (read carefully): this module genuinely
 stops credential-less forgery -- fabricating a principal object or
@@ -78,6 +81,7 @@ EXECUTOR_KEYS_ENV_VAR = "EXECUTOR_KEYS"
 ORCHESTRATOR_KEYS_ENV_VAR = "ORCHESTRATOR_KEYS"
 EXECUTOR_SCOPES_ENV_VAR = "EXECUTOR_SCOPES"
 ORCHESTRATOR_SCOPES_ENV_VAR = "ORCHESTRATOR_SCOPES"
+WONDRUE_READER_ID_ENV_VAR = "WONDRUE_READER_ID"
 
 # Approval signature domain separator: binds signatures to this exact
 # protocol so they cannot be transplanted from any other signed flow.
@@ -331,6 +335,24 @@ def load_executor_scopes() -> dict[str, frozenset[str]]:
 def load_orchestrator_scopes() -> dict[str, frozenset[str]]:
     """Load per-orchestrator enqueue grants from the environment."""
     return parse_orchestrator_scopes(os.getenv(ORCHESTRATOR_SCOPES_ENV_VAR))
+
+
+def load_wondrue_reader_id() -> str | None:
+    """Load the designated Wondrue system-wide read identity, if any.
+
+    Names one enrolled orchestrator id whose verified credential
+    grants read-only visibility across action types (Phase
+    3C-3B-3A). Missing or blank means nobody is designated (no
+    system-wide reads); malformed values fail closed. The name
+    alone confers nothing -- the credential must still verify.
+    """
+    raw = os.getenv(WONDRUE_READER_ID_ENV_VAR)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return canonical_identity_name(raw)
+    except ValueError:
+        raise AuthenticationFailedError("wondrue reader designation invalid") from None
 
 
 def ensure_credential_namespaces_disjoint(
@@ -654,4 +676,53 @@ def ensure_may_enqueue_type(
     if not may_enqueue_type(principal, action_type, granted):
         raise AuthorizationDeniedError(
             "orchestrator is not permitted to enqueue this action type"
+        )
+
+
+def may_inspect_systemwide(principal: object, designation: str | None) -> bool:
+    """Is this verified orchestrator the designated Wondrue reader?
+
+    Branch predicate for system-wide read visibility (Phase
+    3C-3B-3A): the principal must be a verified orchestrator whose
+    canonical id equals the configured designation. A missing
+    designation matches nobody. No ``ensure_`` variant exists on
+    purpose: callers branch to the scoped path instead of
+    enforcing-then-continuing.
+    """
+    return (
+        isinstance(principal, OrchestratorPrincipal)
+        and designation is not None
+        and principal.orchestrator_id == designation
+    )
+
+
+def may_inspect_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None,
+) -> bool:
+    """May this verified orchestrator inspect this exact action type?
+
+    Read visibility reuses the orchestrator scope map
+    (``ORCHESTRATOR_SCOPES``) with the same exact-match semantics
+    as enqueue permission: unknown ids, unknown types, missing
+    maps, and non-dict maps all deny. System-wide readers bypass
+    this check via :func:`may_inspect_systemwide`, never by
+    holding a wildcard (wildcards do not exist).
+    """
+    if not isinstance(principal, OrchestratorPrincipal):
+        return False
+    return _scope_grants(scopes, principal.orchestrator_id, action_type)
+
+
+def ensure_may_inspect_type(
+    principal: object,
+    action_type: str,
+    scopes: dict[str, frozenset[str]] | None = None,
+) -> None:
+    """Enforce scoped inspection permission (loads env map when omitted)."""
+    granted = load_orchestrator_scopes() if scopes is None else scopes
+    if not may_inspect_type(principal, action_type, granted):
+        raise AuthorizationDeniedError(
+            "orchestrator is not permitted to inspect this action type"
         )

@@ -27,16 +27,20 @@ from app.identity import (
     ensure_may_claim_type,
     ensure_may_enqueue,
     ensure_may_enqueue_type,
+    ensure_may_inspect_type,
     load_authorizer_keys,
     load_executor_keys,
     load_executor_scopes,
     load_orchestrator_keys,
     load_orchestrator_scopes,
+    load_wondrue_reader_id,
     may_authorize,
     may_claim,
     may_claim_type,
     may_enqueue,
     may_enqueue_type,
+    may_inspect_systemwide,
+    may_inspect_type,
     parse_authorizer_keys,
     parse_executor_keys,
     parse_executor_scopes,
@@ -609,14 +613,69 @@ def test_scoped_policy_loads_environment(monkeypatch) -> None:
         )  # malformed map fails closed
 
 
+def test_wondrue_reader_designation(monkeypatch) -> None:
+    orch = OrchestratorPrincipal(orchestrator_id="wondrue-1")
+    assert may_inspect_systemwide(orch, "wondrue-1") is True
+    assert may_inspect_systemwide(orch, "sched-1") is False
+    assert may_inspect_systemwide(orch, None) is False  # missing matches nobody
+    for other in (
+        ExecutorPrincipal(executor_id="wondrue-1"),  # same name, wrong role
+        HumanPrincipal(name="wondrue-1"),
+        "wondrue-1", None, 42, object(),
+    ):
+        assert may_inspect_systemwide(other, "wondrue-1") is False
+    monkeypatch.setenv("WONDRUE_READER_ID", "Wondrue-1")
+    assert load_wondrue_reader_id() == "wondrue-1"  # canonicalized
+    monkeypatch.delenv("WONDRUE_READER_ID")
+    assert load_wondrue_reader_id() is None
+    monkeypatch.setenv("WONDRUE_READER_ID", "   ")
+    assert load_wondrue_reader_id() is None
+    monkeypatch.setenv("WONDRUE_READER_ID", "not an id!")
+    with pytest.raises(AuthenticationFailedError, match="designation invalid"):
+        load_wondrue_reader_id()
+
+
+def test_scoped_inspection_policy() -> None:
+    orch = OrchestratorPrincipal(orchestrator_id="sched-1")
+    scopes = parse_orchestrator_scopes("sched-1:outreach_email")
+    assert may_inspect_type(orch, "outreach_email", scopes) is True
+    assert may_inspect_type(orch, "Outreach_Email", scopes) is False
+    assert may_inspect_type(orch, "wire_transfer", scopes) is False
+    assert may_inspect_type(orch, "outreach_email", {}) is False
+    assert may_inspect_type(orch, "outreach_email", None) is False
+    for other in (
+        ExecutorPrincipal(executor_id="sched-1"),
+        HumanPrincipal(name="sched-1"),
+        "sched-1", None, 42, object(),
+    ):
+        assert may_inspect_type(other, "outreach_email", scopes) is False
+    ensure_may_inspect_type(orch, "outreach_email", scopes)
+    with pytest.raises(AuthorizationDeniedError, match="not permitted to inspect"):
+        ensure_may_inspect_type(orch, "wire_transfer", scopes)
+
+
+def test_scoped_inspection_loads_environment(monkeypatch) -> None:
+    orch = OrchestratorPrincipal(orchestrator_id="sched-1")
+    monkeypatch.setenv("ORCHESTRATOR_SCOPES", "sched-1:outreach_email")
+    ensure_may_inspect_type(orch, "outreach_email")
+    monkeypatch.delenv("ORCHESTRATOR_SCOPES")
+    with pytest.raises(AuthorizationDeniedError, match="not permitted to inspect"):
+        ensure_may_inspect_type(orch, "outreach_email")
+
+
 def test_constructed_principals_confer_no_ledger_path() -> None:
     import inspect
 
     import app.external_actions_db as ledger
+    import app.external_action_reads as reads
 
     # The ledger accepts claims plus proofs, never principal objects:
     # constructing one cannot reach any authorization path.
-    for fn in (ledger.record_authorization, ledger.claim_action, ledger.transition_action):
+    for fn in (
+        ledger.record_authorization, ledger.claim_action, ledger.transition_action,
+        reads.get_action, reads.list_attempts, reads.list_own_open_attempts,
+        reads.find_stale_attempting, reads.stale_summary,
+    ):
         params = inspect.signature(fn).parameters
         assert "principal" not in params
         assert "HumanPrincipal" not in str(params.values())
@@ -665,6 +724,7 @@ def test_credential_env_access_confined_to_identity() -> None:
                 "ORCHESTRATOR_KEYS",
                 "EXECUTOR_SCOPES",
                 "ORCHESTRATOR_SCOPES",
+                "WONDRUE_READER_ID",
             )
         ):
             offenders.append(str(source))
@@ -681,10 +741,14 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
             token for token in (
                 "app.identity", "sign_approval", "verify_human_approval",
                 "verify_executor", "verify_orchestrator", "may_enqueue",
+                "may_inspect", "load_wondrue_reader_id",
                 "AUTHORIZER_PUBLIC_KEYS", "EXECUTOR_KEYS", "ORCHESTRATOR_KEYS",
-                "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES",
-                "external_actions_db", "record_authorization", "claim_action",
-                "transition_action",
+                "EXECUTOR_SCOPES", "ORCHESTRATOR_SCOPES", "WONDRUE_READER_ID",
+                "external_actions_db", "external_action_reads",
+                "record_authorization", "claim_action",
+                "transition_action", "get_action", "list_attempts",
+                "list_own_open_attempts", "find_stale_attempting",
+                "stale_summary",
             )
             if token in text
         ]
