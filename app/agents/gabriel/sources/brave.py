@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -74,10 +73,9 @@ def get_brave_api_key() -> str:
 
 
 def _domain_of(url: str) -> str:
-    try:
-        return urlparse(url).netloc
-    except (ValueError, TypeError):
-        return ""
+    from app.agents.gabriel.source_identity import canonical_hostname
+
+    return canonical_hostname(url)
 
 
 def parse_results(

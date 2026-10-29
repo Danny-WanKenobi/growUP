@@ -46,6 +46,7 @@ from app.agents.gabriel.extractor import (
 )
 from app.agents.gabriel.attribution import CategoryAttribution, CountyAttribution
 from app.agents.gabriel.geography import DALLAS_COUNTY, SECONDARY_COUNTIES
+from app.agents.gabriel.source_identity import evidence_host
 
 RANKING_VERSION = "004B-5.0"
 
@@ -312,7 +313,9 @@ def _collect_candidate(
             evidence.downtown_hits.append(item)
             contributed = True
         if contributed:
-            evidence.domains.add(item.domain or item.result_url)
+            host = evidence_host(item.domain, item.result_url)
+            if host:
+                evidence.domains.add(host)
             if item.temporal.status is TemporalStatus.CURRENT:
                 evidence.has_current_evidence = True
     # Multiple distinct current askings conflict: no endpoint headlines;

@@ -909,12 +909,9 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
 
 
 def _domain_of_url(url: str) -> str:
-    from urllib.parse import urlparse
+    from app.agents.gabriel.source_identity import canonical_hostname
 
-    try:
-        return urlparse(url).netloc
-    except (ValueError, TypeError):
-        return ""
+    return canonical_hostname(url)
 
 
 class PropertyGroup(BaseModel):

@@ -27,6 +27,7 @@ from app.agents.gabriel.extractor import (
     assembled_identity,
     group_by_property,
 )
+from app.agents.gabriel.source_identity import evidence_host
 from app.agents.gabriel.ranking import (
     CountyEligibility,
     ExclusionRecord,
@@ -252,7 +253,7 @@ def _ref(item: ResultIntelligence, round_no: int, excerpt: str) -> ClaimEvidence
     return ClaimEvidence(
         excerpt=excerpt[:300],
         url=item.result_url,
-        domain=item.domain or item.result_url,
+        domain=evidence_host(item.domain, item.result_url),
         round=round_no,
         date=_result_date(item),
         date_source=_date_source(item),
@@ -262,7 +263,7 @@ def _ref(item: ResultIntelligence, round_no: int, excerpt: str) -> ClaimEvidence
 def _corroboration(
     refs: list[ClaimEvidence],
 ) -> tuple[ClaimStatus, str]:
-    domains = {ref.domain for ref in refs}
+    domains = {ref.domain for ref in refs if ref.domain}
     if len(refs) >= 2 and len(domains) >= 2:
         texts = {_norm_text(ref.excerpt) for ref in refs}
         if len(texts) == 1:
