@@ -1622,7 +1622,19 @@ def test_live_review_detail_truncates_long_histories() -> None:
         assert detail["occurrence_count"] == 201
         assert len(detail["occurrences"]) == 200
         assert detail["occurrences_truncated"] is True
-        assert detail["occurrences"][0]["event_id"] == first_eid
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT event_id FROM identity_review_occurrences "
+                    "WHERE review_id = %(rid)s "
+                    "ORDER BY created_at ASC, occurrence_id ASC",
+                    {"rid": rid},
+                )
+                expected = [row["event_id"] for row in cur.fetchall()]
+        assert len(expected) == 201
+        got = [occ["event_id"] for occ in detail["occurrences"]]
+        assert got == expected[:200]
+        assert len(set(got)) == 200
     finally:
         _live_cleanup_queue(created_reviews, event_ids)
 
