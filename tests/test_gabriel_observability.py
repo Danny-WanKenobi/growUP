@@ -151,9 +151,70 @@ def test_research_events_and_identity(monkeypatch) -> None:
     assert extraction["results"] == 0 and extraction["property_identities"] == 0
 
 
-def test_research_ranking_events_and_exclusion_decision(monkeypatch) -> None:
+def _capture_pg(monkeypatch, rows) -> None:
+    """Capture agent_events INSERTs into a plain list (healthy fake PG)."""
+    import json as _json
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params=None):
+            if "INSERT INTO agent_events" in query:
+                rows.append({
+                    "event_id": params["event_id"],
+                    "event_type": params["event_type"],
+                    "run_id": params["run_id"],
+                    "details": _json.loads(params["details"]),
+                    "evidence_refs": _json.loads(params["evidence_refs"]),
+                })
+                self._one = {"event_id": params["event_id"]}
+            else:
+                self._one = None
+
+        def fetchone(self):
+            return self._one
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return _Cursor()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    import app.observability.store as _store
+
+    monkeypatch.setattr(_store, "get_connection", lambda config=None: _Conn())
+
+
+def _pg_down_fast(monkeypatch) -> None:
+    """Fail PostgreSQL instantly (no real connection attempts)."""
+    from app.db import DatabaseUnavailableError
+    import app.observability.store as _store
+
+    def _down(config=None):
+        raise DatabaseUnavailableError("pg unavailable")
+
+    monkeypatch.setattr(_store, "get_connection", _down)
+
+
+def test_research_ranking_events_and_exclusion_decision(monkeypatch, tmp_path) -> None:
     _db_env(monkeypatch)
     _budget(monkeypatch, research)
+    monkeypatch.setenv("OBS_ENABLED", "1")
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
 
     def _execute(query, assignment_id, timeout):
         return [_result(
@@ -164,7 +225,9 @@ def test_research_ranking_events_and_exclusion_decision(monkeypatch) -> None:
         )]
 
     monkeypatch.setattr(research, "execute_query", _execute)
-    calls = _tap(monkeypatch, research, "note_activity", "note_decision")
+    calls = _tap(monkeypatch, research, "note_activity")
+    rows: list = []
+    _capture_pg(monkeypatch, rows)
     assignments = [a.model_dump() for a in plan_initial_searches()]
     request = research.ResearchRunRequest.model_validate(
         {"assignments": assignments, "include_ranking": True}
@@ -175,10 +238,14 @@ def test_research_ranking_events_and_exclusion_decision(monkeypatch) -> None:
     assert "gabriel.ranking.completed" in by_type
     assert by_type["gabriel.ranking.completed"]["details"]["candidates"] == 1
     assert "not investment advice" in by_type["gabriel.ranking.completed"]["summary"]
-    excluded = [c for c in calls if c["event_type"] == "gabriel.ranking.excluded"]
-    assert len(excluded) == 1
-    assert excluded[0]["helper"] == "note_decision"
-    assert excluded[0]["details"]["rule"] == "demolished_structure"
+    assert not [c for c in calls if c["event_type"] == "gabriel.ranking.excluded"]
+    verdicts = [r for r in rows if r["event_type"] == "gabriel.research.candidate_decision"]
+    assert len(verdicts) == 1
+    assert verdicts[0]["details"]["decision"] == "EXCLUDED"
+    assert "demolished_structure" in verdicts[0]["details"]["reason_codes"]
+    assert "https://example.com/mill" in [r["ref"] for r in verdicts[0]["evidence_refs"]]
+    assert verdicts[0]["run_id"] == result.run_id
+    assert result.provenance_pending is False
 
 
 def test_research_budget_exhaustion_warns_and_completes(monkeypatch) -> None:
@@ -281,12 +348,15 @@ def test_investigation_execution_events(monkeypatch) -> None:
 # --- Dossier ---
 
 
-def test_dossier_route_emits_ready_not_sent(monkeypatch) -> None:
+def test_dossier_route_emits_ready_not_sent(monkeypatch, tmp_path) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    calls = _tap(monkeypatch, discovery_routes, "note_activity", "note_decision")
+    monkeypatch.setenv("OBS_ENABLED", "1")
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
+    _pg_down_fast(monkeypatch)
+    calls = _tap(monkeypatch, discovery_routes, "note_activity")
     client = TestClient(app, raise_server_exceptions=False)
     intel = _intel(_result(
         "Meridian Tower listed",
@@ -309,12 +379,16 @@ def test_dossier_route_emits_ready_not_sent(monkeypatch) -> None:
     assert all(c["run_id"] == response.json()["run_id"] for c in calls)
 
 
-def test_dossier_exclusion_is_permanent_decision(monkeypatch) -> None:
+def test_dossier_exclusion_is_permanent_decision(monkeypatch, tmp_path) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    calls = _tap(monkeypatch, discovery_routes, "note_activity", "note_decision")
+    monkeypatch.setenv("OBS_ENABLED", "1")
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
+    calls = _tap(monkeypatch, discovery_routes, "note_activity")
+    rows: list = []
+    _capture_pg(monkeypatch, rows)
     client = TestClient(app, raise_server_exceptions=False)
     intel = _intel(_result(
         "Old mill demolished",
@@ -324,9 +398,14 @@ def test_dossier_exclusion_is_permanent_decision(monkeypatch) -> None:
     ))
     response = client.post("/discovery/dossiers", json={"rounds": [intel.model_dump(mode="json")]})
     assert response.status_code == 200
-    excluded = [c for c in calls if c["event_type"] == "gabriel.dossier.excluded"]
-    assert len(excluded) == 1
-    assert excluded[0]["helper"] == "note_decision"
+    assert not [c for c in calls if c["event_type"] == "gabriel.dossier.excluded"]
+    verdicts = [r for r in rows if r["event_type"] == "gabriel.dossier.verdict"]
+    assert len(verdicts) == 1
+    assert verdicts[0]["details"]["decision"] == "EXCLUDED"
+    assert "demolished_structure" in verdicts[0]["details"]["reason_codes"]
+    assert "https://example.com/mill" in [r["ref"] for r in verdicts[0]["evidence_refs"]]
+    assert verdicts[0]["run_id"] == response.json()["run_id"]
+    assert response.json()["provenance_pending"] is False
 
 
 # --- Intake ---
@@ -490,6 +569,8 @@ def test_end_to_end_redacted_file_trace(obs_tmp, monkeypatch) -> None:
 def test_permanent_failure_degrades_without_aborting(obs_tmp, monkeypatch) -> None:
     _db_env(monkeypatch)
     _budget(monkeypatch, research)
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(obs_tmp / "outbox.sqlite3"))
+    _pg_down_fast(monkeypatch)
     monkeypatch.setattr(research, "execute_query", lambda q, i, t: [])
 
     def _pg_down(event, config=None):

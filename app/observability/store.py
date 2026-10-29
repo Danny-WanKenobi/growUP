@@ -123,6 +123,45 @@ def insert_event_in_transaction(conn: Any, event: AgentEvent) -> AgentEvent:
     return event
 
 
+def insert_event_batch(events: list[AgentEvent], config: Any = None) -> list[str]:
+    """Persist a batch of permanent events in one PostgreSQL transaction.
+
+    All-or-nothing fallback for callers whose SQLite outbox is
+    unavailable: one dedicated connection, one transaction, plain
+    INSERTs with no conflict handling, a single commit. A duplicate
+    event ID (or any other failure) rolls the whole batch back --
+    historical rows are never overwritten or merged. An empty batch
+    is an explicit no-op that opens no connection. Returns the
+    inserted event IDs in input order.
+    """
+    if not events:
+        return []
+    try:
+        with get_connection(config) as conn:
+            try:
+                with conn.cursor() as cur:
+                    columns = ", ".join(_INSERT_COLUMNS)
+                    placeholders = ", ".join(f"%({name})s" for name in _INSERT_COLUMNS)
+                    sql = (
+                        f"INSERT INTO agent_events ({columns}) VALUES ({placeholders})"
+                    )
+                    for event in events:
+                        if not isinstance(event, AgentEvent):
+                            raise TypeError("event must be an AgentEvent")
+                        if event.retention_class is not RetentionClass.PERMANENT:
+                            raise ValueError("transactional audit requires a permanent event")
+                        cur.execute(sql, _insert_params(event))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("event_batch_insert_failed") from exc
+    return [event.event_id for event in events]
+
+
 @dataclass(frozen=True)
 class DeliveryResult:
     """Outcome of one idempotent PostgreSQL delivery attempt."""

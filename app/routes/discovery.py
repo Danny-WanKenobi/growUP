@@ -29,8 +29,9 @@ from app.agents.gabriel.investigation import (
     plan_investigations,
     run_investigation,
 )
-from app.agents.gabriel.observe import new_run_id, note_activity, note_decision
+from app.agents.gabriel.observe import new_run_id, note_activity
 from app.agents.gabriel.dossier import DossierRequest, DossierSet, build_dossiers
+from app.agents.gabriel.provenance import build_dossier_verdicts, persist_verdicts
 from app.agents.gabriel.sources.brave import BraveConfigError
 from app.auth import require_intake_key, require_research_key
 from app.research_budget_db import BudgetConfigError, BudgetExhausted
@@ -42,6 +43,7 @@ from app.agents.gabriel.sources.base import (
     UnknownSourceError,
 )
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
+from app.observability import DurabilityError
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +184,11 @@ def start_research_run(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
         ) from exc
+    except DurabilityError as exc:
+        logger.warning("research run verdict persistence failure: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc
 
 
 @router.post("/discovery/investigation-plans", response_model=InvestigationPlan)
@@ -266,9 +273,9 @@ def start_investigation(
 def create_dossiers(body: DossierRequest) -> DossierSet:
     """Consolidate multi-round intelligence into property dossiers.
 
-    Pure transform: no provider calls, no budget consumption, no
-    database access, no property changes. Ranking reassessment reuses
-    the existing ranking engine.
+    Ranking reassessment reuses the existing ranking engine. Each
+    final dossier disposition persists as a permanent verdict event;
+    no provider calls, no budget consumption, no property changes.
     """
     run_id = new_run_id()
     correlation_id = body.correlation_id or ""
@@ -288,23 +295,23 @@ def create_dossiers(body: DossierRequest) -> DossierSet:
         ) from exc
     dossier_set.run_id = run_id
     dossier_set.correlation_id = correlation_id
+    items = [item for round_intel in body.rounds for item in round_intel.results]
+    try:
+        verdicts = build_dossier_verdicts(
+            run_id=run_id, correlation_id=correlation_id,
+            dossier_set=dossier_set, items=items, started=started,
+        )
+        outcome = persist_verdicts(verdicts)
+    except DurabilityError as exc:
+        logger.warning("dossier verdict persistence failure: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable"
+        ) from exc
+    dossier_set.provenance_pending = outcome.pending
     qc_histogram: dict[str, int] = {}
     for dossier in dossier_set.dossiers:
         qc_histogram[dossier.qc_status.value] = qc_histogram.get(dossier.qc_status.value, 0) + 1
-        if dossier.qc_status.value == "exclude":
-            for exclusion in dossier.exclusions:
-                note_decision(
-                    run_id, "gabriel.dossier.excluded",
-                    f"dossier {dossier.key} excluded: {exclusion.rule}",
-                    details={
-                        "dossier_key": dossier.key,
-                        "rule": exclusion.rule,
-                        "evidence": exclusion.evidence[:300],
-                    },
-                    correlation_id=correlation_id,
-                    evidence_refs=[{"kind": "source_url", "ref": exclusion.source_url}],
-                )
-        else:
+        if dossier.qc_status.value != "exclude":
             note_activity(
                 run_id, "gabriel.dossier.handoff_ready",
                 f"dossier {dossier.key} handoff ready, not sent "

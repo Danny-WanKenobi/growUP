@@ -343,6 +343,68 @@ class Outbox:
         self._secure_files()
         return scrubbed.event_id
 
+    def accept_all(
+        self, events: list[AgentEvent], now: datetime | None = None
+    ) -> list[str]:
+        """Durably accept a batch of permanent events in one transaction.
+
+        All-or-nothing: every event is validated before the transaction
+        opens, and one SQLite transaction inserts the whole batch, so a
+        mid-batch failure (including a conflicting payload for an
+        existing event ID) rolls everything back. Identical
+        resubmissions are idempotent per event. An empty batch is an
+        explicit no-op that performs no I/O. Returns the accepted event
+        IDs in input order. Any exception means NOTHING was accepted.
+        """
+        if not events:
+            return []
+        for event in events:
+            if not isinstance(event, AgentEvent):
+                raise ValueError("outbox accepts AgentEvent instances only")
+            if event.retention_class is not RetentionClass.PERMANENT:
+                raise ValueError("outbox accepts permanent events only")
+        prepared = [_scrub_event(event) for event in events]
+        payloads = [json.dumps(item.to_record(), sort_keys=True) for item in prepared]
+        moment = _iso(now or _utcnow())
+        try:
+            conn = self._connect()
+        except OutboxUnavailableError:
+            raise
+        try:
+            with conn:
+                # IMMEDIATE reserves the write lock up front so the
+                # read-then-insert loop stays atomic under concurrency.
+                conn.execute("BEGIN IMMEDIATE")
+                for item, payload in zip(prepared, payloads):
+                    row = conn.execute(
+                        "SELECT payload FROM outbox_events WHERE event_id = ?",
+                        (item.event_id,),
+                    ).fetchone()
+                    if row is not None:
+                        if row[0] == payload:
+                            continue
+                        raise OutboxConflictError(
+                            f"event {item.event_id} already stored with a different payload"
+                        )
+                    conn.execute(
+                        "INSERT INTO outbox_events (event_id, payload, event_timestamp, enqueued_at)"
+                        " VALUES (?, ?, ?, ?)",
+                        (
+                            item.event_id,
+                            payload,
+                            _iso(item.timestamp),
+                            moment,
+                        ),
+                    )
+        except OutboxConflictError:
+            raise
+        except sqlite3.Error as exc:
+            raise OutboxUnavailableError(f"outbox accept failed: {exc}") from exc
+        finally:
+            conn.close()
+        self._secure_files()
+        return [item.event_id for item in prepared]
+
     def mark_delivered(self, event_id: str, now: datetime | None = None) -> bool:
         """Mark a pending event delivered (stamps confirmation time)."""
         moment = _iso(now or _utcnow())

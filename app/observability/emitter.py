@@ -72,7 +72,7 @@ from app.observability.redaction import (
     sanitize_structure,
     scrub_text,
 )
-from app.observability.store import deliver_event, insert_event
+from app.observability.store import deliver_event, insert_event, insert_event_batch
 
 
 class EventPersistenceError(RuntimeError):
@@ -495,6 +495,115 @@ def require_durable(
             f"{outcome.error or 'unknown'}"
         )
     return outcome
+
+
+class BatchEmitOutcome(BaseModel):
+    """Aggregate outcome of one atomic batch acceptance.
+
+    ``pending`` is True when every event is durable somewhere but at
+    least one is not yet PostgreSQL-confirmed. ``failed_ids`` is
+    non-empty only when the batch reached no durable store (in which
+    case :func:`require_durable_batch` raises instead of returning).
+    """
+
+    event_ids: list[str] = []
+    outbox_accepted: bool = False
+    persisted_pg_count: int = 0
+    pending: bool = False
+    failed_ids: list[str] = []
+
+
+def require_durable_batch(
+    events: list[AgentEvent],
+    *,
+    outbox: Outbox | None = None,
+    config: ObservabilityConfig | None = None,
+    sink: JsonlSink | None = None,
+) -> BatchEmitOutcome:
+    """Require durable acceptance of a permanent event batch (fail closed).
+
+    Sequence: validate/prepare every event, accept the whole batch in
+    one SQLite transaction, then deliver each event idempotently to
+    PostgreSQL (marking delivered only on confirmation). When the
+    outbox itself is unavailable (or none is supplied), the entire
+    batch falls back to one atomic PostgreSQL transaction instead --
+    never per-event commits. An ``OutboxConflictError`` fails closed
+    without touching PostgreSQL. An empty batch is an explicit no-op.
+
+    Returns only when every event is durable in the outbox, in
+    PostgreSQL, or both; ``pending`` reports whether any event still
+    awaits PostgreSQL delivery. Raises :class:`DurabilityError` when
+    the batch reached no durable store.
+    """
+    if not events:
+        return BatchEmitOutcome()
+    cfg = config or get_observability_config()
+    if not cfg.enabled:
+        raise DurabilityError("observability disabled: permanent batch reached no durable store")
+    prepared = [_prepare(event, cfg) for event in events]
+    for event in prepared:
+        if event.retention_class is not RetentionClass.PERMANENT:
+            raise ValueError("batch durability requires permanent events only")
+    writer = sink if sink is not None else get_sink(cfg)
+    for event in prepared:
+        writer.write(event.to_record())  # file copies are trace, never durability
+    try:
+        if outbox is None:
+            insert_event_batch(prepared)
+            return BatchEmitOutcome(
+                event_ids=[event.event_id for event in prepared],
+                persisted_pg_count=len(prepared),
+            )
+        try:
+            accepted = outbox.accept_all(prepared)
+        except OutboxConflictError as exc:
+            raise DurabilityError(f"outbox conflict, batch rejected: {exc}") from exc
+        except OutboxError:
+            insert_event_batch(prepared)
+            return BatchEmitOutcome(
+                event_ids=[event.event_id for event in prepared],
+                persisted_pg_count=len(prepared),
+            )
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
+        raise DurabilityError(
+            f"batch reached no durable store: {exc}"
+        ) from exc
+    confirmed = 0
+    for event in prepared:
+        try:
+            delivered = deliver_event(event)
+        except (DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
+            _safe_record_attempt(outbox, event.event_id, _error_category(exc))
+            continue
+        if delivered.status == "conflict":
+            _safe_record_attempt(outbox, event.event_id, "pg_content_conflict")
+            continue
+        try:
+            outbox.mark_delivered(event.event_id)
+        except OutboxError as exc:
+            _record_outbox_error(f"{event.event_id}: outbox mark_delivered failed: {exc}")
+            continue  # PostgreSQL committed; recovery confirms idempotently
+        confirmed += 1
+    pending = confirmed < len(prepared)
+    if pending:
+        emit(
+            _degradation_warning(
+                prepared[0],
+                True,
+                f"{len(prepared) - confirmed} of {len(prepared)} batch events "
+                "durable in outbox only; PostgreSQL delivery pending",
+                True,
+                confirmed > 0,
+            ),
+            config=cfg,
+            sink=sink,
+        )  # activity: degrades, never raises
+    return BatchEmitOutcome(
+        event_ids=accepted,
+        outbox_accepted=True,
+        persisted_pg_count=confirmed,
+        pending=pending,
+    )
 
 
 def _build(

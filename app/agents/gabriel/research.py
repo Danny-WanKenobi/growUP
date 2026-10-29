@@ -22,7 +22,6 @@ from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER, display_name
 from app.agents.gabriel.observe import (
     new_run_id,
     note_activity,
-    note_decision,
     note_diagnostic,
     note_warning,
 )
@@ -34,6 +33,7 @@ from app.agents.gabriel.planner import (
     SearchAssignment,
     plan_initial_searches,
 )
+from app.agents.gabriel.provenance import build_research_verdicts, persist_verdicts
 from app.agents.gabriel.sources.brave import (
     BraveError,
     BraveRateLimited,
@@ -130,6 +130,7 @@ class ResearchRunResult(BaseModel):
     ranking: PropertyRanking | None = None
     run_id: str = ""
     correlation_id: str = ""
+    provenance_pending: bool = False
 
 
 def select_assignments(
@@ -440,20 +441,12 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
             details=_summarize_ranking(result.ranking),
             correlation_id=correlation_id,
         )
-        for candidate in result.ranking.candidates:
-            for exclusion in candidate.exclusions:
-                note_decision(
-                    run_id, "gabriel.ranking.excluded",
-                    f"candidate {candidate.key} excluded: {exclusion.rule}",
-                    details={
-                        "candidate_key": candidate.key,
-                        "rule": exclusion.rule,
-                        "evidence": exclusion.evidence[:300],
-                        "date": exclusion.date,
-                    },
-                    correlation_id=correlation_id,
-                    evidence_refs=[{"kind": "source_url", "ref": exclusion.source_url}],
-                )
+        verdicts = build_research_verdicts(
+            run_id=run_id, correlation_id=correlation_id,
+            ranking=result.ranking, intel=result.intelligence, started=started,
+        )
+        outcome = persist_verdicts(verdicts)
+        result.provenance_pending = outcome.pending
     note_activity(
         run_id, "gabriel.research.completed",
         f"research run completed: {result.request_count} request(s), {len(result.results)} result(s)",

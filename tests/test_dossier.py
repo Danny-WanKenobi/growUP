@@ -407,11 +407,20 @@ def test_no_comparison_without_prior_ranking() -> None:
     assert dossier_set.comparison == []
 
 
-def test_dossiers_endpoint_returns_dossiers() -> None:
+def test_dossiers_endpoint_returns_dossiers(monkeypatch, tmp_path) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
+    monkeypatch.setenv("OBS_ENABLED", "1")
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
+    from app.db import DatabaseUnavailableError
+    import app.observability.store as _event_store
+
+    def _pg_down(config=None):
+        raise DatabaseUnavailableError("pg unavailable")
+
+    monkeypatch.setattr(_event_store, "get_connection", _pg_down)
     client = TestClient(app, raise_server_exceptions=False)
     intel = _intel(_listing())
     response = client.post(

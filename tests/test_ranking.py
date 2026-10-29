@@ -399,9 +399,18 @@ def test_n_distinct_domains_corroborate() -> None:
 # --- Test O: endpoint compatibility ---
 
 
-def test_o_ranking_endpoint_additive(monkeypatch) -> None:
+def test_o_ranking_endpoint_additive(monkeypatch, tmp_path) -> None:
     import app.properties_db as store
 
+    monkeypatch.setenv("OBS_ENABLED", "1")
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
+    from app.db import DatabaseUnavailableError
+    import app.observability.store as _event_store
+
+    def _pg_down(config=None):
+        raise DatabaseUnavailableError("pg unavailable")
+
+    monkeypatch.setattr(_event_store, "get_connection", _pg_down)
     monkeypatch.setenv("RESEARCH_API_KEY", "unit-test-research-key")
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "unit-test-brave-key")
     for var, value in (("DATABASE_HOST", "localhost"), ("DATABASE_PORT", "5432"),

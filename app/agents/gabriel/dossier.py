@@ -140,6 +140,7 @@ class DossierSet(BaseModel):
     total_results: int = 0
     run_id: str = ""
     correlation_id: str = ""
+    provenance_pending: bool = False
 
 
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")

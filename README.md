@@ -922,21 +922,29 @@ Requests accept an optional `correlation_id`; every execution mints a
 - Research: `gabriel.research.started/selection_failed/assignments_selected/results_received/completed`,
   `gabriel.brave.request_attempted/completed/failed`, `gabriel.budget.exhausted`,
   `gabriel.extraction.completed` (counts only), `gabriel.ranking.completed`
-  (heuristic summary), `gabriel.ranking.excluded` (permanent).
+  (heuristic summary), `gabriel.research.candidate_decision` (permanent,
+  one per final ranked candidate; replaces `gabriel.ranking.excluded`,
+  whose historical rows remain queryable).
 - Investigation: `gabriel.investigation.plan_created/plan_resolved/execution_started/completed/interrupted/selection_failed`.
-- Dossier: `gabriel.dossier.started/completed/handoff_ready/excluded`
+- Dossier: `gabriel.dossier.started/completed/handoff_ready`
   (`handoff_ready` explicitly means suggested, not sent; no
-  `handoff_sent` exists yet because no agent messaging does).
+  `handoff_sent` exists yet because no agent messaging does),
+  `gabriel.dossier.verdict` (permanent, one per final dossier;
+  replaces `gabriel.dossier.excluded`, whose historical rows remain
+  queryable).
 - Intake: `gabriel.intake.accepted/rejected` (field names, counts, and
   listing URL only — never the full submission).
 
 `property_id` appears only when reliably known (intake outcomes);
-research candidates use identity keys, never invented UUIDs. All
-Gabriel boundaries are nonfatal: diagnostic/activity sink failures
-degrade silently-safe, permanent failures downgrade to a file-traced
-warning via `emit_nonfatal`, and validation errors propagate as code
-bugs. `emit_nonfatal` returns an `EmitOutcome` distinguishing
-PostgreSQL, outbox, file-only, degraded, and failed results (see
+research candidates use identity keys, never invented UUIDs.
+Diagnostic/activity boundaries are nonfatal: sink failures degrade
+silently-safe via `emit_nonfatal`, and validation errors propagate
+as code bugs. Research/dossier verdict batches instead fail closed
+via `require_durable_batch` (atomic SQLite acceptance plus
+idempotent PostgreSQL delivery; total persistence failure returns
+HTTP 503 rather than an unaudited success). `emit_nonfatal`
+returns an `EmitOutcome` distinguishing PostgreSQL, outbox,
+file-only, degraded, and failed results (see
 Phase 3B for the durable path). Gabriel research keeps the legacy
 nonfatal path without an outbox. No extra Brave calls, no
 ranking/geography changes, no new endpoints or migrations.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.observability.config import ObservabilityConfig, get_observability_config
 from app.observability.emitter import (
+    BatchEmitOutcome,
     DurabilityError,
     EmitOutcome,
     EventPersistenceError,
@@ -26,6 +27,7 @@ from app.observability.emitter import (
     log_handoff,
     log_warning,
     require_durable,
+    require_durable_batch,
 )
 from app.observability.events import (
     AgentEvent,
@@ -61,6 +63,7 @@ from app.observability.store import (
     deliver_event,
     handoffs,
     insert_event,
+    insert_event_batch,
     insert_event_in_transaction,
     purge_expired_events,
     query_events,
@@ -71,6 +74,7 @@ from app.observability.transactions import run_consequential_transaction
 __all__ = [
     "AgentEvent",
     "AgentId",
+    "BatchEmitOutcome",
     "DeliveryResult",
     "DurabilityError",
     "EvidenceRef",
@@ -104,6 +108,7 @@ __all__ = [
     "get_status",
     "handoffs",
     "insert_event",
+    "insert_event_batch",
     "insert_event_in_transaction",
     "log_activity",
     "log_decision",
@@ -119,6 +124,7 @@ __all__ = [
     "recent_by_agent",
     "redact",
     "require_durable",
+    "require_durable_batch",
     "reset_sinks",
     "retry_delay_seconds",
     "run_consequential_transaction",
