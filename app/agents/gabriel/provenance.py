@@ -249,6 +249,30 @@ def _build_event(
     )
 
 
+def _validate_screened_index(lead, items: list[ResultIntelligence], groups: dict) -> int:
+    """Verify a screened lead resolves to its exact source result.
+
+    Fail closed with DurabilityError unless the index is present, an
+    integer, in bounds, and points at the result carrying the lead's
+    own URL and title inside the expected singleton ``ungrouped:N``
+    grouping context. No URL matching fallback: attribution must be
+    exact or the whole batch is refused before any persistence.
+    """
+    index = lead.source_index
+    if index is None or isinstance(index, bool) or not isinstance(index, int):
+        raise DurabilityError("screened lead lacks a valid source index; refusing verdict")
+    if not 0 <= index < len(items):
+        raise DurabilityError("screened lead source index out of range; refusing verdict")
+    item = items[index]
+    if item.result_url != lead.result_url or item.title != lead.title:
+        raise DurabilityError("screened lead attribution mismatch; refusing verdict")
+    key = f"ungrouped:{index}"
+    group = groups.get(key)
+    if group is None or list(group.members) != [index]:
+        raise DurabilityError("screened lead has no singleton ungrouped context; refusing verdict")
+    return index
+
+
 def build_research_verdicts(
     *,
     run_id: str,
@@ -309,6 +333,42 @@ def build_research_verdicts(
             ranking_context="research_run",
             started=started,
             exclusions=list(candidate.exclusions),
+            associated_assignments=_associated_assignments(members, items, executed),
+        ))
+    screened_base = len(ranking.candidates)
+    for offset, lead in enumerate(ranking.screened_leads):
+        index = _validate_screened_index(lead, items, groups)
+        members = [index]
+        key = f"ungrouped:{index}"
+        group = groups[key]
+        refs, total_refs = _evidence_refs(items, members)
+        verdicts.append(_build_event(
+            event_type=RESEARCH_VERDICT_EVENT_TYPE,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            decision="SCREENED",
+            reason_codes=[lead.rule],
+            message=f"research decision: SCREENED ({lead.rule})",
+            qc_status="not_evaluated",
+            insufficient_data=True,
+            candidate_ref=_candidate_ref(key, group.basis, screened_base + offset, members, items),
+            observed=dict(assembled_identity(items, members, key)),
+            inferred=_normalized_from_key(key),
+            result={
+                "opportunity_score": None,
+                "value_rank": None,
+                "opportunity_rank": None,
+                "value_amount": None,
+                "source_ref_count": total_refs,
+                "title": lead.title,
+                "reason": lead.reason,
+            },
+            unresolved=[],
+            disputes={},
+            evidence_refs=refs,
+            ranking_context="research_run",
+            started=started,
+            exclusions=[],
             associated_assignments=_associated_assignments(members, items, executed),
         ))
     return verdicts

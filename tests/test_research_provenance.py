@@ -1168,6 +1168,347 @@ def test_guard_boundary_matches_preparation(monkeypatch) -> None:
             intel=intel, started=None)
 
 
+# --- G6-2: durable screened-lead verdicts ---
+
+
+def _screenable_snippet(kind):
+    if kind == "land":
+        return "Large vacant land parcel offered for investment near the corridor."
+    return "Commercial real estate trends show steady growth across the metro region."
+
+
+def _screenable(title, snippet, *, assignment_id, url, query="screening probe"):
+    return _assigned_result(title, snippet, assignment_id=assignment_id, url=url,
+                            query=query, published_at=None)
+
+
+def _screened_ranking(*results):
+    from app.agents.gabriel.ranking import rank_intelligence
+
+    intel = _intel(*results)
+    ranking = rank_intelligence(intel)
+    assert ranking.candidates == []
+    return intel, ranking
+
+
+def test_screened_unsuitable_structure_verdict() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.observability.events import RetentionClass
+
+    intel, ranking = _screened_ranking(_screenable(
+        "Land parcel listing", _screenable_snippet("land"),
+        assignment_id="gsp-land1", url="https://example.com/land"))
+    (lead,) = ranking.screened_leads
+    assert lead.rule == "unsuitable_structure"
+    (verdict,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+    assert verdict.event_type == "gabriel.research.candidate_decision"
+    assert verdict.details["decision"] == "SCREENED"
+    assert verdict.details["reason_codes"] == ["unsuitable_structure"]
+    assert "unsuitable_structure" in verdict.details["message"]
+    assert verdict.details["result"]["reason"] == lead.reason
+    assert verdict.details["qc_status"] == "not_evaluated"
+    assert verdict.details["mutation_status"] == "NOT_ATTEMPTED"
+    assert verdict.property_id is None
+    assert verdict.retention_class == RetentionClass.PERMANENT
+
+
+def test_screened_not_identifiable_verdict() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.observability.events import RetentionClass
+
+    intel, ranking = _screened_ranking(_screenable(
+        "Market outlook", _screenable_snippet("market"),
+        assignment_id="gsp-mkt1", url="https://example.com/outlook"))
+    (lead,) = ranking.screened_leads
+    assert lead.rule == "not_identifiable_property"
+    (verdict,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+    assert verdict.details["decision"] == "SCREENED"
+    assert verdict.details["reason_codes"] == ["not_identifiable_property"]
+    assert verdict.details["result"]["reason"] == lead.reason
+    assert verdict.details["qc_status"] == "not_evaluated"
+    assert verdict.details["mutation_status"] == "NOT_ATTEMPTED"
+    assert verdict.property_id is None
+    assert verdict.retention_class == RetentionClass.PERMANENT
+
+
+def test_screened_exact_source_attribution() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _screened_ranking(
+        _screenable("Market outlook", _screenable_snippet("market"),
+                    assignment_id="gsp-mkt9", url="https://example.com/outlook",
+                    query="downtown market outlook"))
+    (lead,) = ranking.screened_leads
+    assert lead.source_index == 0
+    executed = [_executed("gsp-mkt9", query="downtown market outlook",
+                          category="market_context", county="Dallas County",
+                          strategy="context_search")]
+    (verdict,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking,
+        intel=intel, executed=executed)
+    ref = verdict.details["candidate_ref"]
+    assert ref["group_key"] == "ungrouped:0"
+    assert ref["basis"] == "no_identity"
+    assert ref["member_count"] == 1
+    assert ref["assignment_ids"] == ["gsp-mkt9"]
+    assert verdict.details["associated_assignments"] == [
+        {"id": "gsp-mkt9", "query": "downtown market outlook",
+         "category": "market_context", "county": "Dallas County",
+         "strategy": "context_search"}]
+    assert verdict.details["result"]["title"] == "Market outlook"
+    assert [r.ref for r in verdict.evidence_refs] == ["https://example.com/outlook"]
+    assert verdict.run_id == "run-s"
+    assert verdict.correlation_id == "corr-s"
+
+
+def test_screened_duplicate_urls_stay_distinct() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    shared = "https://example.com/shared-story"
+    intel, ranking = _screened_ranking(
+        _screenable("First take", _screenable_snippet("market"),
+                    assignment_id="gsp-aaa", url=shared, query="query alpha"),
+        _screenable("Second take", _screenable_snippet("land"),
+                    assignment_id="gsp-bbb", url=shared, query="query beta"),
+    )
+    assert [lead.source_index for lead in ranking.screened_leads] == [0, 1]
+    executed = [_executed("gsp-aaa", query="query alpha"),
+                _executed("gsp-bbb", query="query beta")]
+    verdicts = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking,
+        intel=intel, executed=executed)
+    assert len(verdicts) == 2
+    refs = [v.details["candidate_ref"] for v in verdicts]
+    assert [r["group_key"] for r in refs] == ["ungrouped:0", "ungrouped:1"]
+    assert [r["assignment_ids"] for r in refs] == [["gsp-aaa"], ["gsp-bbb"]]
+    assert verdicts[0].details["associated_assignments"][0]["query"] == "query alpha"
+    assert verdicts[1].details["associated_assignments"][0]["query"] == "query beta"
+    assert verdicts[0].details["result"]["title"] == "First take"
+    assert verdicts[1].details["result"]["title"] == "Second take"
+
+
+def test_screened_blank_urls_no_fabricated_refs() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _screened_ranking(
+        _screenable("Untitled one", _screenable_snippet("market"),
+                    assignment_id="gsp-aaa", url="", query="query alpha"),
+        _screenable("Untitled two", _screenable_snippet("land"),
+                    assignment_id="gsp-bbbb", url="", query="query beta"),
+    )
+    assert len(ranking.screened_leads) == 2
+    executed = [_executed("gsp-aaa", query="query alpha"),
+                _executed("gsp-bbbb", query="query beta")]
+    verdicts = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking,
+        intel=intel, executed=executed)
+    assert len(verdicts) == 2
+    assert [v.details["candidate_ref"]["group_key"] for v in verdicts] == [
+        "ungrouped:0", "ungrouped:1"]
+    assert all(v.evidence_refs == [] for v in verdicts)
+    assert verdicts[0].details["associated_assignments"][0]["id"] == "gsp-aaa"
+    assert verdicts[1].details["associated_assignments"][0]["id"] == "gsp-bbbb"
+
+
+def test_screened_invalid_index_rejected() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import PropertyRanking, ScreenedLead
+    from app.observability.emitter import DurabilityError
+
+    intel = _intel(_listing())
+    for bad_index in (None, -1, 1, 999):
+        ranking = PropertyRanking(screened_leads=[ScreenedLead(
+            result_url="https://example.com/meridian", title="Meridian Tower listed",
+            rule="not_identifiable_property", reason="test", source_index=bad_index)])
+        with pytest.raises(DurabilityError):
+            build_research_verdicts(
+                run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+
+
+def test_screened_mismatched_attribution_rejected() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import PropertyRanking, ScreenedLead, rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1  # grouped: not a screened context
+    item = intel.results[0]
+    wrong_url = PropertyRanking(screened_leads=[ScreenedLead(
+        result_url="https://example.com/other", title=item.title,
+        rule="not_identifiable_property", reason="test", source_index=0)])
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=wrong_url, intel=intel)
+    grouped_context = PropertyRanking(screened_leads=[ScreenedLead(
+        result_url=item.result_url, title=item.title,
+        rule="not_identifiable_property", reason="test", source_index=0)])
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=grouped_context, intel=intel)
+
+
+def test_screened_non_integer_index_rejected() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import PropertyRanking, ScreenedLead
+    from app.observability.emitter import DurabilityError
+
+    intel = _intel(_listing())
+    lead = ScreenedLead(
+        result_url="https://example.com/meridian", title="Meridian Tower listed",
+        rule="not_identifiable_property", reason="test", source_index=0)
+    lead.source_index = "0"
+    ranking = PropertyRanking(screened_leads=[lead])
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+
+
+def test_screened_blocks_batch_on_invalid_attribution(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import (
+        build_research_verdicts,
+        persist_verdicts,
+    )
+    from app.agents.gabriel.ranking import (
+        PropertyRanking,
+        ScreenedLead,
+        rank_intelligence,
+    )
+    from app.observability.emitter import DurabilityError
+
+    outbox_path = tmp_path / "outbox.sqlite3"
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(outbox_path))
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1
+    ranking.screened_leads.append(ScreenedLead(
+        result_url="https://example.com/ghost", title="ghost",
+        rule="not_identifiable_property", reason="test", source_index=None))
+    with pytest.raises(DurabilityError):
+        verdicts = build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+        persist_verdicts(verdicts)
+    assert not outbox_path.exists()
+    assert pg.rows == {}
+    assert pg.inserts == 0
+
+
+def test_screened_oversized_blocks_batch(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import (
+        build_research_verdicts,
+        persist_verdicts,
+    )
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    outbox_path = tmp_path / "outbox.sqlite3"
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(outbox_path))
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", "100")
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    intel = _intel(
+        _listing(),
+        _screenable("Market outlook", _screenable_snippet("market"),
+                    assignment_id="gsp-mkt1", url="https://example.com/outlook"),
+    )
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1
+    assert len(ranking.screened_leads) == 1
+    with pytest.raises(DurabilityError):
+        verdicts = build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+        persist_verdicts(verdicts)
+    assert not outbox_path.exists()
+    assert pg.rows == {}
+
+
+def test_screened_verdict_size_boundary(monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.observability.emitter import DurabilityError
+
+    intel, ranking = _screened_ranking(_screenable(
+        "Market outlook", _screenable_snippet("market"),
+        assignment_id="gsp-mkt1", url="https://example.com/outlook"))
+    (probe,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking,
+        intel=intel, started=None)
+    size = _prepared_details_size(probe.details)
+    assert size > 1
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", str(size))
+    (verdict,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking,
+        intel=intel, started=None)
+    assert verdict.details["decision"] == "SCREENED"
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", str(size - 1))
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-s", correlation_id="corr-s", ranking=ranking,
+            intel=intel, started=None)
+
+
+def test_dossier_rerank_emits_no_screened_verdicts() -> None:
+    from app.agents.gabriel.dossier import DossierRequest, build_dossiers
+    from app.agents.gabriel.provenance import build_dossier_verdicts
+
+    intel = _intel(
+        _listing(),
+        _screenable("Market outlook", _screenable_snippet("market"),
+                    assignment_id="gsp-mkt1", url="https://example.com/outlook"),
+    )
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    verdicts = build_dossier_verdicts(
+        run_id="run-d", correlation_id="corr-s",
+        dossier_set=dossier_set, items=intel.results)
+    assert verdicts
+    assert all(v.details["decision"] != "SCREENED" for v in verdicts)
+
+
+def test_screened_verdict_construction_is_pure(monkeypatch) -> None:
+    import app.agents.gabriel.service as service
+    from app.agents.gabriel import intake as intake_module
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.sources import brave as brave_module
+    from app import properties_db
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("external call during verdict construction")
+
+    monkeypatch.setattr(brave_module, "execute_query", _boom)
+    monkeypatch.setattr(properties_db, "create_property", _boom)
+    monkeypatch.setattr(properties_db, "enrich_property_estimates", _boom)
+    monkeypatch.setattr(service, "run_discovery", _boom)
+    monkeypatch.setattr(intake_module, "process_intake", _boom)
+    intel, ranking = _screened_ranking(_screenable(
+        "Market outlook", _screenable_snippet("market"),
+        assignment_id="gsp-mkt1", url="https://example.com/outlook"))
+    (verdict,) = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+    assert verdict.details["decision"] == "SCREENED"
+
+
+def test_candidate_verdicts_unaffected_by_screened() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel = _intel(
+        _listing(),
+        _screenable("Market outlook", _screenable_snippet("market"),
+                    assignment_id="gsp-mkt1", url="https://example.com/outlook"),
+    )
+    from app.agents.gabriel.ranking import rank_intelligence
+
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1
+    assert len(ranking.screened_leads) == 1
+    verdicts = build_research_verdicts(
+        run_id="run-s", correlation_id="corr-s", ranking=ranking, intel=intel)
+    assert [v.details["decision"] for v in verdicts] == ["PASS", "SCREENED"]
+    assert [v.details["candidate_ref"]["ordinal"] for v in verdicts] == [0, 1]
+
+
 # --- Live PostgreSQL ---
 
 

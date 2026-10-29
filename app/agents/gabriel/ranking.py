@@ -167,6 +167,7 @@ class ScreenedLead(BaseModel):
     title: str
     rule: str
     reason: str
+    source_index: int | None = None
 
 
 class PropertyRanking(BaseModel):
@@ -738,6 +739,7 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
                         title=item.title,
                         rule="unsuitable_structure",
                         reason="land or parcel evidence without an identifiable convertible building",
+                        source_index=index,
                     )
                 )
             else:
@@ -747,6 +749,7 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
                         title=item.title,
                         rule="not_identifiable_property",
                         reason=f"{item.classification.value} without an identifiable property candidate",
+                        source_index=index,
                     )
                 )
             continue
