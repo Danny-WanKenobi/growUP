@@ -1,0 +1,47 @@
+# growup-identity-reconcile.service — one-shot research identity-review reconciliation.
+#
+# TEMPLATE: copy to /etc/systemd/system/, then daemon-reload. Do NOT enable
+# during development deployment; the timer is activated manually after
+# verification (see deployment/README-DEPLOYMENT.md).
+#
+# Runs one full sweep of delivered research/dossier verdicts into the
+# durable identity-review queue and exits. Full sweep is the default:
+# no --limit flag is passed, so every eligible row is examined. Overlap
+# with a still-running sweep is prevented by flock on a dedicated lock:
+# a contended run exits nonzero immediately so systemd records the
+# overrun instead of stacking (overlapping sweeps would still be
+# correct — uniqueness constraints plus the occurrence probe keep them
+# idempotent — but the lock keeps effort and logs clean).
+#
+# TimeoutStartSec=30min: sweeps are full-backlog by design, so the
+# default ~90s start timeout could kill legitimate backlog processing.
+# Thirty minutes is generous headroom for the expected human-scale
+# verdict volume; a genuinely wedged run is terminated rather than
+# holding the lock forever, and the next tick retries (work is
+# idempotent, committed verdict-by-verdict). If sweeps ever approach
+# this bound, raise it deliberately — never silently.
+[Unit]
+Description=Grow Up research identity-review reconciliation cycle
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=growup
+Group=growup
+WorkingDirectory=/var/www/growup/current
+EnvironmentFile=/var/www/growup/shared/growup.env
+ExecStart=/usr/bin/flock -n /var/www/growup/shared/identity-reconcile.lock /var/www/growup/current/.venv/bin/python -m app.identity_review_reconcile
+TimeoutStartSec=30min
+# Hardening: local PostgreSQL plus one lock file; nothing else writable.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/growup/shared
+# Local PostgreSQL over loopback needs no extra capability.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -99,3 +99,110 @@ Notes:
 - If the release venv lives somewhere other than
   `/var/www/growup/current/.venv`, adjust `ExecStart` before installing.
 - Never point two environments (or two timers) at one outbox file.
+
+## Identity reconciliation timer (manual install, after verification)
+
+The reconciler (`python -m app.identity_review_reconcile`) sweeps
+research/dossier verdict events already delivered to PostgreSQL and
+converts dispute-claiming verdicts into durable identity-review
+occurrences. It never reads SQLite, never delivers events, and never
+invokes Gabriel or any provider: outbox recovery moves verdicts *into*
+PostgreSQL, while reconciliation reads them *out of* PostgreSQL into
+the `identity_reviews` queue. The two timers are fully independent —
+no ordering between them is required, both are idempotent, and either
+may run while the other is stopped.
+
+Templates: `deployment/growup-identity-reconcile.service` (one-shot,
+`flock` against overlap on its own lock file) and
+`deployment/growup-identity-reconcile.timer`. Deployment never enables
+the timer; activate it manually only after the release is verified
+healthy. Repository deployment (Windows `deploy-dev.ps1` plus the
+remote installer) only ships these templates inside the release
+archive; all privileged host configuration below is a separate manual
+procedure performed over SSH.
+
+Scheduling semantics: the timer uses `OnUnitInactiveSec=5min`, so
+each sweep starts 5 minutes after the previous sweep *finished* —
+slow sweeps delay the next tick instead of piling up. Each sweep
+examines the complete eligible backlog (no event limit) in bounded
+100-row batches; already-reconciled rows are skipped by the database,
+so steady-state sweeps are cheap. Exit codes: 0 ok, 1 individual
+event failures occurred (details in the journal; failed rows retry
+next sweep), 2 bad configuration, 3 PostgreSQL unavailable.
+
+The service sets `TimeoutStartSec=30min`: full-backlog sweeps must
+never be killed by systemd's default ~90s start timeout, while a
+genuinely wedged run is still terminated instead of holding the lock
+forever. Per-verdict commits keep partial progress; the next tick
+resumes idempotently.
+
+Prerequisites (run once, as appropriate users):
+
+```bash
+# 1. The shared environment file must carry the PostgreSQL variables
+#    (no new secrets are needed; reconciliation reuses the app config).
+#    Verify NAMES only — never print values:
+grep '^DATABASE_' /var/www/growup/shared/growup.env | cut -d= -f1
+#    expected names: DATABASE_HOST DATABASE_PORT DATABASE_NAME
+#                    DATABASE_USER DATABASE_PASSWORD
+#    (DATABASE_HOST/PORT may fall back to localhost/5432.)
+# 2. The lock directory is the already-writable shared tree; confirm:
+ls -ld /var/www/growup/shared
+```
+
+Install and dry-run:
+
+```bash
+# 3. Copy the reviewed templates into systemd (from the deployed release).
+sudo cp /var/www/growup/current/deployment/growup-identity-reconcile.service \
+        /var/www/growup/current/deployment/growup-identity-reconcile.timer \
+        /etc/systemd/system/
+sudo systemctl daemon-reload
+# 4. Dry-run one sweep as the service account; expect exit 0 and a
+#    one-line counts summary. No payloads or secrets are printed.
+sudo -u growup /var/www/growup/current/.venv/bin/python \
+  -m app.identity_review_reconcile
+```
+
+Activate (only after steps 1–4 pass on the verified release):
+
+```bash
+sudo systemctl enable --now growup-identity-reconcile.timer
+systemctl list-timers growup-identity-reconcile.timer
+journalctl -u growup-identity-reconcile.service --since '15 min ago'
+```
+
+Interpreting output: the summary line reports examined, reconciled,
+already-reconciled, skipped, failed, and whether more work may
+remain. Each `failed <event_id>: <reason>` line names one malformed
+or database-failed verdict; failed rows are retried every sweep and
+never block later rows. A persistent exit 1 with the same event IDs
+means permanently malformed verdict rows need operator inspection
+(see the reconciliation design notes); exit 3 means PostgreSQL was
+unreachable and the next tick retries.
+
+Rollback / disable:
+
+```bash
+sudo systemctl disable --now growup-identity-reconcile.timer
+sudo rm /etc/systemd/system/growup-identity-reconcile.timer \
+        /etc/systemd/system/growup-identity-reconcile.service
+sudo systemctl daemon-reload
+```
+
+Notes:
+
+- The units resolve `/var/www/growup/current` (a symlink swapped
+  atomically on each release) fresh at every tick, so new releases
+  are picked up automatically; old release directories are kept, so
+  an in-flight sweep is never broken by a deploy.
+- Installed units are copies: after any release that changes these
+  templates, re-copy them from the new `current/deployment/`
+  directory and `daemon-reload` (the timer need not be
+  disabled/enabled again unless its schedule changed).
+- If the release venv lives somewhere other than
+  `/var/www/growup/current/.venv`, adjust `ExecStart` before installing.
+- Never enable this timer on two hosts against one database with the
+  expectation of partitioned work — overlapping sweeps are correct
+  but duplicate effort; one active timer per database is the
+  intended topology.

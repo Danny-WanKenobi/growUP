@@ -1,0 +1,26 @@
+# growup-identity-reconcile.timer — reconciliation 5min after each run completes.
+#
+# OnUnitInactiveSec schedules the next sweep 5 minutes after the
+# previous one-shot service became inactive (finished), NOT on a fixed
+# wall-clock cadence: slow sweeps delay the next tick instead of piling
+# up, and flock in the service guards any residual overlap. Dispute
+# verdicts are rare (research runs are manual and infrequent) and each
+# sweep skips already-reconciled rows, so a 5-minute cadence keeps
+# review latency acceptable at negligible cost.
+#
+# TEMPLATE: copy to /etc/systemd/system/ alongside the service, then
+# daemon-reload. Activate manually AFTER deployment verification:
+#   sudo systemctl enable --now growup-identity-reconcile.timer
+# The timer alone does nothing until enabled; see
+# deployment/README-DEPLOYMENT.md for install/activate/rollback steps.
+[Unit]
+Description=Grow Up identity reconciliation 5min after each run
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=growup-identity-reconcile.service
+
+[Install]
+WantedBy=timers.target
