@@ -511,15 +511,15 @@ def _purge_scoped_reviews(cur, scope_sql: str, params: dict) -> None:
     if not doomed:
         return
     check = dict(params)
-    check["ids"] = doomed
+    check["review_ids"] = doomed
     cur.execute(
         "SELECT 1 FROM identity_reviews "
-        "WHERE review_id = ANY(%(ids)s) "
+        "WHERE review_id = ANY(%(review_ids)s) "
         f"AND (decision_event_id NOT IN ({scope_sql}) "
         f"OR last_event_id NOT IN ({scope_sql})) "
         "UNION ALL "
         "SELECT 1 FROM identity_review_occurrences "
-        "WHERE review_id = ANY(%(ids)s) "
+        "WHERE review_id = ANY(%(review_ids)s) "
         f"AND event_id NOT IN ({scope_sql}) "
         "LIMIT 1",
         check,
@@ -530,12 +530,12 @@ def _purge_scoped_reviews(cur, scope_sql: str, params: dict) -> None:
             "cleanup scope; refusing to delete"
         )
     cur.execute(
-        "DELETE FROM identity_review_occurrences WHERE review_id = ANY(%(ids)s)",
-        {"ids": doomed},
+        "DELETE FROM identity_review_occurrences WHERE review_id = ANY(%(review_ids)s)",
+        {"review_ids": doomed},
     )
     cur.execute(
-        "DELETE FROM identity_reviews WHERE review_id = ANY(%(ids)s)",
-        {"ids": doomed},
+        "DELETE FROM identity_reviews WHERE review_id = ANY(%(review_ids)s)",
+        {"review_ids": doomed},
     )
 
 
