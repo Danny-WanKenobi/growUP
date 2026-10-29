@@ -22,6 +22,7 @@ from app.agents.gabriel.extractor import (
     ResearchIntelligence,
     ResultIntelligence,
     TemporalStatus,
+    assembled_identity,
     group_by_property,
 )
 from app.agents.gabriel.ranking import (
@@ -98,6 +99,7 @@ class PropertyDossier(BaseModel):
     street_address: str | None = None
     city: str | None = None
     state: str | None = None
+    identity_disputes: dict[str, list[str]] = Field(default_factory=dict)
     county: CountyEligibility = CountyEligibility.COUNTY_UNKNOWN
     county_evidence: str = ""
     qc_status: QCStatus = QCStatus.RESEARCH_REQUIRED
@@ -685,19 +687,18 @@ def build_dossiers(request: DossierRequest) -> DossierSet:
         missing = list(dict.fromkeys(candidate.unresolved + [
             unknown for factor in candidate.opportunity.factors for unknown in factor.unknowns
         ]))
-        name = address = city = state = None
-        for index in members:
-            for prop in items[index].properties:
-                name = name or prop.name
-                address = address or prop.street_address
-                city = city or prop.city
-                state = state or prop.state
+        identity = assembled_identity(items, members, candidate.key)
+        name = identity["name"]
+        address = identity["street_address"]
+        city = identity["city"]
+        state = identity["state"]
         dossier = PropertyDossier(
             key=candidate.key,
             name=name or candidate.name,
             street_address=address,
             city=city or candidate.city,
             state=state or candidate.state,
+            identity_disputes=dict(candidate.identity_disputes),
             county=candidate.county,
             county_evidence=candidate.county_evidence,
             qc_status=candidate.qc_status,

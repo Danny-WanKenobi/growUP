@@ -39,7 +39,10 @@ from app.agents.gabriel.extractor import (
     ResearchIntelligence,
     ResultIntelligence,
     TemporalStatus,
+    assembled_identity,
+    eligible_identity_props,
     group_by_property,
+    identity_disputes,
 )
 from app.agents.gabriel.geography import DALLAS_COUNTY, SECONDARY_COUNTIES
 
@@ -141,6 +144,7 @@ class RankedCandidate(BaseModel):
     name: str | None = None
     city: str | None = None
     state: str | None = None
+    identity_disputes: dict[str, list[str]] = Field(default_factory=dict)
     county: CountyEligibility = CountyEligibility.COUNTY_UNKNOWN
     county_evidence: str = ""
     qc_status: QCStatus = QCStatus.RESEARCH_REQUIRED
@@ -350,9 +354,9 @@ def _geo_priority(county: CountyEligibility) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _identity_label(items: list[ResultIntelligence], members: list[int]) -> str:
+def _identity_label(items: list[ResultIntelligence], members: list[int], group_key: str) -> str:
     for index in members:
-        for prop in items[index].properties:
+        for prop in eligible_identity_props(items[index], group_key):
             bits = [prop.name, prop.street_address, prop.city]
             label = ", ".join(bit for bit in bits if bit)
             if label:
@@ -363,7 +367,7 @@ def _identity_label(items: list[ResultIntelligence], members: list[int]) -> str:
 def _evaluate_qc(
     candidate: RankedCandidate, evidence: _CandidateEvidence, items: list[ResultIntelligence]
 ) -> None:
-    identity = _identity_label(items, evidence.members)
+    identity = _identity_label(items, evidence.members, evidence.key)
     if "demolished" in evidence.structure:
         item, excerpt = evidence.structure["demolished"]
         candidate.exclusions.append(
@@ -632,14 +636,11 @@ def _score_opportunity(
 # ---------------------------------------------------------------------------
 
 
-def _candidate_identity(items: list[ResultIntelligence], members: list[int]) -> tuple[str | None, str | None, str | None]:
-    name = city = state = None
-    for index in members:
-        for prop in items[index].properties:
-            name = name or prop.name
-            city = city or prop.city
-            state = state or prop.state
-    return name, city, state
+def _candidate_identity(
+    items: list[ResultIntelligence], members: list[int], group_key: str
+) -> tuple[str | None, str | None, str | None]:
+    identity = assembled_identity(items, members, group_key)
+    return identity["name"], identity["city"], identity["state"]
 
 
 def _signal_refs(
@@ -689,7 +690,13 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
             evidence.unresolved.append(
                 "source discusses multiple properties; shared observations left unattributed for review"
             )
-        name, city, state = _candidate_identity(items, group.members)
+        disputes = identity_disputes(items, group.members, group.key)
+        for field in sorted(disputes):
+            if field in ("name", "unit_designator"):
+                continue  # grouping already reports these conflicts for review
+            quoted = ", ".join(f"'{value}'" for value in disputes[field])
+            evidence.unresolved.append(f"identity review: conflicting observed {field}: {quoted}")
+        name, city, state = _candidate_identity(items, group.members, group.key)
         county, county_evidence = _assess_county(evidence)
         downtown = bool(evidence.downtown_hits)
         candidate = RankedCandidate(
@@ -697,6 +704,7 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
             name=name,
             city=city,
             state=state,
+            identity_disputes=disputes,
             county=county,
             county_evidence=county_evidence,
             downtown=downtown,

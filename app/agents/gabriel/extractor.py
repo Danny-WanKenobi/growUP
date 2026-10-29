@@ -891,6 +891,84 @@ def _identity_signature(item: ResultIntelligence) -> tuple[tuple[str, str, str, 
     return tuple(sorted(parts))
 
 
+_DISPUTE_FIELDS = ("name", "street_address", "city", "state", "zip_code", "unit_designator")
+_MAX_DISPUTE_VARIANTS = 10
+_MAX_DISPUTE_VALUE_CHARS = 200
+
+
+def eligible_identity_props(item: ResultIntelligence, group_key: str) -> list[ExtractedProperty]:
+    """Props that may inform one group's identity (never another address).
+
+    Only props at this group's address, or with no address at all, are
+    eligible; props explicitly at another address belong to that group.
+    Mirrors the eligibility rule in _refresh_address_group.
+    """
+    eligible = []
+    for prop in item.properties:
+        key = _address_key(prop)
+        if key is not None and key != group_key:
+            continue
+        eligible.append(prop)
+    return eligible
+
+
+def identity_disputes(
+    items: list[ResultIntelligence], members: list[int], group_key: str
+) -> dict[str, list[str]]:
+    """Field-level identity disputes among a group's eligible observations.
+
+    Compares normalized values across eligible props; absent values are
+    ignored (missing data is not a conflict). Returns only disputed
+    fields (two or more distinct normalized values), each mapped to its
+    observed raw variants ordered by normalized value (deterministic).
+    Comparison runs on full values; displayed variants are
+    length-bounded without merging disputes.
+    """
+    by_field: dict[str, dict[str, str]] = {field: {} for field in _DISPUTE_FIELDS}
+    for index in members:
+        for prop in eligible_identity_props(items[index], group_key):
+            for field in _DISPUTE_FIELDS:
+                raw = getattr(prop, field)
+                if not raw:
+                    continue
+                norm = _normalize_identity(raw)
+                if not norm:
+                    continue
+                by_field[field].setdefault(norm, raw)
+    disputes: dict[str, list[str]] = {}
+    for field in _DISPUTE_FIELDS:
+        variants = by_field[field]
+        if len(variants) > 1:
+            ordered = [variants[norm] for norm in sorted(variants)]
+            disputes[field] = [
+                value[:_MAX_DISPUTE_VALUE_CHARS] for value in ordered[:_MAX_DISPUTE_VARIANTS]
+            ]
+    return disputes
+
+
+def assembled_identity(
+    items: list[ResultIntelligence], members: list[int], group_key: str
+) -> dict[str, str | None]:
+    """First observed identity values among a group's eligible props.
+
+    Same eligibility as identity_disputes: observations explicitly at
+    another address can never supply this group's identity. Later,
+    conflicting, or absent values never override the first observed;
+    use identity_disputes to detect conflicts.
+    """
+    found: dict[str, str | None] = {field: None for field in _DISPUTE_FIELDS}
+    for index in members:
+        for prop in eligible_identity_props(items[index], group_key):
+            for field in _DISPUTE_FIELDS:
+                if found[field] is None:
+                    raw = getattr(prop, field)
+                    if raw:
+                        found[field] = raw
+        if all(found[field] is not None for field in _DISPUTE_FIELDS):
+            break
+    return found
+
+
 def _refresh_address_group(group: PropertyGroup, items: list[ResultIntelligence]) -> None:
     """Recompute identity conflicts for one address group (deterministic).
 

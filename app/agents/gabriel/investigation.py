@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.agents.gabriel.extractor import (
     ResearchIntelligence,
     ResultIntelligence,
+    assembled_identity,
     extract_research_intelligence,
     group_by_property,
 )
@@ -144,6 +145,7 @@ class PropertyInvestigation(BaseModel):
     candidate_key: str
     name: str | None = None
     city: str | None = None
+    identity_disputes: dict[str, list[str]] = Field(default_factory=dict)
     county: CountyEligibility = CountyEligibility.COUNTY_UNKNOWN
     qc_status: QCStatus = QCStatus.RESEARCH_REQUIRED
     opportunity_score: float | None = None
@@ -422,12 +424,26 @@ _SLUG_TEMPLATES = {
 }
 
 
-def _render_query(template: str, name: str | None, address: str | None, city: str | None) -> str | None:
-    """Render one query from supported identity; None when too weak."""
+def _render_query(
+    template: str,
+    name: str | None,
+    address: str | None,
+    city: str | None,
+    disputes: dict[str, list[str]] | None = None,
+) -> str | None:
+    """Render one query from undisputed identity; None when too weak.
+
+    Disputed components are never search anchors: a disputed name falls
+    through to address-anchored forms, and a disputed city qualifier is
+    dropped. Uncontested components proceed unchanged.
+    """
     suffix, _ = _QUERY_TEMPLATES[template]
-    clean_name = _sanitize_identity(name) if name else ""
-    clean_address = _sanitize_identity(address) if address else ""
-    clean_city = _sanitize_identity(city) if city else ""
+    disputed = disputes or {}
+    clean_name = "" if "name" in disputed else (_sanitize_identity(name) if name else "")
+    clean_address = (
+        "" if "street_address" in disputed else (_sanitize_identity(address) if address else "")
+    )
+    clean_city = "" if "city" in disputed else (_sanitize_identity(city) if city else "")
     if clean_name and clean_city:
         query = f'"{clean_name}" "{clean_city}" {suffix}'
     elif clean_name:
@@ -458,6 +474,7 @@ def _build_queries(
     per_property_max: int,
     seen: set[str],
     depth: int,
+    disputes: dict[str, list[str]] | None = None,
 ) -> list[PlannedQuery]:
     queries: list[PlannedQuery] = []
     for question in questions:
@@ -469,7 +486,7 @@ def _build_queries(
         for template in templates:
             if len(queries) >= per_property_max:
                 break
-            rendered = _render_query(template, name, address, city)
+            rendered = _render_query(template, name, address, city, disputes)
             if rendered is None:
                 continue
             normalized = _normalize_query(rendered)
@@ -499,19 +516,11 @@ def _build_queries(
 
 
 def _candidate_identity(
-    items: list[ResultIntelligence], members: list[int]
+    items: list[ResultIntelligence], members: list[int], group_key: str
 ) -> tuple[str | None, str | None, str | None]:
-    """First supported name, street address, and city across members."""
-    name = address = city = None
-    for index in members:
-        for prop in items[index].properties:
-            if prop.name and not name:
-                name = prop.name
-            if prop.street_address and not address:
-                address = prop.street_address
-            if prop.city and not city:
-                city = prop.city
-    return name, address, city
+    """First supported name, street address, and city across eligible members."""
+    identity = assembled_identity(items, members, group_key)
+    return identity["name"], identity["street_address"], identity["city"]
 
 
 def _priority(candidate: RankedCandidate) -> tuple[float, str]:
@@ -608,8 +617,9 @@ def plan_investigations(
             continue
         group = groups.get(candidate.key)
         members = group.members if group is not None else []
-        needs_review = bool(group is not None and group.needs_review)
-        name, address, city = _candidate_identity(intel.results, members)
+        disputes = dict(candidate.identity_disputes)
+        needs_review = bool(group is not None and group.needs_review) or bool(disputes)
+        name, address, city = _candidate_identity(intel.results, members, candidate.key)
         questions = _build_questions(
             candidate, intel.results, members, needs_review,
             name or candidate.name, address, depth, iteration,
@@ -617,6 +627,7 @@ def plan_investigations(
         queries = _build_queries(
             candidate.key, questions, name or candidate.name, address,
             city or candidate.city, cfg.max_queries_per_property, seen_queries, depth,
+            disputes,
         )
         # Enforce the plan-wide query cap by trimming the lowest-priority
         # candidate first (candidates are already priority-ordered).
@@ -631,6 +642,7 @@ def plan_investigations(
                 candidate_key=candidate.key,
                 name=candidate.name,
                 city=candidate.city,
+                identity_disputes=disputes,
                 county=candidate.county,
                 qc_status=candidate.qc_status,
                 opportunity_score=candidate.opportunity.score,
