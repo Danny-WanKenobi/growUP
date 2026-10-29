@@ -44,6 +44,7 @@ from app.agents.gabriel.extractor import (
     group_by_property,
     identity_disputes,
 )
+from app.agents.gabriel.attribution import CategoryAttribution, CountyAttribution
 from app.agents.gabriel.geography import DALLAS_COUNTY, SECONDARY_COUNTIES
 
 RANKING_VERSION = "004B-5.0"
@@ -160,6 +161,8 @@ class RankedCandidate(BaseModel):
     underuse: list[SignalRef] = []
     sources: list[str] = []
     source_roles: dict[str, list[str]] = Field(default_factory=dict)
+    county_attribution: CountyAttribution | None = None
+    category_attribution: CategoryAttribution | None = None
 
 
 class ScreenedLead(BaseModel):

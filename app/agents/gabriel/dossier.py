@@ -18,6 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.agents.gabriel.attribution import CategoryAttribution, CountyAttribution
 from app.agents.gabriel.extractor import (
     MoneyKind,
     ResearchIntelligence,
@@ -124,6 +125,8 @@ class PropertyDossier(BaseModel):
     remaining_questions: list[str] = []
     handoffs: list[AgentHandoff] = []
     summary: str = ""
+    county_attribution: CountyAttribution | None = None
+    category_attribution: CategoryAttribution | None = None
 
 
 class RankingComparison(BaseModel):
