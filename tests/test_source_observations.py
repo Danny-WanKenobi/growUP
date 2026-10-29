@@ -492,6 +492,53 @@ def _live_run(listings: list, run_ids: list[str] | None = None) -> object:
         monkeypatch.undo()
 
 
+def _purge_scoped_reviews(cur, scope_sql: str, params: dict) -> None:
+    """Delete test-owned identity-review rows for one event scope.
+
+    A review case is removed only when its decision event, last event,
+    and every occurrence event all belong to the scope; otherwise the
+    cleanup fails loudly instead of touching foreign records.
+    """
+    cur.execute(
+        "SELECT review_id FROM identity_reviews "
+        f"WHERE decision_event_id IN ({scope_sql}) "
+        f"OR last_event_id IN ({scope_sql}) "
+        "OR review_id IN (SELECT review_id FROM identity_review_occurrences "
+        f"WHERE event_id IN ({scope_sql}))",
+        params,
+    )
+    doomed = [str(row["review_id"]) for row in cur.fetchall()]
+    if not doomed:
+        return
+    check = dict(params)
+    check["ids"] = doomed
+    cur.execute(
+        "SELECT 1 FROM identity_reviews "
+        "WHERE review_id = ANY(%(ids)s) "
+        f"AND (decision_event_id NOT IN ({scope_sql}) "
+        f"OR last_event_id NOT IN ({scope_sql})) "
+        "UNION ALL "
+        "SELECT 1 FROM identity_review_occurrences "
+        "WHERE review_id = ANY(%(ids)s) "
+        f"AND event_id NOT IN ({scope_sql}) "
+        "LIMIT 1",
+        check,
+    )
+    if cur.fetchone() is not None:
+        raise AssertionError(
+            "identity review case references events outside this test's "
+            "cleanup scope; refusing to delete"
+        )
+    cur.execute(
+        "DELETE FROM identity_review_occurrences WHERE review_id = ANY(%(ids)s)",
+        {"ids": doomed},
+    )
+    cur.execute(
+        "DELETE FROM identity_reviews WHERE review_id = ANY(%(ids)s)",
+        {"ids": doomed},
+    )
+
+
 def _live_cleanup_events(run_ids: list[str]) -> None:
     """Delete this execution's discovery decision/run events by run ID."""
     from app.properties_db import get_connection
@@ -501,6 +548,11 @@ def _live_cleanup_events(run_ids: list[str]) -> None:
         return
     with get_connection() as conn:
         with conn.cursor() as cur:
+            _purge_scoped_reviews(
+                cur,
+                "SELECT event_id FROM agent_events WHERE run_id = ANY(%(ids)s)",
+                {"ids": ids},
+            )
             cur.execute("DELETE FROM agent_events WHERE run_id = ANY(%(ids)s)", {"ids": ids})
         conn.commit()
 

@@ -713,16 +713,17 @@ def test_live_research_reviews_use_candidate_key_not_property_ids() -> None:
                     )
                 conn.rollback()
                 # Research without a candidate reference is rejected.
-                with get_connection() as conn2, conn2.cursor() as cur2:
-                    with pytest.raises(psycopg.IntegrityError):
-                        cur2.execute(
-                            "INSERT INTO identity_reviews (review_id, dedup_key, source, "
-                            "reason_code, observed_identity, decision_event_id, run_id, "
-                            "last_event_id) VALUES (%(rid)s, %(key)s, 'research', "
-                            "'CONFLICTING_NAMES', '{}', %(eid)s, 'run-x', %(eid)s)",
-                            {"rid": str(uuid4()), "key": f"key-{uuid4().hex}", "eid": eid},
-                        )
-                conn2.rollback()
+                with get_connection() as conn2:
+                    with conn2.cursor() as cur2:
+                        with pytest.raises(psycopg.IntegrityError):
+                            cur2.execute(
+                                "INSERT INTO identity_reviews (review_id, dedup_key, source, "
+                                "reason_code, observed_identity, decision_event_id, run_id, "
+                                "last_event_id) VALUES (%(rid)s, %(key)s, 'research', "
+                                "'CONFLICTING_NAMES', '{}', %(eid)s, 'run-x', %(eid)s)",
+                                {"rid": str(uuid4()), "key": f"key-{uuid4().hex}", "eid": eid},
+                            )
+                    conn2.rollback()
         # A well-formed research row is structurally accepted (IR-3C writes none).
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -771,32 +772,34 @@ def test_live_pending_uniqueness_allows_resolved_history() -> None:
             conn.commit()
             created.append(first)
             # A second PENDING row on the same key is rejected.
-            with get_connection() as conn2, conn2.cursor() as cur2:
-                with pytest.raises(psycopg.IntegrityError):
-                    cur2.execute(
-                        "INSERT INTO identity_reviews (review_id, dedup_key, source, "
-                        "reason_code, observed_identity, conflicting_property_ids, "
-                        "decision_event_id, run_id, last_event_id) "
-                        "VALUES (%(rid)s, %(key)s, 'intake', 'NAME_CONFLICT', '{}', "
-                        "ARRAY[%(pid)s]::uuid[], %(eid)s, 'run-x', %(eid)s)",
-                        {"rid": str(uuid4()), "key": key, "pid": pid, "eid": eids[1]},
-                    )
-            conn2.rollback()
+            with get_connection() as conn2:
+                with conn2.cursor() as cur2:
+                    with pytest.raises(psycopg.IntegrityError):
+                        cur2.execute(
+                            "INSERT INTO identity_reviews (review_id, dedup_key, source, "
+                            "reason_code, observed_identity, conflicting_property_ids, "
+                            "decision_event_id, run_id, last_event_id) "
+                            "VALUES (%(rid)s, %(key)s, 'intake', 'NAME_CONFLICT', '{}', "
+                            "ARRAY[%(pid)s]::uuid[], %(eid)s, 'run-x', %(eid)s)",
+                            {"rid": str(uuid4()), "key": key, "pid": pid, "eid": eids[1]},
+                        )
+                conn2.rollback()
             # Resolving the first row frees the key while preserving history.
-            with get_connection() as conn3, conn3.cursor() as cur3:
-                cur3.execute(
-                    "UPDATE identity_reviews SET status = 'RESOLVED' WHERE review_id = %(rid)s",
-                    {"rid": first},
-                )
-                second = str(uuid4())
-                cur3.execute(
-                    "INSERT INTO identity_reviews (review_id, dedup_key, source, reason_code, "
-                    "observed_identity, conflicting_property_ids, decision_event_id, run_id, "
-                    "last_event_id) VALUES (%(rid)s, %(key)s, 'intake', 'NAME_CONFLICT', "
-                    "'{}', ARRAY[%(pid)s]::uuid[], %(eid)s, 'run-x', %(eid)s)",
-                    {"rid": second, "key": key, "pid": pid, "eid": eids[2]},
-                )
-            conn3.commit()
+            with get_connection() as conn3:
+                with conn3.cursor() as cur3:
+                    cur3.execute(
+                        "UPDATE identity_reviews SET status = 'RESOLVED' WHERE review_id = %(rid)s",
+                        {"rid": first},
+                    )
+                    second = str(uuid4())
+                    cur3.execute(
+                        "INSERT INTO identity_reviews (review_id, dedup_key, source, reason_code, "
+                        "observed_identity, conflicting_property_ids, decision_event_id, run_id, "
+                        "last_event_id) VALUES (%(rid)s, %(key)s, 'intake', 'NAME_CONFLICT', "
+                        "'{}', ARRAY[%(pid)s]::uuid[], %(eid)s, 'run-x', %(eid)s)",
+                        {"rid": second, "key": key, "pid": pid, "eid": eids[2]},
+                    )
+                conn3.commit()
             created.append(second)
     finally:
         _live_cleanup_queue(created, eids)
