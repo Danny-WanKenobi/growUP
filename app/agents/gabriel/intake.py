@@ -47,6 +47,7 @@ from app.agents.gabriel.dedup import (
 from app.agents.gabriel.observe import new_run_id, note_activity, note_warning
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError, acquire_intake_locks
+from app.identity_reviews_db import record_review_occurrence
 from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
 from app.observability.store import insert_event_in_transaction
 from app.listings_db import (
@@ -623,6 +624,7 @@ def _persist_decision_dedicated(event: AgentEvent) -> None:
     """
     with get_connection() as conn:
         insert_event_in_transaction(conn, event)
+        record_review_occurrence(conn, event)
         conn.commit()
 
 

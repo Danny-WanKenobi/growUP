@@ -41,6 +41,8 @@ class _CollisionStore:
         self.evidence: list[dict[str, Any]] = []
         self.distress: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
+        self.reviews: dict[str, dict[str, Any]] = {}
+        self.review_occurrences: list[dict[str, Any]] = []
         self.queries: list[str] = []
         self.params: list[dict[str, Any]] = []
         self.fail_on: str | None = None
@@ -172,6 +174,35 @@ class _FakeCursor:
         if "INSERT INTO agent_events" in query:
             store.events.append(dict(params))
             return []
+        if "INSERT INTO identity_review_occurrences" in query:
+            store.review_occurrences.append(
+                {
+                    "occurrence_id": params["occurrence_id"],
+                    "review_id": str(params["review_id"]),
+                    "event_id": params["event_id"],
+                }
+            )
+            return [{"occurrence_id": params["occurrence_id"]}]
+        if "INSERT INTO identity_reviews" in query:
+            # Mirrors the partial-unique PENDING upsert in migration 009.
+            key = params["dedup_key"]
+            existing = store.reviews.get(key)
+            if existing is not None and existing["status"] == "PENDING":
+                existing["occurrence_count"] += 1
+                existing["last_event_id"] = params["decision_event_id"]
+                return [{"review_id": existing["review_id"]}]
+            row = {
+                "review_id": params["review_id"],
+                "dedup_key": key,
+                "source": params["source"],
+                "reason_code": params["reason_code"],
+                "status": "PENDING",
+                "occurrence_count": 1,
+                "decision_event_id": params["decision_event_id"],
+                "last_event_id": params["decision_event_id"],
+            }
+            store.reviews[key] = row
+            return [{"review_id": row["review_id"]}]
         raise AssertionError(f"unexpected query in collision repro: {query[:100]!r}")
 
 
@@ -184,7 +215,14 @@ class _FakeConnection:
 
     def __enter__(self) -> _FakeConnection:
         self._snapshot = copy.deepcopy(
-            (self._store.properties, self._store.evidence, self._store.distress, self._store.events)
+            (
+                self._store.properties,
+                self._store.evidence,
+                self._store.distress,
+                self._store.events,
+                self._store.reviews,
+                self._store.review_occurrences,
+            )
         )
         return self
 
@@ -201,11 +239,15 @@ class _FakeConnection:
     def rollback(self) -> None:
         self.rollbacks += 1
         if self._snapshot is not None:
-            properties, evidence, distress, events = copy.deepcopy(self._snapshot)
+            properties, evidence, distress, events, reviews, occurrences = copy.deepcopy(
+                self._snapshot
+            )
             self._store.properties = properties
             self._store.evidence = evidence
             self._store.distress = distress
             self._store.events = events
+            self._store.reviews = reviews
+            self._store.review_occurrences = occurrences
             self._snapshot = None
 
 

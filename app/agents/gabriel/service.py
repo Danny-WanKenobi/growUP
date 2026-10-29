@@ -42,6 +42,7 @@ from app.agents.gabriel.sources.base import (
 )
 from app.config import get_database_config
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
+from app.identity_reviews_db import record_review_occurrence
 from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
 from app.observability.store import insert_event_in_transaction
 from app.properties import PropertyCreate
@@ -321,6 +322,7 @@ def _persist_decision_dedicated(event: AgentEvent) -> None:
     """
     with get_connection() as conn:
         insert_event_in_transaction(conn, event)
+        record_review_occurrence(conn, event)
         conn.commit()
 
 
