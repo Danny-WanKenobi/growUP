@@ -184,7 +184,6 @@ class _DossierEvidence:
         self.underuse: list[tuple[str, ResultIntelligence, int, str]] = []
         self.counties: list[tuple[str, ResultIntelligence, int]] = []
         self.structure: dict[str, tuple[ResultIntelligence, int, str]] = {}
-        self.domains: set[str] = set()
 
 
 def _collect_round_evidence(
@@ -194,10 +193,11 @@ def _collect_round_evidence(
     for index in members:
         item = items[index]
         round_no = rounds[index]
-        evidence.domains.add(item.domain or item.result_url)
         if not _single_property(item):
             continue  # multi-property observations stay unattributed
         for mention in item.money:
+            if mention.amount_high is not None:
+                continue  # quoted ranges stay unresolved (surfaced via missing[])
             if mention.kind is MoneyKind.ASKING_PRICE_CURRENT and not _is_historical(item):
                 evidence.asking.append((mention.amount, item, round_no, mention.evidence))
             elif mention.kind is not MoneyKind.UNCLASSIFIED:
@@ -287,6 +287,33 @@ def _asking_claims(evidence: _DossierEvidence) -> tuple[list[ConsolidatedClaim],
     years = {year for _, year, _ in dated if year is not None}
     if len(years) >= 2:
         oldest = min(dated, key=lambda entry: (entry[1] or 0))
+        newest_year = max(years)
+        newest_entries = [(amount, ref) for amount, year, ref in dated if year == newest_year]
+        newest_amounts = sorted({amount for amount, _ in newest_entries})
+        if len(newest_amounts) > 1:
+            # Newest-year disagreement: contradictory, not a clean current price.
+            historical.append(
+                ConsolidatedClaim(
+                    topic="asking_price",
+                    statement=f"Asking price {oldest[0]} reported in {oldest[1]}; "
+                    f"later asking reports in {newest_year} disagree, see conflicts.",
+                    status=ClaimStatus.HISTORICAL,
+                    evidence=[oldest[2]],
+                )
+            )
+            for amount in newest_amounts:
+                refs = [ref for candidate, ref in newest_entries if candidate == amount]
+                supported.append(
+                    ConsolidatedClaim(
+                        topic="asking_price",
+                        statement=f"Asking price {amount} reported in {newest_year} "
+                        "(conflicts with other asking reports).",
+                        status=ClaimStatus.CONTRADICTORY,
+                        evidence=refs,
+                        corroboration_note="see conflicts; Raphael must reconcile",
+                    )
+                )
+            return supported, historical
         newest = max(dated, key=lambda entry: (entry[1] or 0))
         historical.append(
             ConsolidatedClaim(
@@ -475,6 +502,29 @@ def _detect_conflicts(evidence: _DossierEvidence) -> list[DossierContradiction]:
                     resolution="Raphael must determine the correct current asking price.",
                 )
             )
+        else:
+            newest_year = max(years)
+            newest_amounts = sorted(
+                {
+                    amount
+                    for amount, item, _, _ in evidence.asking
+                    if _year_of(_result_date(item)) == newest_year
+                }
+            )
+            if len(newest_amounts) > 1 and newest_amounts[-1] > newest_amounts[0] * Decimal("1.05"):
+                conflicts.append(
+                    DossierContradiction(
+                        topic="asking_price",
+                        description=f"Conflicting asking prices {newest_amounts[0]} vs "
+                        f"{newest_amounts[-1]} in {newest_year}.",
+                        evidence=[
+                            _ref(item, round_no, excerpt)
+                            for amount, item, round_no, excerpt in evidence.asking
+                            if _year_of(_result_date(item)) == newest_year
+                        ],
+                        resolution="Raphael must determine the correct current asking price.",
+                    )
+                )
     occupancy_pcts = [
         (observation.occupancy_pct, item, round_no)  # type: ignore[union-attr]
         for item, round_no, observation in evidence.occupancy
@@ -550,6 +600,10 @@ def _build_summary(
         sentences.append(
             f"Asking price {dossier.value_amount} (asking price, not a market valuation)."
         )
+    elif any(conflict.topic == "asking_price" for conflict in dossier.conflicts) or any(
+        "conflicting asking prices" in note or "price range" in note for note in dossier.missing
+    ):
+        sentences.append("Asking price is contested or reported as a range; see conflicts and missing evidence.")
     else:
         sentences.append("No asking price documented.")
     distress = sorted({signal for signal, _, _, _ in evidence.distress})

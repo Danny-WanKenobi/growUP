@@ -75,6 +75,7 @@ class ObservationScope(str, Enum):
 
 class MoneyMention(BaseModel):
     amount: Decimal
+    amount_high: Decimal | None = None  # second endpoint of a quoted range, in quote order
     kind: MoneyKind = MoneyKind.UNCLASSIFIED
     evidence: str
     status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
@@ -452,10 +453,83 @@ def _classify_money(context: str) -> MoneyKind:
     return MoneyKind.UNCLASSIFIED
 
 
+_RANGE_RE = re.compile(
+    r"\$\s*(?P<first>[\d,]+(?:\.\d+)?)\s*(?:(?P<unit1>million|billion|thousand|mm|m|b|k)\b\s*)?"
+    r"(?P<sep>-|\u2013|\u2014|to\b)\s*\$?\s*(?P<second>[\d,]+(?:\.\d+)?)\s*"
+    r"(?P<unit2>million|billion|thousand|mm|m|b|k)\b",
+    re.IGNORECASE,
+)
+_BETWEEN_RANGE_RE = re.compile(
+    r"\bbetween\s+\$\s*([\d,]+(?:\.\d+)?)\s+and\s+\$?\s*([\d,]+(?:\.\d+)?)\s*"
+    r"(million|billion|thousand|mm|m|b|k)\b",
+    re.IGNORECASE,
+)
+
+
+def _range_spans(text: str) -> list[tuple[int, int, Decimal, Decimal]]:
+    """Quoted price ranges as (start, end, first, second) in quote order.
+
+    A range shares one trailing unit ("$5-7 million") or joins two
+    unit-bearing endpoints with a dash ("$5M-$7M"). Reduction language
+    ("reduced/cut/down from") is never a range: old-to-new is history,
+    not a quoted span. The word "to" joins endpoints only when the
+    first is unitless, so "reduced from $4 million to $3.5 million"
+    keeps two historical mentions.
+    """
+    spans: list[tuple[int, int, Decimal, Decimal]] = []
+    candidates: list[tuple[int, int, str, str | None, str, str, str]] = []
+    for match in _RANGE_RE.finditer(text):
+        candidates.append(
+            (match.start(), match.end(), match.group("first"), match.group("unit1"),
+             match.group("second"), match.group("unit2"), match.group("sep"))
+        )
+    for match in _BETWEEN_RANGE_RE.finditer(text):
+        candidates.append(
+            (match.start(), match.end(), match.group(1), None,
+             match.group(2), match.group(3), "between")
+        )
+    for start, end, first, unit1, second, unit2, sep in sorted(candidates, key=lambda c: (c[0], c[1])):
+        if any(start < kept_end and kept_start < end for kept_start, kept_end, _, _ in spans):
+            continue  # overlapping range already recorded
+        context = text[max(0, start - 100) : end + 100]
+        if _PRIOR_ASKING_RE.search(context):
+            continue  # price reduction, not a quoted range
+        if unit1 is not None and sep.lower() == "to":
+            # Dual-unit endpoints joined by "to" ("$4 million to $3.5
+            # million") describe a sequence, not a quoted span.
+            continue
+        try:
+            low = _parse_amount(first, unit1 or unit2)
+            high = _parse_amount(second, unit2)
+        except ArithmeticError:
+            continue
+        spans.append((start, end, low, high))
+    return spans
+
+
 def extract_money(text: str) -> list[MoneyMention]:
-    """Find explicit dollar amounts; ambiguous ones stay unclassified."""
+    """Find explicit dollar amounts; ambiguous ones stay unclassified.
+
+    Quoted ranges become one ranged observation (both endpoints scaled,
+    quote order preserved); overlapping point matches are skipped so
+    endpoints never double-count as independent observations.
+    """
     mentions: list[MoneyMention] = []
+    ranges = _range_spans(text)
+    for start, end, low, high in ranges:
+        context = text[max(0, start - 100) : end + 100]
+        mentions.append(
+            MoneyMention(
+                amount=low,
+                amount_high=high,
+                kind=_classify_money(context),
+                evidence=_excerpt(text, start, end),
+            )
+        )
+    ranged = [(start, end) for start, end, _, _ in ranges]
     for match in _AMOUNT_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in ranged):
+            continue
         try:
             amount = _parse_amount(match.group(1), match.group(2))
         except ArithmeticError:

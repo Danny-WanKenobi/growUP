@@ -218,6 +218,7 @@ class _CandidateEvidence:
         self.downtown_hits: list[ResultIntelligence] = []
         self.unresolved: list[str] = []
         self.contradictions: list[str] = []
+        self.asking_contested: bool = False
         self.domains: set[str] = set()
         self.has_current_evidence = False
 
@@ -230,10 +231,11 @@ def _collect_candidate(
     asking_amounts: list[tuple[Decimal, ResultIntelligence, str]] = []
     for index in members:
         item = items[index]
-        evidence.domains.add(item.domain or item.result_url)
-        if item.temporal.status is TemporalStatus.CURRENT:
-            evidence.has_current_evidence = True
         single = _single_property(item)
+        # Corroboration credit requires an attributable fact: membership
+        # alone (multi-property, identity-only, or claimless results)
+        # never counts as independent claim support.
+        contributed = False
         if not single and (
             item.money or item.occupancy or item.distress or item.underuse
         ):
@@ -245,8 +247,15 @@ def _collect_candidate(
             excerpt = mention.evidence
             if not single:
                 continue  # unresolved (recorded above)
+            if mention.amount_high is not None:
+                evidence.unresolved.append(
+                    f"price range {mention.amount} to {mention.amount_high} reported; "
+                    "a range cannot headline a single asking price"
+                )
+                continue  # unresolved-only: no corroboration credit
             if mention.kind is MoneyKind.ASKING_PRICE_CURRENT and not _is_historical(item):
                 asking_amounts.append((mention.amount, item, excerpt))
+                contributed = True
             elif mention.kind in (
                 MoneyKind.ASKING_PRICE_HISTORICAL,
                 MoneyKind.SALE_PRICE_COMPLETED,
@@ -254,6 +263,7 @@ def _collect_candidate(
                 MoneyKind.MARKET_VALUE_ESTIMATED,
             ):
                 evidence.scale_money.append((mention.kind.value, item, excerpt))
+                contributed = True
             else:
                 evidence.unresolved.append(
                     f"unclassified monetary amount {mention.amount} cannot support valuation"
@@ -263,6 +273,7 @@ def _collect_candidate(
                 continue
             if observation.scope.value == "whole_building":
                 evidence.occupancy.append((item, observation))
+                contributed = True
             else:
                 evidence.unresolved.append(
                     "partial-scope occupancy figure cannot represent the whole building"
@@ -272,25 +283,34 @@ def _collect_candidate(
                 evidence.distress_refs.append((signal.signal, item, signal.evidence))
                 if signal.signal not in evidence.distress:
                     evidence.distress[signal.signal] = (item, signal.evidence)
+                contributed = True
         for signal in item.underuse:
             if single:
                 evidence.underuse_refs.append((signal.signal, item, signal.evidence))
                 if signal.signal not in evidence.underuse:
                     evidence.underuse[signal.signal] = (item, signal.evidence)
+                contributed = True
         for signal in item.structure:
             if single and signal.signal not in evidence.structure:
                 evidence.structure[signal.signal] = (item, signal.evidence)
+                contributed = True
         for county in item.county_mentions:
             if single:
                 evidence.counties.append((county, item))
+                contributed = True
             else:
                 evidence.unresolved.append(
                     f"county mention '{county}' cannot be attributed among {len(item.properties)} properties"
                 )
         if item.mentions_downtown and single:
             evidence.downtown_hits.append(item)
-    # Multiple distinct current askings conflict: use the latest in text
-    # order but force further research rather than silent choice.
+            contributed = True
+        if contributed:
+            evidence.domains.add(item.domain or item.result_url)
+            if item.temporal.status is TemporalStatus.CURRENT:
+                evidence.has_current_evidence = True
+    # Multiple distinct current askings conflict: no endpoint headlines;
+    # the contradiction forces reconciliation rather than silent choice.
     distinct = sorted({amount for amount, _, _ in asking_amounts})
     if len(distinct) > 1:
         low, high = distinct[0], distinct[-1]
@@ -298,6 +318,7 @@ def _collect_candidate(
             evidence.contradictions.append(
                 f"conflicting asking prices {low} vs {high}; Raphael must reconcile"
             )
+            evidence.asking_contested = True
     evidence.asking = asking_amounts
     # Occupancy/vacancy conflict: high occupancy plus vacancy evidence.
     occupancy_pcts = [
@@ -468,6 +489,14 @@ def _ref(item: ResultIntelligence, excerpt: str) -> FactorEvidence:
 
 def _score_value(evidence: _CandidateEvidence) -> FactorAssessment:
     assessment = FactorAssessment(factor="value", weight=WEIGHT_VALUE)
+    if evidence.asking_contested:
+        for _, item, excerpt in evidence.asking:
+            assessment.evidence.append(_ref(item, excerpt))
+        assessment.unknowns.append(
+            "asking price contested by conflicting reports; no authoritative value selected"
+        )
+        assessment.explanation = "asking price contested; factor excluded from scoring, not scored zero"
+        return assessment
     if evidence.asking:
         amount = max(amount for amount, _, _ in evidence.asking)
         _, item, excerpt = next(
@@ -718,7 +747,11 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
             candidate.next_steps.append(
                 "Raphael: confirm the grouped sources describe a single building before relying on attributed facts"
             )
-        if evidence.asking and candidate.qc_status is not QCStatus.EXCLUDE:
+        if (
+            evidence.asking
+            and not evidence.asking_contested
+            and candidate.qc_status is not QCStatus.EXCLUDE
+        ):
             amount = max(entry[0] for entry in evidence.asking)
             _, item, excerpt = next(entry for entry in evidence.asking if entry[0] == amount)
             candidate.value_detail = ValueDetail(
