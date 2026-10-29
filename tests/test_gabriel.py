@@ -43,6 +43,16 @@ _EVIDENCE_AT = "2026-10-27T00:00:00+00:00"
 TEST_INTAKE_KEY = "unit-test-intake-key-only"
 
 
+@pytest.fixture(autouse=True)
+def _capture_decision_events(monkeypatch):
+    """Capture dedicated decision-event writes (no live database here).
+
+    These suites pin discovery branching and response shape with mocked
+    persistence; durable event persistence has its own test module.
+    """
+    monkeypatch.setattr(gabriel_service, "_persist_decision_dedicated", lambda event: None)
+
+
 def _headers():
     return {"X-Intake-Key": TEST_INTAKE_KEY}
 
@@ -363,7 +373,7 @@ def test_run_creates_new_and_skips_duplicates(monkeypatch) -> None:
     created: list = []
     monkeypatch.setattr(
         gabriel_service, "_create_with_observation",
-        lambda payload, canonical, external_id: created.append(payload) or {"id": f"id-{len(created)}"},
+        lambda payload, canonical, external_id, **_: created.append(payload) or {"id": f"id-{len(created)}"},
     )
     monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
 
@@ -395,11 +405,11 @@ def test_run_reports_ambiguity_without_selecting(monkeypatch) -> None:
         lambda payload: AddressMatch(AddressMatchStatus.AMBIGUOUS),
     )
 
-    def _must_not_create(*args):
+    def _must_not_create(*args, **kwargs):
         raise AssertionError("ambiguous matches must not create records")
 
     monkeypatch.setattr(gabriel_service, "_create_with_observation", _must_not_create)
-    monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "_create_without_observation", _must_not_create)
     monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 0
@@ -423,7 +433,7 @@ def test_run_keeps_distinct_addressless_candidates(monkeypatch) -> None:
     created: list = []
     monkeypatch.setattr(
         gabriel_service, "_create_with_observation",
-        lambda payload, canonical, external_id: created.append(payload) or {"id": f"id-{len(created)}"},
+        lambda payload, canonical, external_id, **_: created.append(payload) or {"id": f"id-{len(created)}"},
     )
     monkeypatch.setattr(gabriel_service, "find_observation", lambda source, external_id: None)
     # Real matcher: addressless payloads return NONE without touching the DB.
@@ -446,7 +456,8 @@ def test_run_distinguishes_addressless_candidates_by_coordinates(monkeypatch) ->
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+        gabriel_service, "_create_without_observation",
+        lambda payload, **_: created.append(payload) or {"id": f"id-{len(created)}"},
     )
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 2
@@ -466,7 +477,8 @@ def test_run_never_discards_identifierless_candidates(monkeypatch) -> None:
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
     created: list = []
     monkeypatch.setattr(
-        gabriel_service, "create_property", lambda data: created.append(data) or {"id": f"id-{len(created)}"}
+        gabriel_service, "_create_without_observation",
+        lambda payload, **_: created.append(payload) or {"id": f"id-{len(created)}"},
     )
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 2
@@ -478,10 +490,10 @@ def test_run_aborts_on_source_failure_without_persisting(monkeypatch) -> None:
     stub = _StubSource(error=SourceTimeout("slow"))
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
 
-    def _must_not_create(data):
+    def _must_not_create(*args, **kwargs):
         raise AssertionError("nothing may persist when the source fails")
 
-    monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "_create_without_observation", _must_not_create)
     with pytest.raises(SourceTimeout):
         gabriel_service.run_discovery(_run_request())
 
@@ -491,10 +503,10 @@ def test_run_empty_results_persists_nothing(monkeypatch) -> None:
     stub = _StubSource(listings=[])
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
 
-    def _must_not_create(data):
+    def _must_not_create(*args, **kwargs):
         raise AssertionError("empty results must not fabricate records")
 
-    monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "_create_without_observation", _must_not_create)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.returned == 0
     assert result.counts.created == 0
@@ -517,10 +529,10 @@ def test_run_skips_candidates_failing_validation_gate(monkeypatch) -> None:
     stub = _StubSource(listings=[bad])
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
 
-    def _must_not_create(*args):
+    def _must_not_create(*args, **kwargs):
         raise AssertionError("invalid candidates must not persist")
 
-    monkeypatch.setattr(gabriel_service, "create_property", _must_not_create)
+    monkeypatch.setattr(gabriel_service, "_create_without_observation", _must_not_create)
     monkeypatch.setattr(gabriel_service, "_create_with_observation", _must_not_create)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.skipped_unusable == 1

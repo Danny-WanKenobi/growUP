@@ -276,7 +276,7 @@ def _guard_writes(monkeypatch) -> None:
         raise AssertionError("recorded-source branch must not write")
 
     monkeypatch.setattr(gabriel_service, "_create_with_observation", _must_not_write)
-    monkeypatch.setattr(gabriel_service, "create_property", _must_not_write)
+    monkeypatch.setattr(gabriel_service, "_create_without_observation", _must_not_write)
 
 
 _AMBIGUOUS = AddressMatch(AddressMatchStatus.AMBIGUOUS)
@@ -300,6 +300,9 @@ def _run_recorded(monkeypatch, listing, match, stored_street):
     )
     monkeypatch.setattr(gabriel_service, "match_existing_address", lambda payload: match)
     _guard_writes(monkeypatch)
+    # Dedicated decision-event writes are stubbed here; durable event
+    # persistence has its own test module.
+    monkeypatch.setattr(gabriel_service, "_persist_decision_dedicated", lambda event: None)
     return gabriel_service.run_discovery(_run_request())
 
 
@@ -376,7 +379,8 @@ def test_lost_race_rereads_winner(monkeypatch) -> None:
         return {"id": "m-winner", "property_id": "p-winner"}
 
     monkeypatch.setattr(gabriel_service, "find_observation", _find)
-    monkeypatch.setattr(gabriel_service, "_create_with_observation", lambda payload, c, e: None)
+    monkeypatch.setattr(gabriel_service, "_create_with_observation", lambda payload, c, e, **_: None)
+    monkeypatch.setattr(gabriel_service, "_persist_decision_dedicated", lambda event: None)
     result = gabriel_service.run_discovery(_run_request())
     assert result.counts.created == 0
     assert result.skipped[0].reason == "source already recorded as property p-winner"
@@ -476,13 +480,29 @@ def _live_seed_link(source: str, external_id: str, property_id: str) -> None:
         conn.commit()
 
 
-def _live_run(listings: list) -> object:
+def _live_run(listings: list, run_ids: list[str] | None = None) -> object:
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(gabriel_service, "get_source", lambda name: _StubSource(listings))
     try:
-        return gabriel_service.run_discovery(_run_request())
+        result = gabriel_service.run_discovery(_run_request())
+        if run_ids is not None:
+            run_ids.append(result.run_id)
+        return result
     finally:
         monkeypatch.undo()
+
+
+def _live_cleanup_events(run_ids: list[str]) -> None:
+    """Delete this execution's discovery decision/run events by run ID."""
+    from app.properties_db import get_connection
+
+    ids = [item for item in run_ids if item]
+    if not ids:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM agent_events WHERE run_id = ANY(%(ids)s)", {"ids": ids})
+        conn.commit()
 
 
 def _live_cleanup_observation(source: str, external_id: str) -> None:
@@ -520,8 +540,9 @@ def test_live_first_observation_creates_property_and_link() -> None:
     street = f"500 Live Observe Way {token}"
     ext = f"way/live-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
-        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)])
+        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)], run_ids)
         assert result.counts.created == 1
         created.extend(result.created_ids)
         rows = _live_properties_by_street(street)
@@ -530,7 +551,7 @@ def test_live_first_observation_creates_property_and_link() -> None:
         assert len(links) == 1
         assert str(links[0]["property_id"]) == created[0]
         # Repeat observation creates nothing further.
-        repeat = _live_run([_listing(source="overpass", external_id=ext, street_address=street)])
+        repeat = _live_run([_listing(source="overpass", external_id=ext, street_address=street)], run_ids)
         assert repeat.counts.created == 0
         assert "already recorded" in repeat.skipped[0].reason
         assert len(_live_properties_by_street(street)) == 1
@@ -538,6 +559,7 @@ def test_live_first_observation_creates_property_and_link() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_street(street)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -547,11 +569,12 @@ def test_live_providers_share_canonical_element() -> None:
     token = uuid4().hex
     ext = f"way/live-canon-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
-        first = _live_run([_listing(source="overpass", external_id=ext, street_address=None)])
+        first = _live_run([_listing(source="overpass", external_id=ext, street_address=None)], run_ids)
         assert first.counts.created == 1
         created.extend(first.created_ids)
-        second = _live_run([_listing(source="osm_api", external_id=ext, street_address=None)])
+        second = _live_run([_listing(source="osm_api", external_id=ext, street_address=None)], run_ids)
         assert second.counts.created == 0
         assert "already recorded" in second.skipped[0].reason
         assert len(_live_observation_rows("osm", ext)) == 1
@@ -560,6 +583,7 @@ def test_live_providers_share_canonical_element() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_observation("osm", ext)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -570,12 +594,14 @@ def test_live_distinct_elements_stay_distinct() -> None:
     ext_a = f"way/live-distinct-a-{token}"
     ext_b = f"way/live-distinct-b-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
         result = _live_run(
             [
                 _listing(source="overpass", external_id=ext_a, street_address=None),
                 _listing(source="overpass", external_id=ext_b, street_address=None),
-            ]
+            ],
+            run_ids,
         )
         assert result.counts.created == 2
         created.extend(result.created_ids)
@@ -585,6 +611,7 @@ def test_live_distinct_elements_stay_distinct() -> None:
         _live_cleanup(created)
         _live_cleanup_observation("osm", ext_a)
         _live_cleanup_observation("osm", ext_b)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -629,6 +656,7 @@ def test_live_concurrent_observation_leaves_one_property() -> None:
         patcher.undo()
         _live_cleanup(created)
         _live_cleanup_observation("osm", ext)
+        _live_cleanup_events([o.run_id for o in outcomes])
 
 
 @needs_live_pg
@@ -642,6 +670,7 @@ def test_live_recorded_conflicting_address_requires_review() -> None:
     street_b = f"600 Live Conflict Way {token}"
     ext = f"way/live-conflict-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
         seed = create_property(
             {
@@ -656,7 +685,7 @@ def test_live_recorded_conflicting_address_requires_review() -> None:
         )
         created.append(str(seed["id"]))
         _live_seed_link("osm", ext, created[0])
-        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street_b)])
+        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street_b)], run_ids)
         assert result.counts.created == 0
         reason = result.skipped[0].reason
         assert "previously recorded" in reason and "held for review" in reason
@@ -666,6 +695,7 @@ def test_live_recorded_conflicting_address_requires_review() -> None:
         _live_cleanup(created)
         _live_cleanup_street(street_a)
         _live_cleanup_street(street_b)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -678,6 +708,7 @@ def test_live_recorded_ambiguous_address_requires_review() -> None:
     street = f"500 Live Ambiguous Way {token}"
     ext = f"way/live-ambiguous-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
         for name in ("Live Ambiguous Hall A", "Live Ambiguous Hall B"):
             seed = create_property(
@@ -693,7 +724,7 @@ def test_live_recorded_ambiguous_address_requires_review() -> None:
             )
             created.append(str(seed["id"]))
         _live_seed_link("osm", ext, created[0])
-        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)])
+        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)], run_ids)
         assert result.counts.created == 0
         reason = result.skipped[0].reason
         assert "multiple properties" in reason and "held for review" in reason
@@ -701,6 +732,7 @@ def test_live_recorded_ambiguous_address_requires_review() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_street(street)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -713,6 +745,7 @@ def test_live_recorded_address_gain_does_not_modify() -> None:
     street = f"500 Live Gain Way {token}"
     ext = f"way/live-gain-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
         seed = create_property(
             {
@@ -728,7 +761,7 @@ def test_live_recorded_address_gain_does_not_modify() -> None:
         created.append(str(seed["id"]))
         _live_seed_link("osm", ext, created[0])
         before = _live_property_row(created[0])
-        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)])
+        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)], run_ids)
         assert result.counts.created == 0
         assert "not populated without verification" in result.skipped[0].reason
         assert _live_property_row(created[0]) == before
@@ -736,6 +769,7 @@ def test_live_recorded_address_gain_does_not_modify() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_street(street)
+        _live_cleanup_events(run_ids)
 
 
 @needs_live_pg
@@ -748,6 +782,7 @@ def test_live_address_match_records_no_link() -> None:
     street = f"500 Live Nosync Way {token}"
     ext = f"way/live-nosync-{token}"
     created: list[str] = []
+    run_ids: list[str] = []
     try:
         seed = create_property(
             {
@@ -761,7 +796,7 @@ def test_live_address_match_records_no_link() -> None:
             }
         )
         created.append(str(seed["id"]))
-        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)])
+        result = _live_run([_listing(source="overpass", external_id=ext, street_address=street)], run_ids)
         assert result.counts.created == 0
         assert "already stored" in result.skipped[0].reason
         assert len(_live_properties_by_street(street)) == 1
@@ -769,3 +804,4 @@ def test_live_address_match_records_no_link() -> None:
     finally:
         _live_cleanup(created)
         _live_cleanup_street(street)
+        _live_cleanup_events(run_ids)

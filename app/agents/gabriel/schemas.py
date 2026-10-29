@@ -78,6 +78,7 @@ class SkippedCandidate(BaseModel):
     reason: str
     name: str | None = None
     street_address: str | None = None
+    reason_code: str = ""
 
 
 class DiscoveryRunCounts(BaseModel):
@@ -97,6 +98,7 @@ class DiscoveryRunResult(BaseModel):
     counts: DiscoveryRunCounts = DiscoveryRunCounts()
     created_ids: list[str] = []
     skipped: list[SkippedCandidate] = []
+    run_id: str = ""
 
 
 class DiscoverySourceInfo(BaseModel):
