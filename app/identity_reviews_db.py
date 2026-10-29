@@ -13,6 +13,7 @@ set. A shared property id alone never merges two cases.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -498,3 +499,128 @@ def get_identity_review(
     detail["occurrences_truncated"] = len(occurrence_rows) > REVIEW_OCCURRENCE_LIMIT
     detail["decision_event"] = dict(event_row)
     return detail
+
+
+_SUMMARY_SQL = (
+    "WITH cases AS ("
+    " SELECT review_id, status, source, occurrence_count"
+    " FROM identity_reviews"
+    " WHERE (%(source)s IS NULL OR source = %(source)s)"
+    " AND (%(run_id)s IS NULL OR run_id = %(run_id)s)"
+    " AND created_at >= %(since)s AND created_at < %(until)s"
+    "), occ AS ("
+    " SELECT o.review_id, COUNT(*) AS n"
+    " FROM identity_review_occurrences o JOIN cases c USING (review_id)"
+    " GROUP BY o.review_id"
+    "), dec AS ("
+    " SELECT d.review_id, d.outcome, d.decided_at"
+    " FROM identity_review_decisions d JOIN cases c ON c.review_id = d.review_id"
+    ") SELECT json_build_object("
+    " 'total_cases', (SELECT COUNT(*) FROM cases),"
+    " 'pending_cases', (SELECT COUNT(*) FROM cases WHERE status = 'PENDING'),"
+    " 'resolved_cases', (SELECT COUNT(*) FROM cases WHERE status = 'RESOLVED'),"
+    " 'total_occurrences', (SELECT COALESCE(SUM(n), 0) FROM occ),"
+    " 'unresolved_occurrences', (SELECT COALESCE(SUM(o.n), 0) FROM occ o"
+    " JOIN cases c USING (review_id) WHERE c.status = 'PENDING'),"
+    " 'total_decisions', (SELECT COUNT(*) FROM dec),"
+    " 'same_property', (SELECT COUNT(*) FROM dec WHERE outcome = 'SAME_PROPERTY'),"
+    " 'distinct_properties', (SELECT COUNT(*) FROM dec WHERE outcome = 'DISTINCT_PROPERTIES'),"
+    " 'by_source', (SELECT COALESCE(json_object_agg(source, n), '{}')"
+    " FROM (SELECT source, COUNT(*) AS n FROM cases GROUP BY source) s),"
+    " 'bucket_one', (SELECT COUNT(*) FROM cases c LEFT JOIN occ o USING (review_id)"
+    " WHERE COALESCE(o.n, 0) = 1),"
+    " 'bucket_two_three', (SELECT COUNT(*) FROM cases c LEFT JOIN occ o USING (review_id)"
+    " WHERE COALESCE(o.n, 0) BETWEEN 2 AND 3),"
+    " 'bucket_four_plus', (SELECT COUNT(*) FROM cases c LEFT JOIN occ o USING (review_id)"
+    " WHERE COALESCE(o.n, 0) >= 4),"
+    " 'by_day', (SELECT COALESCE(json_agg(row ORDER BY day), '[]')"
+    " FROM (SELECT DATE(decided_at AT TIME ZONE 'UTC')::text AS day, COUNT(*) AS count"
+    " FROM dec WHERE decided_at >= %(since)s AND decided_at < %(until)s"
+    " GROUP BY 1) row),"
+    " 'resolved_without_decision', (SELECT COUNT(*) FROM cases c"
+    " WHERE c.status = 'RESOLVED'"
+    " AND NOT EXISTS (SELECT 1 FROM dec WHERE dec.review_id = c.review_id)),"
+    " 'pending_with_decision', (SELECT COUNT(*) FROM cases c"
+    " WHERE c.status = 'PENDING'"
+    " AND EXISTS (SELECT 1 FROM dec WHERE dec.review_id = c.review_id)),"
+    " 'counter_mismatch', (SELECT COUNT(*) FROM cases c LEFT JOIN occ o USING (review_id)"
+    " WHERE c.occurrence_count != COALESCE(o.n, 0))"
+    ") AS summary"
+)
+
+_SUMMARY_SOURCES = ("intake", "discovery", "research")
+
+
+def get_review_summary(
+    *,
+    source: str | None = None,
+    run_id: str | None = None,
+    since: datetime,
+    until: datetime,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any]:
+    """Aggregate one consistent snapshot of the review queue (IR-4C).
+
+    A single SELECT computes every count from the same snapshot:
+    case totals by status, occurrence-row totals (rows are the
+    authority, never the stored counters), decision totals by
+    outcome, per-source and per-bucket breakdowns, and the UTC
+    daily resolution series inside the effective window. Empty
+    sets report zeros. Any integrity mismatch (RESOLVED without
+    a decision, PENDING with one, or a stored counter disagreeing
+    with its rows) fails closed with DatabaseUnavailableError so
+    callers serve the generic outage response instead of a
+    corrupt summary. SELECT-only; nothing is written.
+    """
+    params = {"source": source, "run_id": run_id, "since": since, "until": until}
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_SUMMARY_SQL, params)
+                row = cur.fetchone()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    if row is None:
+        raise DatabaseUnavailableError("review_summary_missing")
+    payload = dict(row["summary"])
+    if (
+        payload.get("resolved_without_decision")
+        or payload.get("pending_with_decision")
+        or payload.get("counter_mismatch")
+    ):
+        raise DatabaseUnavailableError("review_summary_integrity")
+    by_source = dict(payload.get("by_source") or {})
+    buckets = {
+        "one": int(payload.get("bucket_one") or 0),
+        "two_to_three": int(payload.get("bucket_two_three") or 0),
+        "four_or_more": int(payload.get("bucket_four_plus") or 0),
+    }
+    return {
+        "cases": {
+            "total": int(payload.get("total_cases") or 0),
+            "pending": int(payload.get("pending_cases") or 0),
+            "resolved": int(payload.get("resolved_cases") or 0),
+        },
+        "occurrences": {
+            "total": int(payload.get("total_occurrences") or 0),
+            "unresolved": int(payload.get("unresolved_occurrences") or 0),
+        },
+        "decisions": {
+            "total": int(payload.get("total_decisions") or 0),
+            "by_outcome": {
+                "SAME_PROPERTY": int(payload.get("same_property") or 0),
+                "DISTINCT_PROPERTIES": int(payload.get("distinct_properties") or 0),
+            },
+        },
+        "cases_by_source": {
+            name: int(by_source.get(name) or 0) for name in _SUMMARY_SOURCES
+        },
+        "repeated_case_count": buckets["two_to_three"] + buckets["four_or_more"],
+        "occurrence_buckets": buckets,
+        "resolutions_by_day": [
+            {"day": item["day"], "count": int(item["count"])}
+            for item in (payload.get("by_day") or [])
+        ],
+    }

@@ -16,6 +16,7 @@ properties or evidence.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -28,6 +29,7 @@ from app.identity_reviews import (
     IdentityReviewList,
     IdentityReviewResolutionRequest,
     IdentityReviewResolutionResult,
+    IdentityReviewSummary,
 )
 from app.identity_review_resolve import (
     AuthenticationFailedError,
@@ -41,6 +43,7 @@ from app.identity_reviews_db import (
     REVIEW_LIST_DEFAULT_LIMIT,
     REVIEW_LIST_MAX_LIMIT,
     get_identity_review,
+    get_review_summary,
     list_identity_reviews,
 )
 
@@ -49,6 +52,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["identity-reviews"])
 
 _NO_STORE = {"Cache-Control": "no-store"}
+
+# Longest creation window a summary may cover: a 365-day span can
+# hold at most 366 UTC calendar days, which structurally bounds the
+# daily resolution series without any silent truncation.
+_SUMMARY_MAX_WINDOW_DAYS = 365
+_SUMMARY_DEFAULT_WINDOW_DAYS = 365
 
 
 @router.get("/identity-reviews", response_model=IdentityReviewList)
@@ -91,6 +100,83 @@ def list_reviews_endpoint(
             headers=_NO_STORE,
         ) from exc
     return {"reviews": reviews, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/identity-reviews/summary", response_model=IdentityReviewSummary)
+def get_review_summary_endpoint(
+    response: Response,
+    source: Literal["intake", "discovery", "research"] | None = Query(default=None),
+    run_id: str | None = Query(default=None, max_length=256),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    _: None = Depends(require_intake_key),
+) -> dict:
+    """Return one read-only aggregate snapshot of the review queue.
+
+    Registered before /{review_id} so "summary" never parses as a
+    UUID. All filters select the same review set using
+    identity_reviews.created_at; since and until must be aware,
+    ordered, and at most 365 days apart. Without explicit bounds
+    the trailing 365-day window is served, always disclosed via
+    filters_echo. resolutions_by_day additionally restricts its
+    daily series to decisions whose decided_at falls within the
+    effective window, so decisions.total may exceed the sum of
+    resolutions_by_day.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    for bound in (since, until):
+        if bound is not None and bound.tzinfo is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="invalid_range",
+                headers=_NO_STORE,
+            )
+    now = datetime.now(timezone.utc)
+    effective_until = until if until is not None else now
+    if since is not None:
+        effective_since = since
+    else:
+        effective_since = effective_until - timedelta(days=_SUMMARY_DEFAULT_WINDOW_DAYS)
+    if effective_until <= effective_since or (
+        effective_until - effective_since
+    ).total_seconds() > _SUMMARY_MAX_WINDOW_DAYS * 86400:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid_range",
+            headers=_NO_STORE,
+        )
+    try:
+        aggregates = get_review_summary(
+            source=source,
+            run_id=run_id,
+            since=effective_since,
+            until=effective_until,
+        )
+    except DatabaseNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_not_configured",
+            headers=_NO_STORE,
+        ) from exc
+    except DatabaseUnavailableError as exc:
+        logger.warning("review summary failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database_unavailable",
+            headers=_NO_STORE,
+        ) from exc
+    return {
+        "generated_at": now,
+        "filters_echo": {
+            "source": source,
+            "run_id": run_id,
+            "since": since,
+            "until": until,
+            "effective_since": effective_since,
+            "effective_until": effective_until,
+        },
+        **aggregates,
+    }
 
 
 @router.get("/identity-reviews/{review_id}", response_model=IdentityReviewDetail)

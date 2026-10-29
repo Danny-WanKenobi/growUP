@@ -1004,6 +1004,282 @@ def test_readers_wrap_driver_failures(monkeypatch) -> None:
         reviews_db.list_identity_reviews()
 
 
+# --- Summary reader + response model (IR-4C Phase 1) -------------------------------
+
+
+def _summary_payload(**overrides):
+    payload = {
+        "total_cases": 0,
+        "pending_cases": 0,
+        "resolved_cases": 0,
+        "total_occurrences": 0,
+        "unresolved_occurrences": 0,
+        "total_decisions": 0,
+        "same_property": 0,
+        "distinct_properties": 0,
+        "by_source": {},
+        "bucket_one": 0,
+        "bucket_two_three": 0,
+        "bucket_four_plus": 0,
+        "by_day": [],
+        "resolved_without_decision": 0,
+        "pending_with_decision": 0,
+        "counter_mismatch": 0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _summary_conn(monkeypatch, payload):
+    return _reader_conn(monkeypatch, [[{"summary": payload}]])
+
+
+def test_summary_reader_empty_database_returns_zeros(monkeypatch) -> None:
+    from datetime import timedelta
+
+    from app import identity_reviews_db as reviews_db
+
+    until = _aware("2026-10-29T12:00:00+00:00")
+    conn = _summary_conn(monkeypatch, _summary_payload())
+    result = reviews_db.get_review_summary(
+        source=None, run_id=None, since=until - timedelta(days=365), until=until
+    )
+    assert result["cases"] == {"total": 0, "pending": 0, "resolved": 0}
+    assert result["occurrences"] == {"total": 0, "unresolved": 0}
+    assert result["decisions"]["total"] == 0
+    assert result["decisions"]["by_outcome"] == {"SAME_PROPERTY": 0, "DISTINCT_PROPERTIES": 0}
+    assert result["cases_by_source"] == {"intake": 0, "discovery": 0, "research": 0}
+    assert result["repeated_case_count"] == 0
+    assert result["resolutions_by_day"] == []
+    assert len(conn.cursor_obj.statements) == 1
+
+
+def test_summary_reader_uses_single_readonly_snapshot(monkeypatch) -> None:
+    from app import identity_reviews_db as reviews_db
+
+    until = _aware("2026-10-29T12:00:00+00:00")
+    since = _aware("2026-10-01T00:00:00+00:00")
+    conn = _summary_conn(
+        monkeypatch,
+        _summary_payload(total_cases=3, pending_cases=1, resolved_cases=2),
+    )
+    reviews_db.get_review_summary(source="intake", run_id="run-1", since=since, until=until)
+    assert len(conn.cursor_obj.statements) == 1
+    sql, params = conn.cursor_obj.statements[0]
+    assert sql.lstrip().upper().startswith(("SELECT", "WITH"))
+    for verb in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "ALTER"):
+        assert verb not in sql.upper()
+    assert params["source"] == "intake"
+    assert params["run_id"] == "run-1"
+    assert params["since"] == since
+    assert params["until"] == until
+    # The daily-series JSON elements must carry the contract keys the
+    # reader consumes (day/count), not the internal aggregate alias.
+    assert "AS day, COUNT(*) AS count" in sql
+
+
+def test_summary_reader_maps_buckets_and_days(monkeypatch) -> None:
+    from app import identity_reviews_db as reviews_db
+
+    until = _aware("2026-10-29T12:00:00+00:00")
+    _summary_conn(
+        monkeypatch,
+        _summary_payload(
+            total_cases=4,
+            by_source={"intake": 2, "research": 2},
+            bucket_one=1,
+            bucket_two_three=2,
+            bucket_four_plus=1,
+            by_day=[{"day": "2026-10-28", "count": 2}],
+        ),
+    )
+    result = reviews_db.get_review_summary(
+        source=None, run_id=None,
+        since=_aware("2026-10-01T00:00:00+00:00"), until=until,
+    )
+    assert result["cases_by_source"] == {"intake": 2, "discovery": 0, "research": 2}
+    assert result["occurrence_buckets"] == {"one": 1, "two_to_three": 2, "four_or_more": 1}
+    assert result["repeated_case_count"] == 3
+    assert result["resolutions_by_day"] == [{"day": "2026-10-28", "count": 2}]
+
+
+def test_summary_reader_fails_closed_on_integrity_mismatch(monkeypatch) -> None:
+    from app import identity_reviews_db as reviews_db
+
+    until = _aware("2026-10-29T12:00:00+00:00")
+    for flag in ("resolved_without_decision", "pending_with_decision", "counter_mismatch"):
+        _summary_conn(monkeypatch, _summary_payload(**{flag: 1}))
+        with pytest.raises(DatabaseUnavailableError):
+            reviews_db.get_review_summary(
+                source=None, run_id=None,
+                since=_aware("2026-10-01T00:00:00+00:00"), until=until,
+            )
+
+
+def test_summary_response_model_shape() -> None:
+    from app.identity_reviews import IdentityReviewSummary
+
+    model = IdentityReviewSummary(
+        generated_at=_aware("2026-10-29T12:00:00+00:00"),
+        filters_echo={
+            "source": None, "run_id": None,
+            "since": None, "until": None,
+            "effective_since": _aware("2025-10-29T12:00:00+00:00"),
+            "effective_until": _aware("2026-10-29T12:00:00+00:00"),
+        },
+        cases={"total": 1, "pending": 1, "resolved": 0},
+        occurrences={"total": 2, "unresolved": 2},
+        decisions={"total": 0, "by_outcome": {"SAME_PROPERTY": 0, "DISTINCT_PROPERTIES": 0}},
+        cases_by_source={"intake": 1, "discovery": 0, "research": 0},
+        repeated_case_count=1,
+        occurrence_buckets={"one": 0, "two_to_three": 1, "four_or_more": 0},
+        resolutions_by_day=[],
+    )
+    assert model.cases.total == 1
+    assert model.decisions.by_outcome.SAME_PROPERTY == 0
+    assert "approval_signature" not in model.model_dump_json()
+
+
+def _aware(value: str):
+    from datetime import datetime
+
+    parsed = datetime.fromisoformat(value)
+    assert parsed.tzinfo is not None
+    return parsed
+
+
+_SUMMARY_URL = f"{_LIST_URL}/summary"
+
+
+def _summary_result(**overrides):
+    result = {
+        "cases": {"total": 2, "pending": 1, "resolved": 1},
+        "occurrences": {"total": 3, "unresolved": 2},
+        "decisions": {
+            "total": 1,
+            "by_outcome": {"SAME_PROPERTY": 1, "DISTINCT_PROPERTIES": 0},
+        },
+        "cases_by_source": {"intake": 2, "discovery": 0, "research": 0},
+        "repeated_case_count": 1,
+        "occurrence_buckets": {"one": 1, "two_to_three": 1, "four_or_more": 0},
+        "resolutions_by_day": [{"day": "2026-10-28", "count": 1}],
+    }
+    result.update(overrides)
+    return result
+
+
+def test_summary_route_registered_before_detail() -> None:
+    from app.routes.identity_reviews import router
+
+    paths = [route.path for route in router.routes]
+    assert paths.index("/identity-reviews/summary") < paths.index("/identity-reviews/{review_id}")
+
+
+def test_summary_success_shape_and_filters(monkeypatch) -> None:
+    seen: dict = {}
+
+    def _fake(*, source, run_id, since, until):
+        seen.update(source=source, run_id=run_id, since=since, until=until)
+        return _summary_result()
+
+    monkeypatch.setattr(review_routes, "get_review_summary", _fake)
+    resp = client.get(
+        _SUMMARY_URL,
+        params={
+            "source": "intake",
+            "run_id": "run-9",
+            "since": "2026-10-01T00:00:00+00:00",
+            "until": "2026-10-29T12:00:00+00:00",
+        },
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cases"] == {"total": 2, "pending": 1, "resolved": 1}
+    assert body["decisions"]["by_outcome"] == {"SAME_PROPERTY": 1, "DISTINCT_PROPERTIES": 0}
+    assert body["occurrence_buckets"] == {"one": 1, "two_to_three": 1, "four_or_more": 0}
+    assert body["repeated_case_count"] == 1
+    assert body["resolutions_by_day"] == [{"day": "2026-10-28", "count": 1}]
+    assert body["filters_echo"]["source"] == "intake"
+    assert body["filters_echo"]["run_id"] == "run-9"
+    assert body["filters_echo"]["effective_since"] == "2026-10-01T00:00:00Z"
+    assert "generated_at" in body
+    assert "approval_signature" not in resp.text
+    assert seen["source"] == "intake"
+    assert seen["run_id"] == "run-9"
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_summary_defaults_to_trailing_window(monkeypatch) -> None:
+    seen: dict = {}
+
+    def _fake(*, source, run_id, since, until):
+        seen.update(since=since, until=until)
+        return _summary_result()
+
+    monkeypatch.setattr(review_routes, "get_review_summary", _fake)
+    resp = client.get(_SUMMARY_URL, headers=_headers())
+    assert resp.status_code == 200
+    assert (seen["until"] - seen["since"]).days == 365
+    assert resp.json()["filters_echo"]["source"] is None
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"since": "2026-10-28T12:00:00"},  # naive
+        {"until": "2026-10-28T12:00:00"},  # naive
+        {"since": "2026-10-29T12:00:00+00:00", "until": "2026-10-29T12:00:00+00:00"},
+        {"since": "2026-10-29T12:00:00+00:00", "until": "2026-10-01T00:00:00+00:00"},
+        {"since": "2024-01-01T00:00:00+00:00", "until": "2026-10-29T12:00:00+00:00"},
+        {"source": "bogus"},
+    ],
+)
+def test_summary_rejects_invalid_filters(monkeypatch, params) -> None:
+    def _boom(**kwargs):
+        raise AssertionError("reader must not run on invalid filters")
+
+    monkeypatch.setattr(review_routes, "get_review_summary", _boom)
+    resp = client.get(_SUMMARY_URL, params=params, headers=_headers())
+    assert resp.status_code == 422
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_summary_requires_auth(monkeypatch) -> None:
+    def _boom(**kwargs):
+        raise AssertionError("reader must not run unauthenticated")
+
+    monkeypatch.setattr(review_routes, "get_review_summary", _boom)
+    resp = client.get(_SUMMARY_URL)
+    assert resp.status_code == 401
+    resp = client.get(_SUMMARY_URL, headers=_headers("wrong-key"))
+    assert resp.status_code == 401
+    assert "wrong-key" not in resp.text
+
+
+def test_summary_unconfigured_auth_fails_closed(monkeypatch) -> None:
+    monkeypatch.delenv("INTAKE_API_KEY", raising=True)
+    resp = client.get(_SUMMARY_URL, headers=_headers())
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "intake_not_configured"}
+
+
+def test_summary_database_failures_map_to_503(monkeypatch) -> None:
+    for error, detail in (
+        (DatabaseNotConfiguredError("x"), "database_not_configured"),
+        (DatabaseUnavailableError("x"), "database_unavailable"),
+    ):
+
+        def _fail(**kwargs):
+            raise error
+
+        monkeypatch.setattr(review_routes, "get_review_summary", _fail)
+        resp = client.get(_SUMMARY_URL, headers=_headers())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": detail}
+        assert resp.headers.get("cache-control") == "no-store"
+
+
 # --- Live PostgreSQL HTTP integration (GROWUP_PG_INTEGRATION=1) ----------------
 #
 # One end-to-end resolve through TestClient against real PostgreSQL:
@@ -1136,6 +1412,212 @@ def _live_http_keypair():
         private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()).hex(),
         private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
     )
+
+
+def _live_summary_seed(tag, specs):
+    """Seed synthetic reviews per spec; return (review_ids, event_ids).
+
+    Each spec: (source, status, run, occurrence_count, outcome|None,
+    decided_at|None). Occurrence counters always match inserted rows.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from app.properties_db import get_connection
+
+    review_ids: list[str] = []
+    event_ids: list[str] = []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for index, (source, status, run, occs, outcome, decided) in enumerate(specs):
+                rid = str(uuid4())
+                eid = f"evt-live-summary-{tag}-{index}"
+                event_ids.append(eid)
+                cur.execute(
+                    "INSERT INTO agent_events (event_id, occurred_at, agent, run_id,"
+                    " correlation_id, event_type, severity, summary, details,"
+                    " evidence_refs, retention_class)"
+                    " VALUES (%(eid)s, now(), 'gabriel', %(run)s, '',"
+                    " 'gabriel.intake.decision', 'INFO', 'synthetic summary seed',"
+                    " '{}', '[]', 'permanent')",
+                    {"eid": eid, "run": run},
+                )
+                cur.execute(
+                    "INSERT INTO identity_reviews (review_id, dedup_key, source,"
+                    " reason_code, observed_identity, conflicting_property_ids,"
+                    " candidate_key, decision_event_id, run_id, status,"
+                    " occurrence_count, last_event_id)"
+                    " VALUES (%(rid)s, %(key)s, %(source)s, 'AMBIGUOUS_ADDRESS', '{}',"
+                    " %(pids)s, %(ckey)s, %(eid)s, %(run)s, %(status)s, %(count)s,"
+                    " %(eid)s)",
+                    {
+                        "rid": rid,
+                        "key": f"live-summary:{tag}:{index}",
+                        "source": source,
+                        "pids": [str(uuid4())] if source != "research" else [],
+                        "ckey": f"addr:live-summary-{tag}-{index}"
+                        if source == "research"
+                        else None,
+                        "eid": eid,
+                        "run": run,
+                        "status": status,
+                        "count": occs,
+                    },
+                )
+                for num in range(occs):
+                    oid = f"evt-live-summary-{tag}-{index}-occ-{num}"
+                    event_ids.append(oid)
+                    cur.execute(
+                        "INSERT INTO agent_events (event_id, occurred_at, agent, run_id,"
+                        " correlation_id, event_type, severity, summary, details,"
+                        " evidence_refs, retention_class)"
+                        " VALUES (%(eid)s, now(), 'gabriel', %(run)s, '',"
+                        " 'gabriel.intake.decision', 'INFO', 'synthetic summary seed',"
+                        " '{}', '[]', 'permanent')",
+                        {"eid": oid, "run": run},
+                    )
+                    cur.execute(
+                        "INSERT INTO identity_review_occurrences"
+                        " (occurrence_id, review_id, event_id)"
+                        " VALUES (%(oid)s, %(rid)s, %(eid)s)",
+                        {"oid": str(uuid4()), "rid": rid, "eid": oid},
+                    )
+                if outcome is not None:
+                    snapshot = {
+                        "review_id": rid,
+                        "outcome": outcome,
+                        "expected_occurrence_count": occs,
+                        "summary": "synthetic summary seed",
+                    }
+                    cur.execute(
+                        "INSERT INTO identity_review_decisions (decision_id, review_id,"
+                        " outcome, prior_status, resolved_by, resolution_reference,"
+                        " approval_signature, signing_public_key, signing_key_fingerprint,"
+                        " approval_issued_at, approval_expires_at, evidence_digest,"
+                        " evidence_snapshot, expected_occurrence_count, evidence_summary,"
+                        " decided_at)"
+                        " VALUES (%(did)s, %(rid)s, %(outcome)s, 'PENDING',"
+                        " 'operator-seed', 'seed-ref', %(sig)s, %(pub)s, %(fp)s,"
+                        " %(issued)s, %(expires)s, %(digest)s, %(snap)s, %(count)s, '',"
+                        " %(decided)s)",
+                        {
+                            "did": str(uuid4()),
+                            "rid": rid,
+                            "outcome": outcome,
+                            "sig": "ab" * 64,
+                            "pub": "cd" * 32,
+                            "fp": "sha256:" + "ef" * 32,
+                            "issued": datetime(2026, 10, 27, 12, tzinfo=timezone.utc),
+                            "expires": datetime(2026, 10, 28, 12, tzinfo=timezone.utc),
+                            "digest": "sha256:" + "12" * 32,
+                            "snap": json.dumps(snapshot, sort_keys=True),
+                            "count": occs,
+                            "decided": decided
+                            or datetime.now(timezone.utc),
+                        },
+                    )
+                review_ids.append(rid)
+        conn.commit()
+    return review_ids, event_ids
+
+
+@needs_live_pg
+def test_live_summary_aggregates() -> None:
+    from datetime import datetime, timezone
+
+    _live_http_config()
+    _require_http_decision_table()
+    tag = uuid4().hex
+    run_a = f"run-live-summary-{tag}-a"
+    run_b = f"run-live-summary-{tag}-b"
+    # Explicit stored value (not now()): grouping is deterministic.
+    # Yesterday noon UTC always precedes until=now yet stays inside
+    # the trailing default window, at any hour of the day.
+    from datetime import timedelta
+
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    specs = [
+        ("intake", "PENDING", run_a, 1, None, None),
+        ("discovery", "PENDING", run_a, 3, None, None),
+        ("research", "RESOLVED", run_b, 2, "SAME_PROPERTY", day),
+        ("intake", "RESOLVED", run_b, 1, "DISTINCT_PROPERTIES", day),
+    ]
+    review_ids, event_ids = _live_summary_seed(tag, specs)
+    try:
+        resp = client.get(
+            _SUMMARY_URL,
+            params={"since": "2026-10-01T00:00:00+00:00"},
+            headers=_headers(),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Other suites may own rows outside this tag; scope assertions
+        # through the two synthetic runs plus the tag-wide run filter.
+        for run, expected in (
+            (run_a, {"total": 2, "pending": 2, "resolved": 0}),
+            (run_b, {"total": 2, "pending": 0, "resolved": 2}),
+        ):
+            scoped = client.get(
+                _SUMMARY_URL, params={"run_id": run}, headers=_headers()
+            )
+            assert scoped.status_code == 200
+            assert scoped.json()["cases"] == expected, run
+        scoped_a = client.get(
+            _SUMMARY_URL, params={"run_id": run_a}, headers=_headers()
+        ).json()
+        assert scoped_a["occurrences"] == {"total": 4, "unresolved": 4}
+        assert scoped_a["decisions"]["total"] == 0
+        assert scoped_a["occurrence_buckets"] == {"one": 1, "two_to_three": 1, "four_or_more": 0}
+        assert scoped_a["repeated_case_count"] == 1
+        scoped_b = client.get(
+            _SUMMARY_URL, params={"run_id": run_b}, headers=_headers()
+        ).json()
+        assert scoped_b["occurrences"] == {"total": 3, "unresolved": 0}
+        assert scoped_b["decisions"]["total"] == 2
+        assert scoped_b["decisions"]["by_outcome"] == {"SAME_PROPERTY": 1, "DISTINCT_PROPERTIES": 1}
+        assert scoped_b["resolutions_by_day"] == [{"day": day.date().isoformat(), "count": 2}]
+        assert scoped_b["cases_by_source"] == {"intake": 1, "discovery": 0, "research": 1}
+        intake_only = client.get(
+            _SUMMARY_URL,
+            params={"run_id": run_b, "source": "intake"},
+            headers=_headers(),
+        ).json()
+        assert intake_only["cases"] == {"total": 1, "pending": 0, "resolved": 1}
+        # A window ending before the seeds holds none of them.
+        empty = client.get(
+            _SUMMARY_URL,
+            params={
+                "run_id": run_a,
+                "since": "2026-09-01T00:00:00+00:00",
+                "until": "2026-09-02T00:00:00+00:00",
+            },
+            headers=_headers(),
+        ).json()
+        assert empty["cases"] == {"total": 0, "pending": 0, "resolved": 0}
+        assert empty["resolutions_by_day"] == []
+    finally:
+        _live_http_cleanup(review_ids, event_ids)
+
+
+@needs_live_pg
+def test_live_summary_integrity_mismatch_fails_closed() -> None:
+    _live_http_config()
+    _require_http_decision_table()
+    tag = uuid4().hex
+    run = f"run-live-summary-{tag}-bad"
+    # PENDING case carrying a decision row: the writer can never
+    # produce this; the summary must refuse to serve it.
+    review_ids, event_ids = _live_summary_seed(
+        tag, [("intake", "PENDING", run, 1, "SAME_PROPERTY", None)]
+    )
+    try:
+        resp = client.get(_SUMMARY_URL, params={"run_id": run}, headers=_headers())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "database_unavailable"}
+    finally:
+        _live_http_cleanup(review_ids, event_ids)
 
 
 @needs_live_pg

@@ -7,7 +7,7 @@ through these same contracts without a second breaking change.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -122,3 +122,86 @@ class IdentityReviewResolutionResult(BaseModel):
     resolved_by: str
     resolution_reference: str
     evidence_digest: str
+
+
+class SummaryCases(BaseModel):
+    """Case counts over the filtered review set."""
+
+    total: int
+    pending: int
+    resolved: int
+
+
+class SummaryOccurrences(BaseModel):
+    """Occurrence-row counts over the filtered review set."""
+
+    total: int
+    unresolved: int
+
+
+class DecisionsByOutcome(BaseModel):
+    """Signed decisions grouped by recorded outcome."""
+
+    SAME_PROPERTY: int
+    DISTINCT_PROPERTIES: int
+
+
+class SummaryDecisions(BaseModel):
+    """Signed human decisions over the filtered review set."""
+
+    total: int
+    by_outcome: DecisionsByOutcome
+
+
+class CasesBySource(BaseModel):
+    """Filtered cases grouped by originating pipeline."""
+
+    intake: int
+    discovery: int
+    research: int
+
+
+class OccurrenceBuckets(BaseModel):
+    """Filtered cases grouped by their occurrence-row count."""
+
+    one: int
+    two_to_three: int
+    four_or_more: int
+
+
+class ResolutionDay(BaseModel):
+    """One UTC calendar day with its resolution count."""
+
+    day: date
+    count: int
+
+
+class SummaryFiltersEcho(BaseModel):
+    """Supplied filters plus the effective creation window served."""
+
+    source: str | None = None
+    run_id: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    effective_since: datetime
+    effective_until: datetime
+
+
+class IdentityReviewSummary(BaseModel):
+    """One read-only aggregate snapshot of the review queue.
+
+    Every count derives from committed review, occurrence, and
+    decision rows in a single database snapshot. Empty sets
+    report zeros, never nulls; approval signatures, keys, and
+    secrets can never appear here.
+    """
+
+    generated_at: datetime
+    filters_echo: SummaryFiltersEcho
+    cases: SummaryCases
+    occurrences: SummaryOccurrences
+    decisions: SummaryDecisions
+    cases_by_source: CasesBySource
+    repeated_case_count: int
+    occurrence_buckets: OccurrenceBuckets
+    resolutions_by_day: list[ResolutionDay]
