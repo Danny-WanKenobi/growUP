@@ -12,7 +12,10 @@ descriptive research context, never proof of physical identity.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from typing import TYPE_CHECKING
 
 from app.agents.gabriel.dossier import DossierSet
 from app.agents.gabriel.extractor import (
@@ -25,6 +28,7 @@ from app.agents.gabriel.extractor import (
 from app.agents.gabriel.ranking import PropertyRanking, RankedCandidate
 from app.observability import (
     BatchEmitOutcome,
+    DurabilityError,
     Outbox,
     OutboxConfigError,
     OutboxUnavailableError,
@@ -40,6 +44,10 @@ from app.observability.events import (
     Severity,
 )
 from app.observability.jsonlog import JsonlSink
+from app.observability.redaction import redact, sanitize_structure
+
+if TYPE_CHECKING:
+    from app.agents.gabriel.research import ExecutedAssignment
 
 RESEARCH_VERDICT_EVENT_TYPE = "gabriel.research.candidate_decision"
 DOSSIER_VERDICT_EVENT_TYPE = "gabriel.dossier.verdict"
@@ -50,6 +58,7 @@ _MAX_UNRESOLVED = 20
 _MAX_EVIDENCE_REFS = 50
 _MAX_REF_CHARS = 2000
 _MAX_SUMMARY_KEY_CHARS = 200
+_MAX_QUERY_CHARS = 500
 
 _RESEARCH_DECISIONS = {
     "pass": "PASS",
@@ -110,6 +119,73 @@ def _exclusion_records(exclusions) -> list[dict]:
     return records
 
 
+def _assignment_record(executed: "ExecutedAssignment") -> dict:
+    """Durable record of one executed assignment (server-verified facts).
+
+    Queries longer than the cap are never silently truncated: the
+    record carries an explicit prefix, length, flag, and SHA-256 of
+    the complete original instead of a ``query`` value.
+    """
+    query = executed.query or ""
+    record: dict = {
+        "id": executed.assignment_id,
+        "category": executed.category,
+        "county": executed.county,
+        "strategy": executed.strategy,
+    }
+    if len(query) > _MAX_QUERY_CHARS:
+        record["query_prefix"] = query[:_MAX_QUERY_CHARS]
+        record["query_chars"] = len(query)
+        record["query_truncated"] = True
+        record["query_sha256"] = hashlib.sha256(query.encode("utf-8")).hexdigest()
+    else:
+        record["query"] = query
+    return record
+
+
+def _associated_assignments(
+    members: list[int],
+    items: list[ResultIntelligence],
+    executed: list["ExecutedAssignment"] | None,
+) -> list[dict]:
+    """Executed-assignment records genuinely linked to this candidate.
+
+    Only assignments that produced this candidate's member results are
+    included, deduplicated by ID in execution order. Never implies
+    run-level completeness; never touches candidate identity.
+    """
+    if not executed:
+        return []
+    member_ids = {items[i].assignment_id for i in members if items[i].assignment_id}
+    records: list[dict] = []
+    seen: set[str] = set()
+    for entry in executed:
+        if entry.assignment_id not in member_ids or entry.assignment_id in seen:
+            continue
+        seen.add(entry.assignment_id)
+        records.append(_assignment_record(entry))
+    return records
+
+
+def _require_details_within_limit(details: dict, event_type: str) -> None:
+    """Fail closed when verdict details would exceed the operational cap.
+
+    Mirrors the event-preparation size calculation exactly (redact,
+    sanitize, JSON UTF-8 bytes, strictly-greater comparison): a
+    permanent verdict must never be accepted with its substance
+    replaced by a generic truncation marker. Raises DurabilityError
+    before any durable acceptance begins, so batch atomicity holds.
+    """
+    cleaned = sanitize_structure(redact(details))
+    size = len(json.dumps(cleaned, default=str).encode("utf-8"))
+    limit = get_observability_config().max_detail_bytes
+    if size > limit:
+        raise DurabilityError(
+            f"{event_type} details {size} bytes exceed operational limit "
+            f"{limit}; refusing gutting truncation"
+        )
+
+
 def _short_key(group_key: str) -> str:
     if len(group_key) <= _MAX_SUMMARY_KEY_CHARS:
         return group_key
@@ -136,6 +212,7 @@ def _build_event(
     ranking_context: str,
     started: float | None,
     exclusions: list | None = None,
+    associated_assignments: list[dict] | None = None,
 ) -> AgentEvent:
     kept = unresolved[:_MAX_UNRESOLVED]
     details: dict = {
@@ -151,12 +228,14 @@ def _build_event(
         "unresolved": kept,
         "unresolved_truncated": max(0, len(unresolved) - len(kept)),
         "exclusions": _exclusion_records(exclusions or []),
+        "associated_assignments": list(associated_assignments or []),
         "identity_disputes": disputes,
         "ranking_context": ranking_context,
         "mutation_status": MUTATION_NOT_ATTEMPTED,
     }
     if started is not None:
         details["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    _require_details_within_limit(details, event_type)
     return AgentEvent(
         agent=AgentId.GABRIEL,
         run_id=run_id,
@@ -177,6 +256,7 @@ def build_research_verdicts(
     ranking: PropertyRanking,
     intel: ResearchIntelligence,
     started: float | None = None,
+    executed: list["ExecutedAssignment"] | None = None,
 ) -> list[AgentEvent]:
     """One permanent verdict per final ranked candidate, in rank order."""
     items = intel.results
@@ -229,6 +309,7 @@ def build_research_verdicts(
             ranking_context="research_run",
             started=started,
             exclusions=list(candidate.exclusions),
+            associated_assignments=_associated_assignments(members, items, executed),
         ))
     return verdicts
 

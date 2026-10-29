@@ -281,11 +281,13 @@ def test_price_change_across_years_not_contradiction() -> None:
     dossier_set = build_dossiers(
         DossierRequest(
             rounds=[
-                _intel(_listing(price="$25 million", retrieved_at="2024-06-01T12:00:00+00:00")),
+                _intel(_listing(price="$25 million", published_at="2024-05-01",
+                                retrieved_at="2024-06-01T12:00:00+00:00")),
                 _intel(
                     _listing(
                         price="$19 million",
                         url="https://other.org/meridian",
+                        published_at="2026-09-01",
                         retrieved_at="2026-10-22T12:00:00+00:00",
                     )
                 ),
@@ -299,29 +301,35 @@ def test_price_change_across_years_not_contradiction() -> None:
     )
     current = next(c for c in dossier.supported_facts if c.topic == "asking_price")
     assert "19000000" in current.statement
+    assert {ref.date_source for ref in current.evidence} == {"published"}
 
 
 def test_occupancy_change_across_years_not_contradiction() -> None:
-    def _occupancy(pct, retrieved, url):
+    def _occupancy(pct, published, retrieved, url):
         return _result(
             "Occupancy report",
             f"Meridian Tower at 500 Commerce St, Dallas, TX reports {pct}% occupancy "
             "across the entire building.",
             url=url,
+            published_at=published,
             retrieved_at=retrieved,
         )
 
     dossier_set = build_dossiers(
         DossierRequest(
             rounds=[
-                _intel(_occupancy(35, "2024-06-01T12:00:00+00:00", "https://example.com/old")),
-                _intel(_occupancy(60, "2026-10-22T12:00:00+00:00", "https://other.org/new")),
+                _intel(_occupancy(35, "2024-05-01", "2024-06-01T12:00:00+00:00",
+                                  "https://example.com/old")),
+                _intel(_occupancy(60, "2026-09-01", "2026-10-22T12:00:00+00:00",
+                                  "https://other.org/new")),
             ]
         )
     )
     dossier = dossier_set.dossiers[0]
     assert dossier.conflicts == []
-    assert len([c for c in dossier.supported_facts if c.topic == "occupancy"]) == 2
+    occupancy = [c for c in dossier.supported_facts if c.topic == "occupancy"]
+    assert len(occupancy) == 2
+    assert {ref.date_source for claim in occupancy for ref in claim.evidence} == {"published"}
 
 
 def test_reassessment_reuses_ranking_engine() -> None:

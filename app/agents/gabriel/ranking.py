@@ -159,6 +159,7 @@ class RankedCandidate(BaseModel):
     distress: list[SignalRef] = []
     underuse: list[SignalRef] = []
     sources: list[str] = []
+    source_roles: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ScreenedLead(BaseModel):
@@ -218,6 +219,7 @@ class _CandidateEvidence:
         self.downtown_hits: list[ResultIntelligence] = []
         self.unresolved: list[str] = []
         self.contradictions: list[str] = []
+        self.contradiction_urls: set[str] = set()
         self.asking_contested: bool = False
         self.domains: set[str] = set()
         self.has_current_evidence = False
@@ -318,6 +320,7 @@ def _collect_candidate(
             evidence.contradictions.append(
                 f"conflicting asking prices {low} vs {high}; Raphael must reconcile"
             )
+            evidence.contradiction_urls.update(item.result_url for _, item, _ in asking_amounts)
             evidence.asking_contested = True
     evidence.asking = asking_amounts
     # Occupancy/vacancy conflict: high occupancy plus vacancy evidence.
@@ -333,6 +336,13 @@ def _collect_candidate(
         evidence.contradictions.append(
             "high reported occupancy conflicts with vacancy evidence; Raphael must reconcile"
         )
+        evidence.contradiction_urls.update(
+            item.result_url for item, obs in evidence.occupancy
+            if obs.occupancy_pct is not None or (obs.vacancy_pct or 0) >= 30
+        )
+        if "high_vacancy" in evidence.underuse:
+            item, _ = evidence.underuse["high_vacancy"]
+            evidence.contradiction_urls.add(item.result_url)
     return evidence
 
 
@@ -355,6 +365,7 @@ def _assess_county(evidence: _CandidateEvidence) -> tuple[CountyEligibility, str
     evidence.contradictions.append(
         f"conflicting county evidence ({', '.join(distinct)}); Raphael must determine which county holds the property"
     )
+    evidence.contradiction_urls.update(item.result_url for _, item in evidence.counties)
     return (
         CountyEligibility.COUNTY_UNKNOWN,
         f"multiple counties mentioned ({', '.join(distinct)}); attribution ambiguous",
@@ -660,6 +671,35 @@ def _score_opportunity(
     return assessment
 
 
+def _source_roles(candidate: RankedCandidate, contradiction_urls: set[str]) -> dict[str, list[str]]:
+    """Conservative per-candidate source roles (observation only).
+
+    ``claim_evidence`` requires the URL to appear in a surfaced evidence
+    reference; ``contradictory_evidence`` requires an explicit
+    contradiction relationship recorded during collection; anything else
+    in ``sources`` is ``member_only``. Roles never affect scoring,
+    grouping, or identity. Ordering follows ``sources``; role lists
+    are sorted.
+    """
+    claimed: set[str] = set()
+    if candidate.value_detail is not None:
+        claimed.add(candidate.value_detail.url)
+    for factor in candidate.opportunity.factors:
+        claimed.update(ref.url for ref in factor.evidence)
+    claimed.update(ref.url for ref in candidate.distress)
+    claimed.update(ref.url for ref in candidate.underuse)
+    claimed.update(record.source_url for record in candidate.exclusions)
+    claimed.update(record.source_url for record in candidate.deferrals)
+    roles: dict[str, list[str]] = {}
+    for url in candidate.sources:
+        assigned = sorted(
+            (["claim_evidence"] if url in claimed else [])
+            + (["contradictory_evidence"] if url in contradiction_urls else [])
+        )
+        roles[url] = assigned or ["member_only"]
+    return roles
+
+
 # ---------------------------------------------------------------------------
 # Ranking assembly
 # ---------------------------------------------------------------------------
@@ -758,6 +798,7 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
                 amount=str(amount), evidence=excerpt[:300], url=item.result_url, date=_item_date(item)
             )
         candidate.opportunity = _score_opportunity(evidence, items, downtown)
+        candidate.source_roles = _source_roles(candidate, evidence.contradiction_urls)
         ranking.candidates.append(candidate)
     # Value ranking: priced candidates in the active queue, by asking price.
     # Deferred out-of-area leads keep their evidence but leave the queue.

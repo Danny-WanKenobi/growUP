@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -70,6 +71,7 @@ class ClaimEvidence(BaseModel):
     domain: str = ""
     round: int = 0
     date: str | None = None
+    date_source: Literal["published", "retrieved", "unknown"] = "unknown"
 
 
 class ConsolidatedClaim(BaseModel):
@@ -115,6 +117,7 @@ class PropertyDossier(BaseModel):
     distress_findings: list[ConsolidatedClaim] = []
     underuse_findings: list[ConsolidatedClaim] = []
     sources: list[str] = []
+    source_roles: dict[str, list[str]] = Field(default_factory=dict)
     conflicts: list[DossierContradiction] = []
     missing: list[str] = []
     actions_performed: list[str] = []
@@ -149,6 +152,26 @@ _WS_RE = re.compile(r"\s+")
 
 def _result_date(item: ResultIntelligence) -> str | None:
     return item.temporal.published_at or item.retrieved_at or None
+
+
+def _date_source(item: ResultIntelligence) -> Literal["published", "retrieved", "unknown"]:
+    """Origin of the display date: only published dates establish chronology."""
+    if item.temporal.published_at:
+        return "published"
+    if item.retrieved_at:
+        return "retrieved"
+    return "unknown"
+
+
+def _published_year(item: ResultIntelligence) -> int | None:
+    """Publication year, or None when no genuine publication date exists.
+
+    Retrieval timestamps record observation timing; they must never
+    stand in for publication dates in financial chronology.
+    """
+    if not item.temporal.published_at:
+        return None
+    return _year_of(item.temporal.published_at)
 
 
 def _year_of(date: str | None) -> int | None:
@@ -229,6 +252,7 @@ def _ref(item: ResultIntelligence, round_no: int, excerpt: str) -> ClaimEvidence
         domain=item.domain or item.result_url,
         round=round_no,
         date=_result_date(item),
+        date_source=_date_source(item),
     )
 
 
@@ -282,7 +306,11 @@ def _asking_claims(evidence: _DossierEvidence) -> tuple[list[ConsolidatedClaim],
     # Multiple distinct amounts: same-period conflicts stay supported-but-
     # contradictory (flagged below); different-year amounts show change.
     dated = sorted(
-        ((amount, _year_of(ref.date), ref) for amount, refs in by_amount.items() for ref in refs),
+        (
+            (amount, _year_of(ref.date) if ref.date_source == "published" else None, ref)
+            for amount, refs in by_amount.items()
+            for ref in refs
+        ),
         key=lambda entry: (entry[1] or 0, entry[0]),
     )
     years = {year for _, year, _ in dated if year is not None}
@@ -486,9 +514,9 @@ def _detect_conflicts(evidence: _DossierEvidence) -> list[DossierContradiction]:
     amounts = sorted({amount for amount, _, _, _ in evidence.asking})
     if len(amounts) > 1 and amounts[-1] > amounts[0] * Decimal("1.05"):
         years = {
-            _year_of(_result_date(item))
+            _published_year(item)
             for amount, item, _, _ in evidence.asking
-            if _year_of(_result_date(item)) is not None
+            if _published_year(item) is not None
         }
         if len(years) < 2:
             conflicts.append(
@@ -509,7 +537,7 @@ def _detect_conflicts(evidence: _DossierEvidence) -> list[DossierContradiction]:
                 {
                     amount
                     for amount, item, _, _ in evidence.asking
-                    if _year_of(_result_date(item)) == newest_year
+                    if _published_year(item) == newest_year
                 }
             )
             if len(newest_amounts) > 1 and newest_amounts[-1] > newest_amounts[0] * Decimal("1.05"):
@@ -521,7 +549,7 @@ def _detect_conflicts(evidence: _DossierEvidence) -> list[DossierContradiction]:
                         evidence=[
                             _ref(item, round_no, excerpt)
                             for amount, item, round_no, excerpt in evidence.asking
-                            if _year_of(_result_date(item)) == newest_year
+                            if _published_year(item) == newest_year
                         ],
                         resolution="Raphael must determine the correct current asking price.",
                     )
@@ -533,9 +561,9 @@ def _detect_conflicts(evidence: _DossierEvidence) -> list[DossierContradiction]:
     ]
     if len({pct for pct, _, _ in occupancy_pcts}) > 1:
         years = {
-            _year_of(_result_date(item))
+            _published_year(item)
             for _, item, _ in occupancy_pcts
-            if _year_of(_result_date(item)) is not None
+            if _published_year(item) is not None
         }
         if len(years) < 2:
             conflicts.append(
@@ -709,6 +737,36 @@ def _compare_rankings(prior: PropertyRanking, new: PropertyRanking) -> list[Rank
 # ---------------------------------------------------------------------------
 
 
+def _dossier_source_roles(dossier: PropertyDossier) -> dict[str, list[str]]:
+    """Conservative per-dossier source roles, recomputed from dossier claims.
+
+    Never copied from ranking: dossier rounds and claims differ. A URL is
+    ``claim_evidence`` only when it appears in a finding's evidence,
+    ``contradictory_evidence`` only when it appears in a detected
+    conflict or a contradictory claim; anything else in ``sources`` is
+    ``member_only``. Ordering follows ``sources``; role lists sorted.
+    """
+    findings = (
+        dossier.supported_facts + dossier.historical_observations
+        + dossier.distress_findings + dossier.underuse_findings
+    )
+    claimed = {ref.url for claim in findings for ref in claim.evidence}
+    contradictory = {ref.url for conflict in dossier.conflicts for ref in conflict.evidence}
+    contradictory.update(
+        ref.url for claim in findings
+        if claim.status is ClaimStatus.CONTRADICTORY
+        for ref in claim.evidence
+    )
+    roles: dict[str, list[str]] = {}
+    for url in dossier.sources:
+        assigned = sorted(
+            (["claim_evidence"] if url in claimed else [])
+            + (["contradictory_evidence"] if url in contradictory else [])
+        )
+        roles[url] = assigned or ["member_only"]
+    return roles
+
+
 def build_dossiers(request: DossierRequest) -> DossierSet:
     """Consolidate multi-round intelligence into per-property dossiers (pure)."""
     tagged: list[tuple[int, ResultIntelligence]] = [
@@ -778,6 +836,7 @@ def build_dossiers(request: DossierRequest) -> DossierSet:
             remaining_questions=remaining,
             handoffs=handoffs,
         )
+        dossier.source_roles = _dossier_source_roles(dossier)
         corroborated = sum(
             1 for claim in supported + distress + underuse
             if claim.status is ClaimStatus.SUPPORTED

@@ -107,6 +107,7 @@ class ExecutedAssignment(BaseModel):
     query: str
     category: str
     strategy: str
+    county: str = ""
 
 
 class ResearchAssignmentError(BaseModel):
@@ -347,6 +348,7 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
                 query=item.query,
                 category=item.category.value,
                 strategy=item.strategy.value,
+                county=item.county or "",
             )
         )
         note_diagnostic(
@@ -444,6 +446,7 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
         verdicts = build_research_verdicts(
             run_id=run_id, correlation_id=correlation_id,
             ranking=result.ranking, intel=result.intelligence, started=started,
+            executed=result.executed,
         )
         outcome = persist_verdicts(verdicts)
         result.provenance_pending = outcome.pending

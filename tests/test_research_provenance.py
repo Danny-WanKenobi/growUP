@@ -802,6 +802,372 @@ def test_g2_namespaces_disjoint() -> None:
     assert verdict_types.isdisjoint({INTAKE_TYPE, DISC_TYPE, RUN_TYPE})
 
 
+# --- G5-2: durable executed-assignment context ---
+
+
+def _assigned_result(title, snippet, *, assignment_id, url, query="test query",
+                     published_at="2026-10-20"):
+    from urllib.parse import urlparse as _urlparse
+
+    from app.agents.gabriel.sources.brave import BraveSearchResult
+
+    global _RANK
+    _RANK += 1
+    return BraveSearchResult(
+        assignment_id=assignment_id, query=query, title=title, url=url,
+        snippet=snippet, domain=_urlparse(url).netloc, provider="brave",
+        retrieved_at=_RETRIEVED, published_at=published_at, rank=_RANK,
+    )
+
+
+def _assigned_listing(price, *, assignment_id, url, query="test query Dallas County",
+                      county="Dallas County", street="500 Commerce St"):
+    name = "Meridian Tower"
+    return _assigned_result(
+        f"{name} listed for sale",
+        f"{name} at {street}, Dallas, TX is listed for sale "
+        f"with an asking price of {price}. {county}.",
+        assignment_id=assignment_id, url=url, query=query,
+    )
+
+
+def _executed(assignment_id, query="test query Dallas County", category="downtown_commercial",
+              county="Dallas County", strategy="listing_search"):
+    from app.agents.gabriel.research import ExecutedAssignment
+
+    return ExecutedAssignment(
+        assignment_id=assignment_id, query=query, category=category,
+        county=county, strategy=strategy,
+    )
+
+
+def test_assignment_context_preserved() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+
+    intel = _intel(
+        _assigned_listing("$40 million", assignment_id="gsp-aaaa",
+                          url="https://example.com/meridian", query="query alpha"),
+        _assigned_listing("$40 million", assignment_id="gsp-bbbb",
+                          url="https://other.org/meridian", query="query beta"),
+    )
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1
+    executed = [_executed("gsp-aaaa", query="query alpha"),
+                _executed("gsp-bbbb", query="query beta")]
+    (verdict,) = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    _assert_verdict_shape(verdict)
+    records = verdict.details["associated_assignments"]
+    assert records == [
+        {"id": "gsp-aaaa", "query": "query alpha", "category": "downtown_commercial",
+         "county": "Dallas County", "strategy": "listing_search"},
+        {"id": "gsp-bbbb", "query": "query beta", "category": "downtown_commercial",
+         "county": "Dallas County", "strategy": "listing_search"},
+    ]
+
+
+def test_assignment_context_scoped_per_candidate() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+
+    first = _assigned_listing("$40 million", assignment_id="gsp-aaaa",
+                              url="https://example.com/meridian")
+    second = _assigned_result(
+        "Bayou Tower listed for sale",
+        "Bayou Tower at 500 Smith St, Houston, TX is listed for sale with an "
+        "asking price of $50 million. The Harris County office tower drew bids.",
+        assignment_id="gsp-bbbb", url="https://example.com/bayou",
+        query="query beta",
+    )
+    intel = _intel(first, second)
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 2
+    executed = [_executed("gsp-aaaa"), _executed("gsp-bbbb", query="query beta")]
+    verdicts = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    by_key = {v.details["candidate_ref"]["group_key"]: v for v in verdicts}
+    meridian = next(v for k, v in by_key.items() if "commerce" in k)
+    bayou = next(v for k, v in by_key.items() if "smith" in k)
+    assert [r["id"] for r in meridian.details["associated_assignments"]] == ["gsp-aaaa"]
+    assert [r["id"] for r in bayou.details["associated_assignments"]] == ["gsp-bbbb"]
+
+
+def test_assignment_county_never_overrides_evidence() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import CountyEligibility, rank_intelligence
+
+    intel = _intel(_assigned_listing("$40 million", assignment_id="gsp-aaaa",
+                                     url="https://example.com/meridian"))
+    ranking = rank_intelligence(intel)
+    (candidate,) = ranking.candidates
+    assert candidate.county is CountyEligibility.PRIMARY_AREA
+    executed = [_executed("gsp-aaaa", county="Harris County")]
+    (verdict,) = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    (record,) = verdict.details["associated_assignments"]
+    assert record["county"] == "Harris County"
+    assert "county" not in verdict.details["observed"]
+    assert set(verdict.details["inferred"]) <= {"street_address", "city", "state", "zip_code"}
+
+
+def test_long_query_explicit_truncation() -> None:
+    import hashlib
+
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+
+    long_query = "q" * 600
+    intel = _intel(_assigned_listing("$40 million", assignment_id="gsp-aaaa",
+                                     url="https://example.com/meridian",
+                                     query=long_query))
+    ranking = rank_intelligence(intel)
+    executed = [_executed("gsp-aaaa", query=long_query)]
+    (verdict,) = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    (record,) = verdict.details["associated_assignments"]
+    assert "query" not in record
+    assert record["query_prefix"] == "q" * 500
+    assert record["query_chars"] == 600
+    assert record["query_truncated"] is True
+    assert record["query_sha256"] == hashlib.sha256(long_query.encode()).hexdigest()
+
+
+def test_assignment_context_pg_round_trip(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import require_durable_batch
+
+    intel = _intel(
+        _assigned_listing("$40 million", assignment_id="gsp-aaaa",
+                          url="https://example.com/meridian", query="query alpha"),
+        _assigned_listing("$40 million", assignment_id="gsp-bbbb",
+                          url="https://other.org/meridian", query="query beta"),
+    )
+    ranking = rank_intelligence(intel)
+    executed = [_executed("gsp-aaaa", query="query alpha"),
+                _executed("gsp-bbbb", query="query beta")]
+    verdicts = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    box = _box(tmp_path)
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    outcome = require_durable_batch(verdicts, outbox=box)
+    assert outcome.pending is False
+    (row,) = _verdict_rows(pg, "gabriel.research.candidate_decision")
+    records = row["details"]["associated_assignments"]
+    assert [r["query"] for r in records] == ["query alpha", "query beta"]
+    assert row["details"]["decision"] == verdicts[0].details["decision"]
+    assert row["details"]["candidate_ref"] == verdicts[0].details["candidate_ref"]
+
+
+def test_prepared_verdict_keeps_assignment_context(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import require_durable_batch
+
+    executed = [_executed(f"gsp-{i:04d}", query=f"query {i} " + "x" * 480)
+                for i in range(3)]
+    intel = _intel(*[
+        _assigned_listing("$40 million", assignment_id=f"gsp-{i:04d}",
+                          url=f"https://example.com/m{i}", query=f"query {i} " + "x" * 480)
+        for i in range(3)
+    ])
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 1
+    verdicts = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, executed=executed)
+    box = _box(tmp_path)
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    outcome = require_durable_batch(verdicts, outbox=box)
+    assert outcome.pending is False
+    (row,) = _verdict_rows(pg, "gabriel.research.candidate_decision")
+    assert "_truncated" not in row["details"]
+    assert len(row["details"]["associated_assignments"]) == 3
+    assert row["details"]["candidate_ref"]["group_key"].startswith("addr:")
+
+
+def test_run_research_populates_executed_county(monkeypatch, tmp_path) -> None:
+    import app.agents.gabriel.research as research
+    from app.agents.gabriel.planner import plan_initial_searches
+
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(tmp_path / "outbox.sqlite3"))
+    from app.config import DatabaseConfig
+    monkeypatch.setattr(research, "get_database_config",
+                        lambda: DatabaseConfig(host="h", port=5432, name="d", user="u", password="p"))
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "k")
+    monkeypatch.setenv("BRAVE_MONTHLY_CEILING", "100")
+    monkeypatch.setattr(research, "reserve_requests",
+                        lambda c: {"month": "m", "used": 1, "ceiling": 100, "remaining": 99})
+    monkeypatch.setattr(research, "read_budget",
+                        lambda: {"month": "m", "used": 0, "ceiling": 100, "remaining": 100})
+    monkeypatch.setattr(research, "execute_query", lambda q, i, t: [_listing()])
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    assignments = [a.model_dump() for a in plan_initial_searches()]
+    result = research.run_research(research.ResearchRunRequest.model_validate(
+        {"assignments": assignments, "include_ranking": True}))
+    assert result.executed
+    assert all(item.county for item in result.executed)
+    assert result.executed[0].county == "Dallas County"
+
+
+# --- Oversized permanent verdict protection ---
+
+
+def _prepared_details_size(details) -> int:
+    import json as _json
+
+    from app.observability.redaction import redact, sanitize_structure
+
+    return len(_json.dumps(sanitize_structure(redact(details)), default=str).encode("utf-8"))
+
+
+def test_guard_allows_normal_research_verdict(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import require_durable_batch
+
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    verdicts = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking, intel=intel)
+    box = _box(tmp_path)
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    outcome = require_durable_batch(verdicts, outbox=box)
+    assert outcome.pending is False
+    (row,) = _verdict_rows(pg, "gabriel.research.candidate_decision")
+    assert "_truncated" not in row["details"]
+    assert row["details"]["decision"] == verdicts[0].details["decision"]
+
+
+def test_guard_allows_normal_dossier_verdict(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.dossier import DossierRequest, build_dossiers
+    from app.agents.gabriel.provenance import build_dossier_verdicts
+    from app.observability.emitter import require_durable_batch
+
+    intel = _intel(_listing())
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    verdicts = build_dossier_verdicts(
+        run_id="run-d", correlation_id="corr-1",
+        dossier_set=dossier_set, items=intel.results)
+    box = _box(tmp_path)
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    outcome = require_durable_batch(verdicts, outbox=box)
+    assert outcome.pending is False
+    (row,) = _verdict_rows(pg, "gabriel.dossier.verdict")
+    assert "_truncated" not in row["details"]
+
+
+def test_oversized_research_verdict_fails_closed(monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", "100")
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-1", correlation_id="corr-1", ranking=ranking, intel=intel)
+
+
+def test_oversized_dossier_verdict_fails_closed(monkeypatch) -> None:
+    from app.agents.gabriel.dossier import DossierRequest, build_dossiers
+    from app.agents.gabriel.provenance import build_dossier_verdicts
+    from app.observability.emitter import DurabilityError
+
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", "100")
+    intel = _intel(_listing())
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    with pytest.raises(DurabilityError):
+        build_dossier_verdicts(
+            run_id="run-d", correlation_id="corr-1",
+            dossier_set=dossier_set, items=intel.results)
+
+
+def test_oversized_verdict_never_accepted_with_marker(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts, persist_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    outbox_path = tmp_path / "outbox.sqlite3"
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(outbox_path))
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", "100")
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    with pytest.raises(DurabilityError):
+        verdicts = build_research_verdicts(
+            run_id="run-1", correlation_id="corr-1", ranking=ranking, intel=intel)
+        persist_verdicts(verdicts)
+    assert not outbox_path.exists()  # acceptance never began
+    assert pg.rows == {}
+    assert pg.inserts == 0
+
+
+def test_mixed_batch_not_partially_accepted(tmp_path, monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts, persist_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    outbox_path = tmp_path / "outbox.sqlite3"
+    monkeypatch.setenv("OBS_OUTBOX_PATH", str(outbox_path))
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", "100")
+    pg = _FakePG()
+    _patch_pg(monkeypatch, pg)
+    intel = _intel(
+        _listing("$40 million", url="https://example.com/meridian"),
+        _brave_result(
+            "Bayou Tower listed",
+            "Bayou Tower at 500 Smith St, Houston, TX is listed for sale. Harris County.",
+            url="https://example.com/bayou", published_at="2026-10-20"),
+    )
+    ranking = rank_intelligence(intel)
+    assert len(ranking.candidates) == 2
+    with pytest.raises(DurabilityError):
+        verdicts = build_research_verdicts(
+            run_id="run-1", correlation_id="corr-1", ranking=ranking,
+            intel=intel, executed=[_executed("gsp-prov001")])
+        persist_verdicts(verdicts)
+    assert not outbox_path.exists()
+    assert pg.rows == {}
+
+
+def test_guard_boundary_matches_preparation(monkeypatch) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.agents.gabriel.ranking import rank_intelligence
+    from app.observability.emitter import DurabilityError
+
+    intel = _intel(_listing())
+    ranking = rank_intelligence(intel)
+    (probe,) = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, started=None)
+    size = _prepared_details_size(probe.details)
+    assert size > 1
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", str(size))
+    (verdict,) = build_research_verdicts(
+        run_id="run-1", correlation_id="corr-1", ranking=ranking,
+        intel=intel, started=None)
+    assert verdict.details["decision"] == probe.details["decision"]
+    monkeypatch.setenv("OBS_MAX_DETAIL_BYTES", str(size - 1))
+    with pytest.raises(DurabilityError):
+        build_research_verdicts(
+            run_id="run-1", correlation_id="corr-1", ranking=ranking,
+            intel=intel, started=None)
+
+
 # --- Live PostgreSQL ---
 
 
