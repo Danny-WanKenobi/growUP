@@ -64,7 +64,7 @@ class ResearchError(ValueError):
 def _executable_canonical_plans() -> tuple[list[SearchAssignment], ...]:
     """Regenerate the executable canonical plans server-side.
 
-    Only fixed presets are executable: the default 30-assignment
+    Only fixed presets are executable: the default 36-assignment
     baseline and the Dallas-only plan. Any other configuration
     would need client-supplied parameters to regenerate, so such
     plans are explicitly rejected rather than trusted.
@@ -88,7 +88,7 @@ def _matches_canonical(ordered: list[SearchAssignment]) -> bool:
 class ResearchRunRequest(BaseModel):
     """Assignments to research (planner output only, never raw queries)."""
 
-    assignments: list[SearchAssignment] = Field(min_length=1, max_length=30)
+    assignments: list[SearchAssignment] = Field(min_length=1, max_length=36)
     timeout_seconds: float = Field(default=15.0, ge=5.0, le=60.0)
     include_intelligence: bool = True
     include_ranking: bool = False
@@ -96,8 +96,8 @@ class ResearchRunRequest(BaseModel):
     rotation: int = Field(
         default=0,
         ge=0,
-        description="County rotation; rotations 0-9 execute the three "
-        "categories for one ten-county baseline county in priority "
+        description="County rotation; rotations 0-11 execute the three "
+        "categories for one twelve-county baseline county in priority "
         "order (0 Dallas, 1 Tarrant, ...).",
     )
 
@@ -150,21 +150,21 @@ def select_assignments(
     raise ResearchError instead of yielding a partial batch.
 
     Rotation r addresses operating county COUNTY_PRIORITY_ORDER[r]:
-    rotations 0-9 select that county's earliest-priority triple
-    (Dallas at 0 through Wise at 9 on the standard baseline), so no
-    run is ever wider than MAX_PER_RUN. Rotation 10 or greater is
+    rotations 0-11 select that county's earliest-priority triple
+    (Dallas at 0 through Navarro at 11 on the standard baseline), so
+    no run is ever wider than MAX_PER_RUN. Rotation 12 or greater is
     rejected -- never wrapped -- as is a rotation whose county the
     plan does not cover (for example rotation 1 against a
     Dallas-only plan). Deterministic for identical inputs.
 
     Canonical verification: beyond structural shape, the submitted
     assignments must exactly equal a server-regenerated canonical
-    plan -- the default 30-assignment baseline or the Dallas-only
-    plan -- compared field by field (id, query, county, market,
-    category, strategy, priority, intent, planner version, downtown
-    flag, depth, parent id). Altered, substituted, missing, extra,
-    or reordered assignments fail closed, as do nonstandard plans
-    that cannot be regenerated from a fixed preset.
+    plan -- the default 36-assignment baseline or the Dallas-only
+    plan -- compared field by field (id, query, county, cities,
+    market, category, strategy, priority, intent, planner version,
+    downtown flag, depth, parent id). Altered, substituted, missing,
+    extra, or reordered assignments fail closed, as do nonstandard
+    plans that cannot be regenerated from a fixed preset.
     """
     if rotation < 0:
         raise ResearchError("rotation must be non-negative")

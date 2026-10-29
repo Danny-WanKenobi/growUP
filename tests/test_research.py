@@ -399,9 +399,9 @@ def test_rotations_sweep_all_counties() -> None:
     from app.agents.gabriel.planner import SearchAssignment
 
     assignments = [SearchAssignment.model_validate(a) for a in _plan_assignments()]
-    assert len(assignments) == 30
+    assert len(assignments) == 36
     covered = []
-    for rotation in range(10):
+    for rotation in range(12):
         selected = research.select_assignments(assignments, rotation)
         assert len(selected) == 3  # per-run Brave limit holds every rotation
         assert {a.county for a in selected} == {ordered_county_names()[rotation]}
@@ -440,22 +440,29 @@ def _validated_plan():
     return [SearchAssignment.model_validate(a) for a in _plan_assignments()]
 
 
-def test_selection_rotation_ten_and_beyond_rejected() -> None:
+def test_selection_rotation_twelve_and_beyond_rejected() -> None:
     assignments = _validated_plan()
-    for rotation in (10, 11, 99):
+    for rotation in (12, 13, 99):
         with pytest.raises(research.ResearchError, match="out of range"):
             research.select_assignments(assignments, rotation)
 
 
-def test_research_endpoint_rejects_rotation_ten(monkeypatch) -> None:
+def test_research_endpoint_rejects_rotation_twelve(monkeypatch) -> None:
     _env(monkeypatch)
     response = client.post(
         "/discovery/research-runs",
-        json={"assignments": _plan_assignments(), "rotation": 10},
+        json={"assignments": _plan_assignments(), "rotation": 12},
         headers={"X-Research-Key": _TEST_RESEARCH_KEY},
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_research_request"}
+
+
+def test_selection_rotation_eleven_selects_navarro() -> None:
+    assignments = _validated_plan()
+    selected = research.select_assignments(assignments, 11)
+    assert len(selected) == 3
+    assert [a.county for a in selected] == ["Navarro County"] * 3
 
 
 def test_selection_rejects_duplicate_ids() -> None:
@@ -567,7 +574,7 @@ def test_selection_rejects_noncanonical_multipass_plan() -> None:
 
 def test_untouched_canonical_baseline_succeeds() -> None:
     assignments = _validated_plan()
-    assert len(assignments) == 30
+    assert len(assignments) == 36
     dallas = research.select_assignments(assignments, 0)
     assert [a.county for a in dallas] == ["Dallas County"] * 3
 
@@ -627,7 +634,7 @@ def test_selection_rejects_extra_assignments() -> None:
     assignments = _validated_plan()
     extras = [
         assignments[index].model_copy(
-            update={"id": f"gsp-extra-{index:06d}", "priority": 31 + index}
+            update={"id": f"gsp-extra-{index:06d}", "priority": 37 + index}
         )
         for index in range(3)
     ]
@@ -651,7 +658,7 @@ def test_selection_failure_touches_no_budget_or_network(monkeypatch) -> None:
     with pytest.raises(research.ResearchError):
         research.run_research(
             research.ResearchRunRequest.model_validate(
-                {**good, "rotation": 10}
+                {**good, "rotation": 12}
             )
         )
     scrambled = [dict(a) for a in _plan_assignments()]

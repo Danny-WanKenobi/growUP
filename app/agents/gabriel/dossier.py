@@ -614,7 +614,7 @@ def _identity_sentence(dossier: PropertyDossier) -> str:
         CountyEligibility.PRIMARY_AREA: "in Dallas County (primary territory)",
         CountyEligibility.SECONDARY_AREA: "in a secondary county (secondary territory)",
         CountyEligibility.COUNTY_UNKNOWN: "with unknown county",
-        CountyEligibility.OUTSIDE_OPERATING_AREA: "outside the ten-county operating area",
+        CountyEligibility.OUTSIDE_OPERATING_AREA: "outside the twelve-county operating area",
     }[dossier.county]
     return f"{identity}, {county}."
 

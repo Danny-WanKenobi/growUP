@@ -128,8 +128,8 @@ def submit_listing(
 
 @router.get("/discovery/search-plan", response_model=list[SearchAssignment])
 def preview_search_plan(
-    total: int = 30,
-    per_category: int = 10,
+    total: int = 36,
+    per_category: int = 12,
     downtown: bool = False,
     secondary_counties: bool = True,
 ) -> list:

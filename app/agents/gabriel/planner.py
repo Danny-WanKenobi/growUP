@@ -1,18 +1,20 @@
-"""Gabriel commercial listing search planner (MVP-004B-1, ten-county expansion).
+"""Gabriel commercial listing search planner (MVP-004B-1, B5-1 twelve-county expansion).
 
 Generates structured, deterministic research assignments for finding
 commercial properties offered for sale. Listings first. Value driven.
 Distress focused.
 
-Coverage spans the ten-county operating area in shared priority order
-(Dallas first, then Tarrant, Collin, Denton, Ellis, Rockwall, Kaufman,
-Johnson, Parker, Wise): counties process sequentially with all three
-categories completing in one county before advancing, so the default
-plan is exactly 30 baseline assignments (3 categories x 10 counties)
-prioritizing properties advertised for sale. Downtown is an opt-in
-refinement of Dallas County slots only, using the explicitly
-configured municipality -- county-based downtown labels are never
-generated.
+Coverage spans the twelve-county operating area in shared priority order
+(Dallas first, then Tarrant, Collin, Denton, Ellis, Johnson, Kaufman,
+Parker, Rockwall, Hunt, Wise, Navarro): counties process sequentially
+with all three categories completing in one county before advancing, so
+the default plan is exactly 36 baseline assignments
+(3 categories x 12 counties) prioritizing properties advertised for
+sale. Each assignment carries its county's five-city municipality
+priority list for future batch scheduling; baseline queries stay
+countywide. Downtown is an opt-in refinement of Dallas County slots
+only, using the explicitly configured municipality -- county-based
+downtown labels are never generated.
 
 This phase plans only: it executes no searches, scrapes nothing, calls
 no AI models, writes no database records, and makes no network requests.
@@ -32,21 +34,22 @@ from pydantic import BaseModel, Field
 
 from app.agents.gabriel.geography import (
     PRIMARY_COUNTY_DISPLAY,
+    ordered_cities,
     ordered_county_names,
 )
 from app.properties import PropertyCategory
 
-PLANNER_VERSION = "004B-1.2"
+PLANNER_VERSION = "004B-2.0"
 
 # Absolute budget caps (configurations outside these are rejected).
-MAX_TOTAL_QUERIES = 54  # bounded well within the 10 x 3 x 9 query space
+MAX_TOTAL_QUERIES = 54  # bounded well within the 12 x 3 x 9 query space
 MAX_PER_CATEGORY_QUERIES = 18
 MAX_FOLLOWUP_QUERIES = 50
 MAX_DEPTH_CAP = 5
 
 # Conservative defaults for a future metered search API.
-DEFAULT_TOTAL_QUERIES = 30
-DEFAULT_PER_CATEGORY_QUERIES = 10
+DEFAULT_TOTAL_QUERIES = 36
+DEFAULT_PER_CATEGORY_QUERIES = 12
 DEFAULT_FOLLOWUP_QUERIES = 6
 DEFAULT_MAX_DEPTH = 2
 
@@ -137,6 +140,7 @@ class SearchAssignment(BaseModel):
     query: str
     market: str
     county: str = ""  # display form ("Dallas County"); planner always populates
+    cities: list[str] = Field(default_factory=list)  # county's 5-city priority list; county context in `county`
     category: PropertyCategory
     strategy: SearchStrategy
     priority: int = Field(ge=1)
@@ -194,7 +198,7 @@ def plan_initial_searches(config: PlannerConfig | None = None) -> list[SearchAss
 
     Counties process in shared priority order with all three
     categories completing in one county before advancing, so the
-    default plan is exactly 30 baseline assignments (3 x 10). The
+    default plan is exactly 36 baseline assignments (3 x 12). The
     first pass uses FOR_SALE throughout -- the baseline prioritizes
     commercial properties advertised for sale -- and further passes
     advance one strategy per full county sweep when larger budgets
@@ -242,6 +246,7 @@ def plan_initial_searches(config: PlannerConfig | None = None) -> list[SearchAss
                         query=query,
                         market=market,
                         county=county,
+                        cities=list(ordered_cities(county)),
                         category=category,
                         strategy=strategy,
                         priority=seq + 1,
@@ -339,6 +344,7 @@ def plan_followups(
                 query=query,
                 market=market,
                 county=county,
+                cities=list(ordered_cities(county)),
                 category=parent.category,
                 strategy=strategy,
                 priority=parent.priority + 1 + index,

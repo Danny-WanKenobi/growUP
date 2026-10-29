@@ -27,17 +27,17 @@ def _feedback(parent, outcome: FeedbackOutcome) -> ResearchFeedback:
     return ResearchFeedback(assignment_id=parent.id, outcome=outcome)
 
 
-def test_default_plan_is_sequential_ten_county() -> None:
+def test_default_plan_is_sequential_twelve_county() -> None:
     from app.agents.gabriel.geography import ordered_county_names
 
     plan = plan_initial_searches()
-    assert len(plan) == 30
+    assert len(plan) == 36
     assert [a.county for a in plan] == [
         county for county in ordered_county_names() for _ in range(3)
     ]
     assert plan[0].county == "Dallas County"
     assert plan[3].county == "Tarrant County"
-    for start in range(0, 30, 3):
+    for start in range(0, 36, 3):
         triple = plan[start:start + 3]
         assert {a.county for a in triple} == {triple[0].county}
         assert [a.category for a in triple] == [
@@ -51,16 +51,16 @@ def test_default_plan_is_sequential_ten_county() -> None:
     assert all(a.county in a.market for a in plan)
     assert all(a.market in a.query for a in plan)
     assert all(a.planner_version == PLANNER_VERSION for a in plan)
-    assert PLANNER_VERSION == "004B-1.2"
-    assert [a.priority for a in plan] == list(range(1, 31))
+    assert PLANNER_VERSION == "004B-2.0"
+    assert [a.priority for a in plan] == list(range(1, 37))
 
 
 def test_strategy_passes_advance_after_baseline() -> None:
-    plan = plan_initial_searches(PlannerConfig(total_max_queries=33, per_category_max=11))
-    assert len(plan) == 33
-    assert all(a.strategy is SearchStrategy.FOR_SALE for a in plan[:30])
-    assert all(a.strategy is SearchStrategy.HIGH_VALUE for a in plan[30:])
-    assert [a.county for a in plan[30:]] == ["Dallas County"] * 3
+    plan = plan_initial_searches(PlannerConfig(total_max_queries=39, per_category_max=13))
+    assert len(plan) == 39
+    assert all(a.strategy is SearchStrategy.FOR_SALE for a in plan[:36])
+    assert all(a.strategy is SearchStrategy.HIGH_VALUE for a in plan[36:])
+    assert [a.county for a in plan[36:]] == ["Dallas County"] * 3
 
 
 def test_assignments_seek_sale_opportunities() -> None:
@@ -218,7 +218,7 @@ def test_planner_uses_no_database_or_network(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_HOST", raising=False)
     monkeypatch.delenv("DATABASE_PASSWORD", raising=False)
     plan = plan_initial_searches()
-    assert len(plan) == 30
+    assert len(plan) == 36
     parent = next(a for a in plan if not a.downtown)
     assert plan_followups(parent, _feedback(parent, FeedbackOutcome.PROMISING))
     source = open(planner_module.__file__, encoding="utf-8").read()
@@ -230,7 +230,7 @@ def test_search_plan_preview_endpoint() -> None:
     response = client.get("/discovery/search-plan")
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 30
+    assert len(body) == 36
     assert body[0]["planner_version"] == PLANNER_VERSION
     assert {"id", "query", "market", "category", "strategy", "priority", "intent"} <= set(body[0])
     custom = client.get("/discovery/search-plan?total=3&per_category=1&downtown=false")
@@ -247,7 +247,7 @@ def test_search_plan_rejects_invalid_budgets() -> None:
     assert response.json() == {"detail": "invalid_plan_config"}
 
 
-# --- Ten-county coverage (ten-county expansion) ---
+# --- Twelve-county coverage (B5-1 expansion) ---
 
 
 def _all_counties() -> set:
@@ -256,10 +256,10 @@ def _all_counties() -> set:
     return set(ordered_county_names())
 
 
-def test_default_plan_covers_all_ten_counties() -> None:
+def test_default_plan_covers_all_twelve_counties() -> None:
     plan = plan_initial_searches()
     assert {a.county for a in plan} == _all_counties()
-    assert len(plan) == 30
+    assert len(plan) == 36
     for assignment in plan:
         assert assignment.county in assignment.market  # countywide baseline
         assert assignment.market in assignment.query
@@ -290,10 +290,10 @@ def test_county_coverage_matches_ranking_territory() -> None:
 
     # Planner sequencing derives from the shared constants: no drift possible.
     names = ordered_county_names()
-    assert len(names) == 10
+    assert len(names) == 12
     assert names[0] == "Dallas County"
     assert {name.lower() for name in names[1:]} == set(SECONDARY_COUNTIES)
-    plan = plan_initial_searches(PlannerConfig(total_max_queries=30, per_category_max=10))
+    plan = plan_initial_searches(PlannerConfig(total_max_queries=36, per_category_max=12))
     assert {a.county for a in plan} == _all_counties()
 
 

@@ -1,7 +1,7 @@
-"""Ten-county geographic regression tests (ten-county expansion).
+"""Twelve-county geographic regression tests (B5-1 expansion).
 
 Deterministic; no network, no database. Dallas County is the primary
-territory, nine secondary counties are eligible territory, unknown
+territory, eleven secondary counties are eligible territory, unknown
 county stays eligible, and confirmed out-of-area leads are deferred
 with evidence retained -- never silently discarded.
 """
@@ -67,15 +67,17 @@ def test_county_priority_order_is_exact() -> None:
         "collin county",
         "denton county",
         "ellis county",
-        "rockwall county",
-        "kaufman county",
         "johnson county",
+        "kaufman county",
         "parker county",
+        "rockwall county",
+        "hunt county",
         "wise county",
+        "navarro county",
     )
     assert set(COUNTY_PRIORITY_ORDER[1:]) == set(SECONDARY_COUNTIES)
     assert ordered_county_names()[0] == "Dallas County"
-    assert len(ordered_county_names()) == 10
+    assert len(ordered_county_names()) == 12
 
 
 # --- 1. Dallas County eligibility (primary territory) ---
@@ -107,11 +109,13 @@ def test_dallas_county_primary_area() -> None:
         ("Collin County", "Plano"),
         ("Denton County", "Denton"),
         ("Ellis County", "Waxahachie"),
-        ("Rockwall County", "Rockwall"),
-        ("Kaufman County", "Kaufman"),
         ("Johnson County", "Cleburne"),
+        ("Kaufman County", "Kaufman"),
         ("Parker County", "Weatherford"),
+        ("Rockwall County", "Rockwall"),
+        ("Hunt County", "Greenville"),
         ("Wise County", "Decatur"),
+        ("Navarro County", "Corsicana"),
     ],
 )
 def test_secondary_counties_secondary_area(county: str, city: str) -> None:

@@ -460,7 +460,7 @@ integrated or depended upon in MVP-004A.
 ## 🗺️ Gabriel Search Planner (MVP-004B-1)
 
 The planner generates structured commercial real estate research
-assignments across the ten-county operating area. **Listings first.
+assignments across the twelve-county operating area. **Listings first.
 Value driven. Distress focused.** It produces assignments only: no
 searches executed, no scraping, no AI calls, no database writes, no
 network requests.
@@ -479,9 +479,10 @@ network requests.
 parameters). It performs no live research and changes no data.
 
 Each assignment carries a stable content-derived id, query, market,
-county, category, strategy, priority, research intent, planner version
-(`004B-1.2`), downtown flag, depth, and parent id. Same inputs always
-yield the same assignments in the same order.
+county, five-city municipality priority list, category, strategy,
+priority, research intent, planner version (`004B-2.0`), downtown
+flag, depth, and parent id. Same inputs always yield the same
+assignments in the same order.
 
 ### Supported search strategies
 
@@ -489,29 +490,32 @@ yield the same assignments in the same order.
 `receivership_bankruptcy`, `auction_liquidation`,
 `vacant_underutilized`, `price_reduced`, `long_listing`. Every query
 seeks actual sale opportunities across the three primary categories in
-sequential county-major allocation (10 each by default, 30 total),
+sequential county-major allocation (12 each by default, 36 total),
 with the baseline prioritizing `for_sale`. A query's
 wording is never evidence that a property is distressed; intents say so
 explicitly.
 
-### Ten-county coverage (ten-county expansion)
+### Twelve-county coverage (B5-1 expansion)
 
 County markets derive from the shared `geography.py` constants used by
 the ranking engine, so planner territory can never drift from ranking
 eligibility. Counties process sequentially in priority order — Dallas,
-Tarrant, Collin, Denton, Ellis, Rockwall, Kaufman, Johnson, Parker,
-Wise — with all three categories completing in one county before
-advancing, so the default plan is exactly 30 baseline assignments
-(3 categories x 10 counties) prioritizing properties advertised for
-sale. Set `include_secondary_counties=false` for a Dallas-only plan.
+Tarrant, Collin, Denton, Ellis, Johnson, Kaufman, Parker, Rockwall,
+Hunt, Wise, Navarro — with all three categories completing in one
+county before advancing, so the default plan is exactly 36 baseline
+assignments (3 categories x 12 counties) prioritizing properties
+advertised for sale. Each assignment carries its county's five-city
+municipality priority list (county context preserved per county);
+baseline queries stay countywide. Set
+`include_secondary_counties=false` for a Dallas-only plan.
 Downtown is an opt-in refinement of Dallas County slots only, using
 the explicitly configured municipality (`Downtown Dallas, TX` by
 default); county-based downtown labels are never generated.
 
 Because each research run executes one assignment per category, later
-explicitly requested runs pass `rotation: 1` through `9` in
+explicitly requested runs pass `rotation: 1` through `11` in
 `POST /discovery/research-runs` to sweep the remaining counties —
-ten rotations cover all ten counties with no run wider
+twelve rotations cover all twelve counties with no run wider
 than 3 Brave calls and no automatic recursion.
 
 ### Example research assignments
@@ -531,8 +535,8 @@ than 3 Brave calls and no automatic recursion.
 
 ### Configuration and budget controls
 
-`PlannerConfig`: `total_max_queries` (1–54, default 30),
-`per_category_max` (1–18, default 10), `followup_max` (0–50, default 6),
+`PlannerConfig`: `total_max_queries` (1–54, default 36),
+`per_category_max` (1–18, default 12), `followup_max` (0–50, default 6),
 `max_depth` (0–5, default 2), `downtown_refinement` (default false),
 `include_secondary_counties` (default true).
 Invalid budgets are rejected. Follow-ups derive deterministically from
@@ -545,7 +549,7 @@ follow-up caps bound growth, and known queries are never repeated.
 
 - No property values are invented and no minimum price is imposed; the
   planner ranks nothing because it has seen no listings.
-- Geographic scope is the ten-county operating area, with no grids,
+- Geographic scope is the twelve-county operating area, with no grids,
   radius expansion, or boundary processing.
 
 ### Remaining MVP-004B phases
@@ -705,11 +709,11 @@ writes, no AI calls.
   Sale availability is not required, so the engine reuses cleanly for
   future off-market discovery.
 
-### Ten-county operating area and downtown preference (corrected in MVP-004B-5)
+### Twelve-county operating area and downtown preference (corrected in MVP-004B-5, expanded in B5-1)
 
-The research territory is Dallas County (primary) plus nine secondary
-counties — Tarrant, Collin, Denton, Ellis, Rockwall, Kaufman, Johnson,
-Parker, Wise. County classification
+The research territory is Dallas County (primary) plus eleven secondary
+counties — Tarrant, Collin, Denton, Ellis, Johnson, Kaufman, Parker,
+Rockwall, Hunt, Wise, Navarro. County classification
 (`primary_area`/`secondary_area`/`county_unknown`/`outside_operating_area`)
 rests on explicit county evidence only: no municipality lookup, no ZIP
 inference, no fabrication. A small transparent downtown bonus (+0.05,
@@ -721,7 +725,7 @@ ties but never overwhelms stronger opportunity evidence.
 Gates (not scores) exclude only clear cases: demolished,
 vacant-land-without-structure, and incompatible-use — each with an
 auditable rule, evidence, source, and date. Properties reliably outside
-all ten counties are deferred (evidence retained, out of the active
+all twelve counties are deferred (evidence retained, out of the active
 queue), not discarded. Everything uncertain becomes
 RESEARCH_REQUIRED with agent-routed next steps; high occupancy, missing
 prices, and off-market status never exclude. Unknown factors are left
