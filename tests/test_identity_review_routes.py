@@ -1214,4 +1214,4 @@ def test_live_resolve_end_to_end(monkeypatch) -> None:
                 assert cur.fetchone()["n"] == len(event_ids)
         assert _live_http_counts() == before
     finally:
-        _live_cleanup_http([review_id], event_ids)
+        _live_http_cleanup([review_id], event_ids)
