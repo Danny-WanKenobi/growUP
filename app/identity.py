@@ -92,11 +92,13 @@ EXECUTOR_SCOPES_ENV_VAR = "EXECUTOR_SCOPES"
 ORCHESTRATOR_SCOPES_ENV_VAR = "ORCHESTRATOR_SCOPES"
 WONDRUE_READER_ID_ENV_VAR = "WONDRUE_READER_ID"
 RECONCILER_PUBLIC_KEYS_ENV_VAR = "RECONCILER_PUBLIC_KEYS"
+REVIEWER_PUBLIC_KEYS_ENV_VAR = "REVIEWER_PUBLIC_KEYS"
 
 # Approval signature domain separator: binds signatures to this exact
 # protocol so they cannot be transplanted from any other signed flow.
 _APPROVAL_DOMAIN = b"growup-approval-v1:"
 _RECONCILIATION_DOMAIN = b"growup-reconcile-v1:"
+_REVIEW_DOMAIN = b"growup-review-v1:"
 _SHA256_TAGGED_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Canonical identity names: stable lowercase handles (usernames,
@@ -108,8 +110,14 @@ MAX_IDENTITY_ENTRIES = 64
 # Human approvals are short-lived capabilities, not sessions.
 MAX_APPROVAL_TTL_SECONDS = 24 * 60 * 60
 MAX_RECONCILIATION_TTL_SECONDS = 24 * 60 * 60
+MAX_REVIEW_TTL_SECONDS = 24 * 60 * 60
 CLOCK_SKEW_SECONDS = 60
 MAX_RECONCILIATION_REFERENCE_CHARS = 256
+MAX_REVIEW_REFERENCE_CHARS = 256
+
+# Identity-review resolution outcomes (IR-4A): the only statements a
+# human resolution may record about one ambiguous identity question.
+REVIEW_RESOLUTION_OUTCOMES = ("SAME_PROPERTY", "DISTINCT_PROPERTIES")
 
 # Executor service secrets: long enough to resist guessing, bounded
 # to keep config parsing safe.
@@ -174,6 +182,22 @@ class OrchestratorPrincipal:
 
     orchestrator_id: str
     method: str = "orchestrator-key"
+
+
+@dataclass(frozen=True)
+class VerifiedReviewApproval:
+    """One verified review approval plus its key material.
+
+    Returned only by :func:`verify_review_approval`: the enrolled
+    reviewer, the fingerprint identifying the EXACT verifying key,
+    and that key's raw bytes as hex. Public verification material
+    (stored on the decision row for rotation-proof historical
+    audit); never private keys or Bearer [REDACTED]
+    """
+
+    principal: HumanPrincipal
+    key_fingerprint: str
+    public_key_hex: str
 
 
 @dataclass(frozen=True)
@@ -260,6 +284,16 @@ def parse_reconciler_keys(raw: str | None) -> dict[str, bytes]:
     rules, disjoint permission: neither enrollment implies the other.
     """
     return parse_authorizer_keys(raw, kind="reconciler")
+
+
+def parse_reviewer_keys(raw: str | None) -> dict[str, bytes]:
+    """Parse identity-review reviewer enrollment (separate permission).
+
+    Reviewer keys authorize identity-review resolutions only; they
+    share nothing with the reconciler enrollment, so external-action
+    reconcilers gain no review authority and vice versa.
+    """
+    return parse_authorizer_keys(raw, kind="reviewer")
 
 
 def _parse_service_keys(raw: str | None, *, kind: str) -> dict[str, str]:
@@ -365,6 +399,11 @@ def load_reconciler_keys() -> dict[str, bytes]:
     return parse_reconciler_keys(os.getenv(RECONCILER_PUBLIC_KEYS_ENV_VAR))
 
 
+def load_reviewer_keys() -> dict[str, bytes]:
+    """Load identity-review reviewer keys from the environment (separate enrollment)."""
+    return parse_reviewer_keys(os.getenv(REVIEWER_PUBLIC_KEYS_ENV_VAR))
+
+
 def load_executor_keys() -> dict[str, str]:
     """Load executor service credentials from the environment."""
     return parse_executor_keys(os.getenv(EXECUTOR_KEYS_ENV_VAR))
@@ -446,6 +485,29 @@ def canonical_evidence_digest(evidence: dict[str, Any]) -> str:
         raise ValueError("evidence observed_at must be timezone-aware")
     normalized["observed_at"] = parsed.astimezone(timezone.utc).isoformat()
     blob = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def canonical_review_digest(snapshot: dict[str, Any]) -> str:
+    """Digest one review-resolution evidence snapshot (operator tooling shares this).
+
+    The snapshot binds the exact review, outcome, expected
+    occurrence count, and reviewer summary the approval vouches
+    for; all fields hash verbatim (sorted keys), so any drift
+    between signer and verifier fails closed.
+    """
+    if not isinstance(snapshot, dict):
+        raise TypeError("review snapshot must be a dict of snapshot fields")
+    required = ("review_id", "outcome", "expected_occurrence_count", "summary")
+    for field in required:
+        if field not in snapshot:
+            raise ValueError(f"review snapshot missing {field}")
+    blob = json.dumps(
+        {field: snapshot[field] for field in required},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -754,6 +816,175 @@ def verify_reconciliation_approval(
     )
 
 
+def _review_payload(
+    review_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    expected_occurrence_count: int,
+    resolved_by: str,
+    resolution_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> bytes:
+    canonical = {
+        "review_id": str(review_id),
+        "proposed_outcome": proposed_outcome,
+        "evidence_digest": evidence_digest,
+        "expected_occurrence_count": expected_occurrence_count,
+        "resolved_by": resolved_by,
+        "resolution_reference": resolution_reference,
+        "issued_at": issued_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+    }
+    blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return _REVIEW_DOMAIN + blob.encode("utf-8")
+
+
+def _require_review_shape(
+    review_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    expected_occurrence_count: int,
+    resolution_reference: str,
+) -> None:
+    try:
+        UUID(str(review_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError(f"invalid review_id: {review_id!r}") from None
+    if proposed_outcome not in REVIEW_RESOLUTION_OUTCOMES:
+        raise ValueError(f"invalid proposed_outcome: {proposed_outcome!r}")
+    if not _SHA256_TAGGED_RE.match(evidence_digest or ""):
+        raise ValueError("evidence_digest must match sha256:<64 hex>")
+    if (
+        not isinstance(expected_occurrence_count, bool)
+        and isinstance(expected_occurrence_count, int)
+        and expected_occurrence_count >= 1
+    ):
+        pass
+    else:
+        raise ValueError("expected_occurrence_count must be a positive integer")
+    if (
+        not isinstance(resolution_reference, str)
+        or not resolution_reference.strip()
+        or len(resolution_reference) > MAX_REVIEW_REFERENCE_CHARS
+    ):
+        raise ValueError("resolution_reference must be a non-empty bounded string")
+
+
+def sign_review_approval(
+    *,
+    private_key_hex: str,
+    review_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    expected_occurrence_count: int,
+    resolved_by: str,
+    resolution_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> str:
+    """Sign one review-resolution approval (operator-side helper; pure function).
+
+    Same offline pattern as :func:`sign_reconciliation_approval`:
+    the private key arrives as an argument from operator-held
+    storage and never exists in the application environment. The
+    separate ``growup-review-v1:`` domain binds the signature to
+    the exact review, outcome, evidence digest, and expected
+    occurrence count -- a reconciliation signature can never
+    verify here.
+    """
+    from cryptography.exceptions import InvalidKey
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+    except (ValueError, TypeError, InvalidKey):
+        raise ValueError("unusable review signing key") from None
+    _require_review_shape(
+        review_id, proposed_outcome, evidence_digest,
+        expected_occurrence_count, resolution_reference,
+    )
+    issued = _require_aware(issued_at, "issued_at")
+    expiry = _require_aware(expires_at, "expires_at")
+    payload = _review_payload(
+        review_id, proposed_outcome, evidence_digest,
+        expected_occurrence_count,
+        canonical_identity_name(resolved_by),
+        resolution_reference, issued, expiry,
+    )
+    return private.sign(payload).hex()
+
+
+def verify_review_approval(
+    *,
+    claimed_name: str,
+    review_id: UUID | str,
+    proposed_outcome: str,
+    evidence_digest: str,
+    expected_occurrence_count: int,
+    resolution_reference: str,
+    issued_at: datetime,
+    expires_at: datetime,
+    signature_hex: str,
+    reviewers: dict[str, bytes] | None = None,
+    now: datetime | None = None,
+) -> VerifiedReviewApproval:
+    """Verify one review approval against reviewer enrollment.
+
+    Purpose-bound to the exact review, outcome, evidence digest,
+    and expected occurrence count under a domain no
+    reconciliation or authorization signature shares. Lifetime
+    rules mirror reconciliation approvals (aware-only, strict
+    ordering, independent TTL cap, 60s skew both directions).
+    Returns the enrolled reviewer plus the exact verifying key's
+    fingerprint and hex for the decision row; anything else
+    raises :class:`AuthenticationFailedError` with no key
+    material in text.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    skew = timedelta(seconds=CLOCK_SKEW_SECONDS)
+    name = canonical_identity_name(claimed_name)
+    _require_review_shape(
+        review_id, proposed_outcome, evidence_digest,
+        expected_occurrence_count, resolution_reference,
+    )
+    moment = _utcnow() if now is None else _require_aware(now, "now")
+    issued = _require_aware(issued_at, "issued_at")
+    expiry = _require_aware(expires_at, "expires_at")
+    if expiry <= issued:
+        raise AuthenticationFailedError("approval expires_at must be later than issued_at")
+    if (expiry - issued).total_seconds() > MAX_REVIEW_TTL_SECONDS:
+        raise AuthenticationFailedError("approval lifetime exceeds maximum TTL")
+    if issued > moment + skew:
+        raise AuthenticationFailedError("approval issued in the future")
+    if moment > expiry + skew:
+        raise AuthenticationFailedError("approval expired")
+    known = load_reviewer_keys() if reviewers is None else reviewers
+    rawkey = known.get(name)
+    if rawkey is None:
+        raise AuthenticationFailedError("unknown reviewer")
+    try:
+        signature = bytes.fromhex(signature_hex)
+    except (ValueError, TypeError):
+        raise AuthenticationFailedError("malformed approval signature") from None
+    payload = _review_payload(
+        review_id, proposed_outcome, evidence_digest,
+        expected_occurrence_count,
+        name, resolution_reference, issued, expiry,
+    )
+    try:
+        Ed25519PublicKey.from_public_bytes(rawkey).verify(signature, payload)
+    except (InvalidSignature, ValueError):
+        raise AuthenticationFailedError("approval signature mismatch") from None
+    return VerifiedReviewApproval(
+        principal=HumanPrincipal(name=name),
+        key_fingerprint=key_fingerprint(rawkey),
+        public_key_hex=rawkey.hex(),
+    )
+
+
 def verify_executor(
     *,
     executor_id: str,
@@ -997,4 +1228,24 @@ def ensure_may_reconcile(principal: object) -> None:
     if not may_reconcile(principal):
         raise AuthorizationDeniedError(
             "reconciling an action requires a verified human reconciler"
+        )
+
+
+def may_resolve_review(principal: object) -> bool:
+    """Only a verified human may resolve identity reviews.
+
+    Same trust rule as :func:`may_authorize`: type check only, valid
+    solely for :func:`verify_review_approval` outputs (which
+    additionally require reviewer enrollment). The entry point
+    verifies proofs itself; executors and orchestrators can never
+    satisfy this policy.
+    """
+    return isinstance(principal, HumanPrincipal)
+
+
+def ensure_may_resolve_review(principal: object) -> None:
+    """Enforce the review-resolution role policy (fail closed, explicit denial)."""
+    if not may_resolve_review(principal):
+        raise AuthorizationDeniedError(
+            "resolving an identity review requires a verified human reviewer"
         )
