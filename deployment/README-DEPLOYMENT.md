@@ -27,6 +27,72 @@ These scripts are **not yet configured for unattended use**. Nothing is executed
 - The existing Shorashim SSH helper was intentionally not reused: its verification function hardcodes `shorashim.service`.
 - No Nginx route is configured yet. Access should remain local or through SSH port forwarding until deliberately configured.
 
+## Migration before activation (OPS-2)
+
+The deployment controller (`deployment/growup-install-release`, installed
+as `/usr/local/sbin/growup-install-release`) runs pending PostgreSQL
+migrations **before activation**, in this order:
+
+1. Validate the release name, archive, and checksum.
+2. Stage the archive and prepare the new release as `growup`.
+3. Execute `python -m app.migrate` in a transient unit via
+   `systemd-run --wait --pipe` with `User=growup`, `Group=growup`,
+   `WorkingDirectory=/var/www/growup/releases/<RELEASE>`,
+   `EnvironmentFile=/var/www/growup/shared/growup.env`, and the
+   **new** release's interpreter
+   (`/var/www/growup/releases/<RELEASE>/.venv/bin/python`).
+   systemd parses the env file as `KEY=VALUE` assignments; it is never
+   sourced as shell code. `--wait --pipe` propagates the migration
+   exit status, so any nonzero result aborts before activation.
+4. Abort with exit 1 if migrations fail — the previous release stays
+   active and the service is not restarted. No rollback is needed
+   because nothing was activated.
+5. Only after migrations succeed: activate the symlink, restart
+   `growup.service`, and verify health (existing rollback on failure).
+
+Migration output (`applied: <file>` or `up to date: no pending
+migrations`) appears in the deploy log before the activation message;
+its absence on a release carrying a new migration means the installed
+controller predates this fix.
+
+Migration compatibility rule: a migration executes while the **old**
+release is still serving, so every migration must be backward compatible
+with the running application (additive changes only — new tables,
+nullable columns; no renames, drops, or tightening constraints relied
+on by old code). The runner (`app/migrate.py`) applies all pending
+files in one transaction and records them in `schema_migrations`, so a
+failed run leaves the schema unchanged; reruns are safe. There are no
+automatic down-migrations: application rollback never reverts schema
+changes.
+
+Installing a reviewed controller update (privileged, manual — the live
+controller is outside Git, so editing the repository does not update it):
+
+```bash
+# 1. From the deployed release, diff the reviewed source against live.
+diff -u /usr/local/sbin/growup-install-release \
+  /var/www/growup/current/deployment/growup-install-release
+# 2. Syntax-check the reviewed source (no execution).
+bash -n /var/www/growup/current/deployment/growup-install-release
+# 3. Install with root ownership and restrictive mode; verify.
+sudo install -o root -g root -m 755 \
+  /var/www/growup/current/deployment/growup-install-release \
+  /usr/local/sbin/growup-install-release
+ls -l /usr/local/sbin/growup-install-release
+sha256sum /usr/local/sbin/growup-install-release \
+  /var/www/growup/current/deployment/growup-install-release
+# 4. Confirm exit-status propagation on the host (no app involved):
+sudo systemd-run --wait --pipe --quiet --collect -p User=growup \
+  -- /bin/false; test $? -ne 0 && echo PROPAGATION_OK
+# 5. Verify on the next deploy: the log must show the migration step
+#    before "release activated", or "release not activated" with the
+#    previous release still live if migrations fail.
+```
+
+Rollback of a controller update: re-install the previous reviewed copy
+from the still-active release's `deployment/` directory and re-verify
+with `bash -n` and `diff`.
+
 ## Shared /var/www layout
 Grow Up uses `/var/www/growup` as its own sibling of `iiibooks`, `hebrewgospels`, and `securecodeusa`. Do not recursively chown or chmod `/var/www`; create only the new `/var/www/growup` subtree after confirming the target does not exist.
 

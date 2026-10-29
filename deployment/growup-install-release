@@ -33,6 +33,22 @@ STAGED_HASH=$(sha256sum "$STAGED" | cut -d ' ' -f1)
 [[ "$STAGED_HASH" == "${EXPECTED:0:64}" ]] || { echo 'Staged archive checksum mismatch' >&2; exit 1; }
 trap 'rm -f "$STAGED"' EXIT
 runuser -u growup -- /bin/bash "$INSTALLER" "$RELEASE" "$STAGED"
+# Run pending PostgreSQL migrations with the NEW release's code before activation.
+# Never as root, never from /var/www/growup/current, never with release-derived config.
+# The env file is parsed by systemd (KEY=VALUE only), never sourced as shell code.
+NEW_RELEASE="$ROOT/releases/$RELEASE"
+NEW_PYTHON="$NEW_RELEASE/.venv/bin/python"
+ENVFILE="$ROOT/shared/growup.env"
+[[ -d "$NEW_RELEASE" && -x "$NEW_PYTHON" && -f "$NEW_RELEASE/app/migrate.py" ]] || { echo 'Prepared release incomplete; cannot migrate' >&2; exit 1; }
+[[ -f "$ENVFILE" ]] || { echo 'Application environment missing' >&2; exit 1; }
+if ! systemd-run --wait --pipe --quiet --collect \
+    -p User=growup -p Group=growup \
+    -p WorkingDirectory="$NEW_RELEASE" \
+    -p EnvironmentFile="$ENVFILE" \
+    "$NEW_PYTHON" -m app.migrate; then
+    echo 'Database migration failed; release not activated.' >&2
+    exit 1
+fi
 PREVIOUS=$(readlink -f "$ROOT/current" || true)
 PENDING="$ROOT/.current-$RELEASE"
 ln -s "$ROOT/releases/$RELEASE" "$PENDING"
