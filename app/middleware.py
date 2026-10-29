@@ -2,17 +2,18 @@
 
 Applies ``Cache-Control: no-store`` to every HTTP response emitted
 for GET /external-actions/{action_id}/review,
-GET /external-actions/review-queue, GET /identity-reviews, and
-GET /identity-reviews/{review_id} -- including
+GET /external-actions/review-queue, and every path under
+/identity-reviews/ (list, detail, resolve, and unmatched
+sub-paths whose 404s must also stay uncached) -- including
 framework-generated 401/404/405/422 rejections -- without
 touching any other route. Matching is syntactic and strict:
-exactly /external-actions/{id}/review,
-/external-actions/review-queue, /identity-reviews, or
-/identity-reviews/{id}, each with at most one
-trailing slash; UUID validity is irrelevant, so
-malformed-UUID 422s are covered too. Request bodies, headers,
-statuses, and unrelated response headers pass through untouched,
-and non-HTTP scopes (lifespan, websocket) bypass entirely.
+exactly /external-actions/{id}/review or
+/external-actions/review-queue, or any /identity-reviews/...
+path with non-empty segments, each with at most one trailing
+slash; UUID validity is irrelevant, so malformed-UUID 422s are
+covered too. Request bodies, headers, statuses, and unrelated
+response headers pass through untouched, and non-HTTP scopes
+(lifespan, websocket) bypass entirely.
 
 Known boundary, stated honestly: responses for *unhandled*
 exceptions are emitted by Starlette's ServerErrorMiddleware,
@@ -58,17 +59,23 @@ def _is_review_queue_path(path: object) -> bool:
 
 
 def _is_identity_review_path(path: object) -> bool:
-    """Match the identity-review list/detail paths, one trailing slash max."""
+    """Match every /identity-reviews/... path, one trailing slash max.
+
+    Covers list, detail, and resolve endpoints plus unmatched
+    sub-paths (whose 404s must also stay uncached). Every segment
+    past the prefix must be non-empty, so empty-segment probes
+    still fall through.
+    """
     if not isinstance(path, str):
         return False
 
     segments = path.removesuffix("/").split("/")
 
-    if len(segments) not in (2, 3):
+    if len(segments) < 2:
         return False
     if segments[0] != "" or segments[1] != "identity-reviews":
         return False
-    return len(segments) == 2 or bool(segments[2])
+    return all(segments[2:])
 
 
 class ReviewNoStoreMiddleware:

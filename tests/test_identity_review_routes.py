@@ -9,6 +9,7 @@ tests/test_identity_reviews.py alongside the queue fixtures.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -301,11 +302,531 @@ def test_middleware_path_matching() -> None:
     assert _is_identity_review_path("/identity-reviews/")
     assert _is_identity_review_path(f"/identity-reviews/{_DETAIL_ID}")
     assert _is_identity_review_path(f"/identity-reviews/{_DETAIL_ID}/")
+    assert _is_identity_review_path(f"/identity-reviews/{_DETAIL_ID}/resolve")
+    assert _is_identity_review_path(f"/identity-reviews/{_DETAIL_ID}/resolve/")
+    assert _is_identity_review_path("/identity-reviews/a/b")
     assert not _is_identity_review_path("/identity-reviews//")
-    assert not _is_identity_review_path("/identity-reviews/a/b")
     assert not _is_identity_review_path("/identity-reviews-other")
     assert not _is_identity_review_path("/properties")
     assert not _is_identity_review_path(None)
+
+
+# --- Resolve endpoint (IR-4B) -----------------------------------------------------------
+
+
+def _resolve_url(review_id) -> str:
+    return f"{_LIST_URL}/{review_id}/resolve"
+
+
+def _resolve_body(**overrides):
+    from datetime import timedelta
+
+    body = {
+        "proposed_outcome": "SAME_PROPERTY",
+        "expected_occurrence_count": 1,
+        "resolved_by": "operator-alice",
+        "resolution_reference": "ticket-7",
+        "approval_signature": "ab" * 64,
+        "approval_issued_at": _T0.isoformat(),
+        "approval_expires_at": (_T0 + timedelta(hours=1)).isoformat(),
+        "evidence_summary": "reviewed records",
+    }
+    body.update(overrides)
+    return body
+
+
+def _resolution_dict(**overrides):
+    from app.identity_review_resolve import ResolutionResult
+
+    review_id = overrides.pop("review_id", uuid4())
+    decision_id = uuid4()
+    return ResolutionResult(
+        decision={
+            "decision_id": decision_id,
+            "review_id": review_id,
+            "outcome": "SAME_PROPERTY",
+            "prior_status": "PENDING",
+            "resolved_by": "operator-alice",
+            "resolution_reference": "ticket-7",
+            "approval_signature": "ab" * 64,
+            "signing_public_key": "cd" * 32,
+            "signing_key_fingerprint": "sha256:" + "ef" * 32,
+            "evidence_digest": "sha256:" + "12" * 32,
+            "expected_occurrence_count": 1,
+        },
+        review={"review_id": review_id, "status": "RESOLVED", "occurrence_count": 1},
+        created=overrides.pop("created", True),
+        audit_event_id=overrides.pop("audit_event_id", f"evt-{uuid4().hex}"),
+    )
+
+
+def test_resolve_missing_key_never_reaches_writer(monkeypatch) -> None:
+    def _boom(**kwargs):
+        raise AssertionError("writer must not run unauthenticated")
+
+    monkeypatch.setattr(review_routes, "record_review_resolution", _boom)
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body())
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "unauthorized"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_wrong_key_never_echoed(monkeypatch) -> None:
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution", lambda **k: _resolution_dict()
+    )
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(),
+                       headers=_headers("wrong-key"))
+    assert resp.status_code == 401
+    assert "wrong-key" not in resp.text
+    assert TEST_INTAKE_KEY not in resp.text
+
+
+def test_resolve_unconfigured_key_fails_closed(monkeypatch) -> None:
+    monkeypatch.delenv("INTAKE_API_KEY", raising=True)
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 503
+    assert resp.json() == {"detail": "intake_not_configured"}
+
+
+def test_resolve_auth_precedes_malformed_uuid_and_body(monkeypatch) -> None:
+    def _boom(**kwargs):
+        raise AssertionError("writer must not run unauthenticated")
+
+    monkeypatch.setattr(review_routes, "record_review_resolution", _boom)
+    resp = client.post(_resolve_url("not-a-uuid"), json={"bogus": True})
+    assert resp.status_code == 401
+
+
+def test_resolve_rejects_malformed_uuid(monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution",
+        lambda **k: calls.append(k) or _resolution_dict(),
+    )
+    resp = client.post(_resolve_url("not-a-uuid"), json=_resolve_body(),
+                       headers=_headers())
+    assert resp.status_code == 422
+    assert calls == []
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"proposed_outcome": "MAYBE"},
+        {"proposed_outcome": "same_property"},
+        {"expected_occurrence_count": 0},
+        {"expected_occurrence_count": -2},
+        {"expected_occurrence_count": "many"},
+        {"resolved_by": "x" * 65},
+        {"resolution_reference": ""},
+        {"resolution_reference": "x" * 257},
+        {"approval_signature": "zz" * 64},
+        {"approval_signature": "AB" * 64},
+        {"approval_signature": "ab" * 63},
+        {"approval_issued_at": "2026-10-28T12:00:00"},
+        {"approval_expires_at": "not-a-time"},
+        {"evidence_summary": "x" * 501},
+        {"review_id": "00000000-0000-0000-0000-000000000000"},
+    ],
+)
+def test_resolve_rejects_invalid_body_shapes(monkeypatch, override) -> None:
+    calls: list = []
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution",
+        lambda **k: calls.append(k) or _resolution_dict(),
+    )
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(**override),
+                       headers=_headers())
+    assert resp.status_code == 422, override
+    assert calls == []
+
+
+def test_resolve_forbids_extra_body_fields(monkeypatch) -> None:
+    body = _resolve_body()
+    body["request_fingerprint"] = "smuggled"
+    resp = client.post(_resolve_url(uuid4()), json=body, headers=_headers())
+    assert resp.status_code == 422
+
+
+def _writer_error(monkeypatch, error: Exception) -> None:
+    def _fail(**kwargs):
+        raise error
+
+    monkeypatch.setattr(review_routes, "record_review_resolution", _fail)
+
+
+def test_resolve_invalid_approval_maps_to_401(monkeypatch) -> None:
+    from app.identity import AuthenticationFailedError
+
+    _writer_error(monkeypatch, AuthenticationFailedError("approval signature mismatch"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "invalid_approval"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_denied_maps_to_403(monkeypatch) -> None:
+    from app.identity import AuthorizationDeniedError
+
+    _writer_error(monkeypatch, AuthorizationDeniedError("denied"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 403
+    assert resp.json() == {"detail": "forbidden"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_unknown_review_maps_to_404(monkeypatch) -> None:
+    from app.identity_review_resolve import ReviewNotFoundError
+
+    _writer_error(monkeypatch, ReviewNotFoundError("unknown review_id"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "review_not_found"}
+
+
+def test_resolve_conflict_maps_to_409(monkeypatch) -> None:
+    from app.identity_review_resolve import ReviewResolutionConflictError
+
+    _writer_error(monkeypatch, ReviewResolutionConflictError("different decision"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "resolution_conflict"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_stale_evidence_maps_to_409(monkeypatch) -> None:
+    from app.identity_review_resolve import StaleReviewError
+
+    _writer_error(monkeypatch, StaleReviewError("expected count 1, found 2"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "stale_evidence"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_writer_validation_maps_to_422(monkeypatch) -> None:
+    _writer_error(monkeypatch, ValueError("invalid proposed_outcome"))
+    resp = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 422
+    assert resp.json() == {"detail": "invalid_resolution"}
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_database_failures_map_to_503(monkeypatch) -> None:
+    for error, detail in (
+        (DatabaseNotConfiguredError("x"), "database_not_configured"),
+        (DatabaseUnavailableError("x"), "database_unavailable"),
+    ):
+        _writer_error(monkeypatch, error)
+        resp = client.post(_resolve_url(uuid4()), json=_resolve_body(),
+                           headers=_headers())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": detail}
+        assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_success_returns_201_and_result_shape(monkeypatch) -> None:
+    review_id = uuid4()
+    expected = _resolution_dict(review_id=review_id)
+    seen: dict = {}
+
+    def _fake(**kwargs):
+        seen.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(review_routes, "record_review_resolution", _fake)
+    resp = client.post(_resolve_url(review_id), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["review_id"] == str(review_id)
+    assert body["decision_id"] == str(expected.decision["decision_id"])
+    assert body["outcome"] == "SAME_PROPERTY"
+    assert body["status"] == "RESOLVED"
+    assert body["created"] is True
+    assert body["audit_event_id"] == expected.audit_event_id
+    assert body["occurrence_count"] == 1
+    assert body["resolved_by"] == "operator-alice"
+    assert body["resolution_reference"] == "ticket-7"
+    assert body["evidence_digest"] == "sha256:" + "12" * 32
+    assert set(body) == {
+        "review_id", "decision_id", "outcome", "status", "created",
+        "audit_event_id", "occurrence_count", "resolved_by",
+        "resolution_reference", "evidence_digest",
+    }
+    # review_id travels once, from the path; the writer gets every body field.
+    assert seen["review_id"] == review_id
+    assert seen["proposed_outcome"] == "SAME_PROPERTY"
+    assert seen["expected_occurrence_count"] == 1
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_replay_returns_200_with_same_decision(monkeypatch) -> None:
+    review_id = uuid4()
+    expected = _resolution_dict(review_id=review_id, created=False, audit_event_id=None)
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution", lambda **k: expected
+    )
+    resp = client.post(_resolve_url(review_id), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["created"] is False
+    assert body["decision_id"] == str(expected.decision["decision_id"])
+    assert body["audit_event_id"] is None
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_resolve_responses_carry_no_secrets(monkeypatch) -> None:
+    review_id = uuid4()
+    expected = _resolution_dict(review_id=review_id)
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution", lambda **k: expected
+    )
+    resp = client.post(_resolve_url(review_id), json=_resolve_body(), headers=_headers())
+    assert resp.status_code == 201
+    assert "ab" * 64 not in resp.text  # submitted approval signature
+    assert "cd" * 32 not in resp.text  # signing public key
+    assert TEST_INTAKE_KEY not in resp.text
+
+
+def test_resolve_no_store_on_all_response_classes(monkeypatch) -> None:
+    from app.identity_review_resolve import ReviewNotFoundError
+
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution", lambda **k: _resolution_dict()
+    )
+    rid = uuid4()
+    ok = client.post(_resolve_url(rid), json=_resolve_body(), headers=_headers())
+    bad_uuid = client.post(_resolve_url("not-a-uuid"), json=_resolve_body(),
+                           headers=_headers())
+    bad_body = client.post(_resolve_url(rid), json={"bogus": True}, headers=_headers())
+    no_key = client.post(_resolve_url(rid), json=_resolve_body())
+    assert [r.status_code for r in (ok, bad_uuid, bad_body, no_key)] == [201, 422, 422, 401]
+    monkeypatch.setattr(
+        review_routes, "record_review_resolution",
+        lambda **k: (_ for _ in ()).throw(ReviewNotFoundError("nope")),
+    )
+    missing = client.post(_resolve_url(uuid4()), json=_resolve_body(), headers=_headers())
+    assert missing.status_code == 404
+    unmatched = client.get(f"{_resolve_url(rid)}/extra", headers=_headers())
+    assert unmatched.status_code == 404
+    for resp in (ok, bad_uuid, bad_body, no_key, missing, unmatched):
+        assert resp.headers.get("cache-control") == "no-store", resp.status_code
+
+
+def test_resolve_method_not_allowed_is_no_store() -> None:
+    resp = client.get(_resolve_url(uuid4()), headers=_headers())
+    assert resp.status_code == 405
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+# --- Genuine resolve flow (real writer + real Ed25519, fake connection) --------
+
+
+class _ResolveFakeCursor:
+    def __init__(self, state: dict) -> None:
+        self._state = state
+        self._row = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+    def execute(self, sql: str, params=None) -> None:
+        params = dict(params or {})
+        lowered = " ".join(sql.split()).lower()
+        self._state["statements"].append(lowered.split(" where ")[0].split(" values ")[0])
+        if lowered.startswith("select * from identity_reviews where review_id"):
+            self._row = dict(self._state["reviews"].get(str(params["review_id"]) or ""))
+            if self._row == {}:
+                self._row = None
+        elif lowered.startswith("select * from identity_review_decisions where review_id"):
+            self._row = dict(self._state["decisions"].get(str(params["review_id"]) or "") or {}) or None
+        elif lowered.startswith("insert into identity_review_decisions"):
+            rid = str(params["review_id"])
+            if rid in self._state["decisions"]:
+                self._row = None
+            else:
+                row = {**params, "decided_at": _T0}
+                self._state["decisions"][rid] = row
+                self._row = dict(row)
+        elif lowered.startswith("update identity_reviews set status"):
+            row = self._state["reviews"][str(params["review_id"])]
+            row["status"] = params["status"]
+            self._row = dict(row)
+        elif lowered.startswith("insert into agent_events"):
+            self._state["events"][params["event_id"]] = dict(params)
+            self._row = None
+        else:
+            raise AssertionError(f"unexpected SQL: {sql[:80]}")
+
+    def fetchone(self):
+        return dict(self._row) if self._row is not None else None
+
+
+class _ResolveFakeConn:
+    def __init__(self, state: dict) -> None:
+        self._state = state
+        self.committed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+    def cursor(self):
+        return _ResolveFakeCursor(self._state)
+
+    def commit(self) -> None:
+        self.committed = True
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _genuine_setup(monkeypatch, occurrence_count: int = 1):
+    """Wire the REAL writer to a fake connection with one PENDING review."""
+    import app.identity_review_resolve as writer_module
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, PublicFormat,
+    )
+
+    private = Ed25519PrivateKey.generate()
+    priv_hex = private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()).hex()
+    pub_hex = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+    monkeypatch.setenv("REVIEWER_PUBLIC_KEYS", f"operator-alice:{pub_hex}")
+    review_id = uuid4()
+    state = {
+        "reviews": {
+            str(review_id): {
+                "review_id": str(review_id),
+                "status": "PENDING",
+                "occurrence_count": occurrence_count,
+                "run_id": "run-genuine",
+            }
+        },
+        "decisions": {},
+        "events": {},
+        "statements": [],
+    }
+    monkeypatch.setattr(writer_module, "get_connection", lambda config=None: _ResolveFakeConn(state))
+    return review_id, priv_hex, state
+
+
+def _genuine_body(review_id, priv_hex, **overrides):
+    from datetime import datetime, timedelta, timezone
+
+    from app.identity import canonical_review_digest, sign_review_approval
+    from app.identity_review_resolve import canonical_review_snapshot
+
+    issued = datetime.now(timezone.utc)
+    expires = issued + timedelta(hours=1)
+    snapshot = canonical_review_snapshot(
+        review_id=review_id,
+        outcome=overrides.get("proposed_outcome", "SAME_PROPERTY"),
+        expected_occurrence_count=overrides.get("expected_occurrence_count", 1),
+        summary=overrides.get("evidence_summary", "reviewed records"),
+    )
+    body = {
+        "proposed_outcome": snapshot["outcome"],
+        "expected_occurrence_count": snapshot["expected_occurrence_count"],
+        "resolved_by": "operator-alice",
+        "resolution_reference": "ticket-7",
+        "approval_signature": sign_review_approval(
+            private_key_hex=priv_hex,
+            review_id=review_id,
+            proposed_outcome=snapshot["outcome"],
+            evidence_digest=canonical_review_digest(snapshot),
+            expected_occurrence_count=snapshot["expected_occurrence_count"],
+            resolved_by="operator-alice",
+            resolution_reference="ticket-7",
+            issued_at=issued,
+            expires_at=expires,
+        ),
+        "approval_issued_at": issued.isoformat(),
+        "approval_expires_at": expires.isoformat(),
+        "evidence_summary": snapshot["summary"],
+    }
+    return body
+
+
+def test_genuine_signed_resolution_returns_201(monkeypatch) -> None:
+    review_id, priv_hex, state = _genuine_setup(monkeypatch)
+    resp = client.post(
+        _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+        headers=_headers(),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["review_id"] == str(review_id)
+    assert body["created"] is True
+    assert body["occurrence_count"] == 1
+    assert state["reviews"][str(review_id)]["status"] == "RESOLVED"
+    assert len(state["decisions"]) == 1
+    assert len(state["events"]) == 1
+    # Queue state only: no property, evidence, or occurrence writes.
+    joined = " ".join(state["statements"])
+    assert "properties" not in joined
+    assert "listing_evidence" not in joined
+    assert "identity_review_occurrences" not in joined
+
+
+def test_genuine_forged_signature_returns_401_without_writes(monkeypatch) -> None:
+    review_id, _priv_hex, state = _genuine_setup(monkeypatch)
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat,
+    )
+
+    other_priv = Ed25519PrivateKey.generate().private_bytes(
+        Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+    ).hex()
+    resp = client.post(
+        _resolve_url(review_id), json=_genuine_body(review_id, other_priv),
+        headers=_headers(),
+    )
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "invalid_approval"}
+    assert state["decisions"] == {}
+    assert state["events"] == {}
+    assert state["reviews"][str(review_id)]["status"] == "PENDING"
+
+
+def test_genuine_stale_count_returns_409(monkeypatch) -> None:
+    review_id, priv_hex, state = _genuine_setup(monkeypatch, occurrence_count=3)
+    resp = client.post(
+        _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+        headers=_headers(),
+    )
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "stale_evidence"}
+    assert state["decisions"] == {}
+
+
+def test_genuine_replay_returns_200_without_duplicate_writes(monkeypatch) -> None:
+    review_id, priv_hex, state = _genuine_setup(monkeypatch)
+    first = client.post(
+        _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+        headers=_headers(),
+    )
+    assert first.status_code == 201
+    second = client.post(
+        _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+        headers=_headers(),
+    )
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    assert second.json()["decision_id"] == first.json()["decision_id"]
+    assert len(state["decisions"]) == 1
+    assert len(state["events"]) == 1
 
 
 # --- Reader units (recording fake connection; no database) ------------------------------
@@ -481,3 +1002,216 @@ def test_readers_wrap_driver_failures(monkeypatch) -> None:
     monkeypatch.setattr(reviews_db, "get_connection", _missing)
     with pytest.raises(DatabaseNotConfiguredError):
         reviews_db.list_identity_reviews()
+
+
+# --- Live PostgreSQL HTTP integration (GROWUP_PG_INTEGRATION=1) ----------------
+#
+# One end-to-end resolve through TestClient against real PostgreSQL:
+# genuine Ed25519 approval, real writer transaction, direct row
+# assertions, replay idempotency, and table invariance. Self-cleaning
+# via try/finally; deletion order follows the foreign keys
+# (decisions -> occurrences -> reviews -> events).
+
+
+_LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
+needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
+
+
+def _live_http_config():
+    from app.config import get_database_config
+
+    cfg = get_database_config()
+    if not cfg.is_configured:
+        pytest.skip("database not configured")
+    return cfg
+
+
+def _require_http_decision_table() -> None:
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT to_regclass('public.identity_reviews') AS reviews, "
+                "to_regclass('public.identity_review_decisions') AS decisions"
+            )
+            row = cur.fetchone()
+    if row is None or row["reviews"] is None or row["decisions"] is None:
+        pytest.skip("identity review tables not present (migrations 009/010 not applied)")
+
+
+def _live_http_seed(tag: str):
+    """Insert one parent event, PENDING review, and occurrence row."""
+    from app.properties_db import get_connection
+
+    review_id = uuid4()
+    event_id = f"evt-http-resolve-{tag}"
+    occ_event_id = f"evt-http-resolve-{tag}-occ"
+    pid = uuid4()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for eid in (event_id, occ_event_id):
+                cur.execute(
+                    "INSERT INTO agent_events (event_id, occurred_at, agent, run_id,"
+                    " correlation_id, event_type, severity, summary, details,"
+                    " evidence_refs, retention_class)"
+                    " VALUES (%(eid)s, now(), 'gabriel', %(run)s, '',"
+                    " 'gabriel.intake.decision', 'INFO', 'synthetic http seed',"
+                    " '{}', '[]', 'permanent')",
+                    {"eid": eid, "run": f"run-http-resolve-{tag}"},
+                )
+            cur.execute(
+                "INSERT INTO identity_reviews (review_id, dedup_key, source, reason_code,"
+                " observed_identity, conflicting_property_ids, decision_event_id,"
+                " run_id, status, occurrence_count, last_event_id)"
+                " VALUES (%(rid)s, %(key)s, 'intake', 'AMBIGUOUS_ADDRESS', '{}',"
+                " %(pids)s, %(eid)s, %(run)s, 'PENDING', 1, %(eid)s)",
+                {
+                    "rid": str(review_id),
+                    "key": f"live-http-resolve:{tag}",
+                    "pids": [str(pid)],
+                    "eid": event_id,
+                    "run": f"run-http-resolve-{tag}",
+                },
+            )
+            cur.execute(
+                "INSERT INTO identity_review_occurrences (occurrence_id, review_id, event_id)"
+                " VALUES (%(oid)s, %(rid)s, %(eid)s)",
+                {"oid": str(uuid4()), "rid": str(review_id), "eid": occ_event_id},
+            )
+        conn.commit()
+    return review_id, [event_id, occ_event_id]
+
+
+def _live_http_cleanup(review_ids, event_ids) -> None:
+    from app.properties_db import get_connection
+
+    reviews = [str(item) for item in review_ids if item]
+    events = [str(item) for item in event_ids if item]
+    if not reviews and not events:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if reviews:
+                cur.execute(
+                    "DELETE FROM identity_review_decisions WHERE review_id = ANY(%(ids)s)",
+                    {"ids": reviews},
+                )
+                cur.execute(
+                    "DELETE FROM identity_review_occurrences WHERE review_id = ANY(%(ids)s)",
+                    {"ids": reviews},
+                )
+                cur.execute(
+                    "DELETE FROM identity_reviews WHERE review_id = ANY(%(ids)s)",
+                    {"ids": reviews},
+                )
+            if events:
+                cur.execute(
+                    "DELETE FROM agent_events WHERE event_id = ANY(%(ids)s)",
+                    {"ids": events},
+                )
+        conn.commit()
+
+
+def _live_http_counts():
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            counts = {}
+            for table in ("properties", "listing_evidence", "identity_review_occurrences"):
+                cur.execute(f"SELECT COUNT(*) AS n FROM {table}")
+                counts[table] = cur.fetchone()["n"]
+    return counts
+
+
+def _live_http_keypair():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, PublicFormat,
+    )
+
+    private = Ed25519PrivateKey.generate()
+    return (
+        private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()).hex(),
+        private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex(),
+    )
+
+
+@needs_live_pg
+def test_live_resolve_end_to_end(monkeypatch) -> None:
+    _live_http_config()
+    _require_http_decision_table()
+    from app.properties_db import get_connection
+
+    tag = uuid4().hex
+    priv_hex, pub_hex = _live_http_keypair()
+    monkeypatch.setenv("REVIEWER_PUBLIC_KEYS", f"operator-alice:{pub_hex}")
+    review_id, event_ids = _live_http_seed(tag)
+    before = _live_http_counts()
+    try:
+        first = client.post(
+            _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+            headers=_headers(),
+        )
+        assert first.status_code == 201
+        created = first.json()
+        assert created["created"] is True
+        assert created["review_id"] == str(review_id)
+        event_ids.append(created["audit_event_id"])
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM identity_review_decisions WHERE review_id = %(rid)s",
+                    {"rid": str(review_id)},
+                )
+                decision = cur.fetchone()
+                cur.execute(
+                    "SELECT status, occurrence_count FROM identity_reviews"
+                    " WHERE review_id = %(rid)s",
+                    {"rid": str(review_id)},
+                )
+                review = cur.fetchone()
+                cur.execute(
+                    "SELECT event_type, retention_class, property_id FROM agent_events"
+                    " WHERE event_id = %(eid)s",
+                    {"eid": created["audit_event_id"]},
+                )
+                audit = cur.fetchone()
+        assert decision is not None
+        assert str(decision["decision_id"]) == created["decision_id"]
+        assert decision["outcome"] == "SAME_PROPERTY"
+        assert decision["resolved_by"] == "operator-alice"
+        assert decision["evidence_digest"] == created["evidence_digest"]
+        assert decision["expected_occurrence_count"] == 1
+        assert review["status"] == "RESOLVED"
+        assert review["occurrence_count"] == 1
+        assert audit["event_type"] == "identity.review.resolved"
+        assert audit["retention_class"] == "permanent"
+        assert audit["property_id"] is None
+        assert _live_http_counts() == before
+        # Identical replay: HTTP 200, same decision, zero new rows.
+        second = client.post(
+            _resolve_url(review_id), json=_genuine_body(review_id, priv_hex),
+            headers=_headers(),
+        )
+        assert second.status_code == 200
+        replayed = second.json()
+        assert replayed["created"] is False
+        assert replayed["decision_id"] == created["decision_id"]
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM identity_review_decisions"
+                    " WHERE review_id = %(rid)s",
+                    {"rid": str(review_id)},
+                )
+                assert cur.fetchone()["n"] == 1
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM agent_events WHERE event_id = ANY(%(ids)s)",
+                    {"ids": event_ids},
+                )
+                assert cur.fetchone()["n"] == len(event_ids)
+        assert _live_http_counts() == before
+    finally:
+        _live_cleanup_http([review_id], event_ids)

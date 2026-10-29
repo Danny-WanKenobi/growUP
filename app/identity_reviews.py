@@ -8,10 +8,10 @@ through these same contracts without a second breaking change.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class IdentityReviewOccurrence(BaseModel):
@@ -75,3 +75,50 @@ class IdentityReviewList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class IdentityReviewResolutionRequest(BaseModel):
+    """One signed human-resolution submission (IR-4B).
+
+    Shape validation only: the URL supplies the review id (never
+    duplicated here), and the writer re-validates every field plus
+    the Ed25519 approval before any database access. Unknown
+    fields are rejected so smuggled parameters fail closed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposed_outcome: Literal["SAME_PROPERTY", "DISTINCT_PROPERTIES"]
+    expected_occurrence_count: int = Field(ge=1)
+    resolved_by: str = Field(max_length=64)
+    resolution_reference: str = Field(min_length=1, max_length=256)
+    approval_signature: str = Field(pattern=r"^[0-9a-f]{128}$")
+    approval_issued_at: datetime
+    approval_expires_at: datetime
+    evidence_summary: str = Field(default="", max_length=500)
+
+    @field_validator("approval_issued_at", "approval_expires_at")
+    @classmethod
+    def _require_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("must be a timezone-aware datetime")
+        return value
+
+
+class IdentityReviewResolutionResult(BaseModel):
+    """One recorded (or replayed) resolution decision.
+
+    Carries linkage and classification only: signatures, public
+    keys, and authentication secrets never leave the server.
+    """
+
+    review_id: UUID
+    decision_id: UUID
+    outcome: str
+    status: str
+    created: bool
+    audit_event_id: str | None = None
+    occurrence_count: int
+    resolved_by: str
+    resolution_reference: str
+    evidence_digest: str

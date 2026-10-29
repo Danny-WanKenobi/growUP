@@ -777,12 +777,46 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
         text = source.read_text(encoding="utf-8")
         if source.name == "external_actions.py":
             tokens = forbidden_everywhere
+        elif source.name == "identity_reviews.py":
+            # IR-4B: the resolve endpoint calls the writer module only.
+            # Verification helpers, enrollment names, and every other
+            # ledger token stay forbidden here.
+            tokens = tuple(
+                token
+                for token in forbidden_everywhere + review_route_only
+                if token not in _RESOLUTION_ROUTE_ALLOW
+            )
         else:
             tokens = forbidden_everywhere + review_route_only
         hits = [token for token in tokens if _token_hit(token, text)]
         if hits:
             offenders.append((source.name, hits))
     assert offenders == [], offenders
+
+
+_RESOLUTION_ROUTE_ALLOW = ("identity_review_resolve", "record_review_resolution")
+
+
+def test_resolution_route_allowance_is_minimal() -> None:
+    from pathlib import Path
+
+    assert _RESOLUTION_ROUTE_ALLOW == (
+        "identity_review_resolve",
+        "record_review_resolution",
+    )
+    text = (Path("app/routes") / "identity_reviews.py").read_text(encoding="utf-8")
+    # The endpoint is wired to the writer...
+    assert "record_review_resolution" in text
+    # ...and nothing else from the identity/ledger surface.
+    for token in (
+        "verify_review_approval",
+        "sign_review_approval",
+        "may_resolve_review",
+        "REVIEWER_PUBLIC_KEYS",
+        "verify_reconciliation_approval",
+        "record_reconciliation",
+    ):
+        assert token not in text, token
 
 
 def _token_hit(token: str, text: str) -> bool:
