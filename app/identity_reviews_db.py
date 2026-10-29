@@ -16,8 +16,10 @@ import json
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.config import DatabaseConfig
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.observability.events import RetentionClass
+from app.properties_db import get_connection
 
 try:
     import psycopg
@@ -259,3 +261,157 @@ def record_review_occurrence(conn: Any, event: Any) -> str | None:
         # Validation and programming errors propagate unchanged.
         raise DatabaseUnavailableError("review_insert_failed") from exc
     return str(review_id)
+
+
+# ---------------------------------------------------------------------------
+# Read-only inspection (IR-3B). SELECT-only helpers; they never insert,
+# update, or delete rows. Error handling mirrors list_properties.
+# ---------------------------------------------------------------------------
+
+REVIEW_LIST_DEFAULT_LIMIT = 50
+REVIEW_LIST_MAX_LIMIT = 200
+REVIEW_OCCURRENCE_LIMIT = 200
+
+_REVIEW_COLUMNS = [
+    "review_id",
+    "dedup_key",
+    "source",
+    "reason_code",
+    "observed_identity",
+    "provider",
+    "external_id",
+    "listing_url",
+    "conflicting_property_ids",
+    "candidate_key",
+    "identity_disputes",
+    "decision_event_id",
+    "run_id",
+    "status",
+    "occurrence_count",
+    "last_event_id",
+    "supersedes_id",
+    "created_at",
+    "updated_at",
+]
+
+_REVIEW_FILTER_COLUMNS = {
+    "status": "status",
+    "source": "source",
+    "reason_code": "reason_code",
+}
+
+
+def _review_filter_clauses(
+    filters: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Build an exact-match WHERE fragment from validated filter values.
+
+    Only allowlisted columns can be filtered and every value travels as
+    a bound parameter, so filter input can never alter query structure.
+    Unknown values simply match nothing.
+    """
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    for name, column in _REVIEW_FILTER_COLUMNS.items():
+        value = filters.get(name)
+        if value is None:
+            continue
+        clauses.append(f"{column} = %(filter_{name})s")
+        params[f"filter_{name}"] = value
+    if not clauses:
+        return "", params
+    return "WHERE " + " AND ".join(clauses), params
+
+
+def list_identity_reviews(
+    *,
+    status: str | None = None,
+    source: str | None = None,
+    reason_code: str | None = None,
+    limit: int = REVIEW_LIST_DEFAULT_LIMIT,
+    offset: int = 0,
+    config: DatabaseConfig | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Return one page of review cases plus the total matching count.
+
+    Stable newest-activity-first ordering. The total uses the same
+    filters as the page query.
+    """
+    limit = max(1, min(limit, REVIEW_LIST_MAX_LIMIT))
+    offset = max(0, offset)
+    where, params = _review_filter_clauses(
+        {"status": status, "source": source, "reason_code": reason_code}
+    )
+    columns = ", ".join(_REVIEW_COLUMNS)
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {columns} FROM identity_reviews {where} "
+                    "ORDER BY updated_at DESC, review_id DESC "
+                    "LIMIT %(limit)s OFFSET %(offset)s",
+                    {**params, "limit": limit, "offset": offset},
+                )
+                rows = cur.fetchall()
+                cur.execute(
+                    f"SELECT COUNT(*) AS n FROM identity_reviews {where}",
+                    dict(params),
+                )
+                total_row = cur.fetchone()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    total = total_row["n"] if isinstance(total_row, dict) else total_row[0]
+    return [dict(row) for row in rows], int(total)
+
+
+def get_identity_review(
+    review_id: Any,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any] | None:
+    """Return one review case with its occurrence history and provenance.
+
+    Occurrences arrive oldest-first, bounded to REVIEW_OCCURRENCE_LIMIT
+    with an explicit truncation flag; occurrence_count stays the
+    authority. A missing decision event is a state the queue writer
+    cannot produce, so the call fails closed instead of serving a
+    case without provenance.
+    """
+    columns = ", ".join(_REVIEW_COLUMNS)
+    try:
+        with get_connection(config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {columns} FROM identity_reviews WHERE review_id = %(id)s",
+                    {"id": str(review_id)},
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                cur.execute(
+                    "SELECT occurrence_id, event_id, created_at "
+                    "FROM identity_review_occurrences WHERE review_id = %(id)s "
+                    "ORDER BY created_at ASC, occurrence_id ASC "
+                    "LIMIT %(limit)s",
+                    {"id": str(review_id), "limit": REVIEW_OCCURRENCE_LIMIT + 1},
+                )
+                occurrence_rows = [dict(item) for item in cur.fetchall()]
+                cur.execute(
+                    "SELECT event_id, event_type, details->>'outcome' AS outcome, "
+                    "details->>'reason_code' AS reason_code, occurred_at "
+                    "FROM agent_events WHERE event_id = %(event_id)s",
+                    {"event_id": row["decision_event_id"]},
+                )
+                event_row = cur.fetchone()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise
+    except Exception as exc:
+        raise DatabaseUnavailableError("database_error") from exc
+    if event_row is None:
+        raise DatabaseUnavailableError("review_provenance_missing")
+    detail = dict(row)
+    detail["occurrences"] = occurrence_rows[:REVIEW_OCCURRENCE_LIMIT]
+    detail["occurrences_truncated"] = len(occurrence_rows) > REVIEW_OCCURRENCE_LIMIT
+    detail["decision_event"] = dict(event_row)
+    return detail

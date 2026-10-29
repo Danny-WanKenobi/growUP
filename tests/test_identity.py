@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 
+import re
+
 import pytest
 
 from app.identity import (
@@ -773,7 +775,45 @@ def test_routes_reference_no_identity_or_ledger_surface() -> None:
             tokens = forbidden_everywhere
         else:
             tokens = forbidden_everywhere + review_route_only
-        hits = [token for token in tokens if token in text]
+        hits = [token for token in tokens if _token_hit(token, text)]
         if hits:
             offenders.append((source.name, hits))
     assert offenders == [], offenders
+
+
+def _token_hit(token: str, text: str) -> bool:
+    """Match one guard token against route source text.
+
+    The ``app.identity`` token matches only at a module boundary:
+    references to the orchestrator-identity module itself (imports,
+    ``from`` imports, attribute/submodule access) still hit, while
+    the unrelated longer module names ``app.identity_reviews`` and
+    ``app.identity_reviews_db`` do not. Every other token keeps the
+    original substring semantics -- several (e.g. ``may_enqueue``
+    inside ``may_enqueue_type``) rely on it.
+    """
+    if token == "app.identity":
+        return re.search(r"app\.identity(?![A-Za-z0-9_])", text) is not None
+    return token in text
+
+
+def test_identity_module_matcher_distinguishes_review_modules() -> None:
+    """The guard still catches app.identity but not app.identity_reviews*."""
+    # Prohibited references to the orchestrator-identity module.
+    assert _token_hit("app.identity", "from app.identity import verify_orchestrator")
+    assert _token_hit("app.identity", "import app.identity\n")
+    assert _token_hit("app.identity", "x = app.identity.verify_orchestrator(a, b)")
+    assert _token_hit("app.identity", "from app.identity.sub import helper")
+    assert _token_hit("app.identity", "(app.identity)")
+    # Unrelated longer module names must not trip the guard.
+    assert not _token_hit(
+        "app.identity", "from app.identity_reviews import IdentityReviewList"
+    )
+    assert not _token_hit(
+        "app.identity", "from app.identity_reviews_db import get_identity_review"
+    )
+    assert not _token_hit("app.identity", "import app.identity_reviews_db")
+    # All other tokens keep plain substring semantics.
+    assert _token_hit("may_enqueue", "ensure_may_enqueue_type(p, t, s)")
+    assert _token_hit("verify_orchestrator", "from app.identity import verify_orchestrator")
+    assert not _token_hit("verify_orchestrator", "nothing relevant here")

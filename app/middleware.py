@@ -1,12 +1,14 @@
 """Path-scoped Cache-Control middleware for the review endpoints.
 
 Applies ``Cache-Control: no-store`` to every HTTP response emitted
-for GET /external-actions/{action_id}/review and
-GET /external-actions/review-queue -- including
+for GET /external-actions/{action_id}/review,
+GET /external-actions/review-queue, GET /identity-reviews, and
+GET /identity-reviews/{review_id} -- including
 framework-generated 401/404/405/422 rejections -- without
 touching any other route. Matching is syntactic and strict:
-exactly /external-actions/{id}/review or
-/external-actions/review-queue, each with at most one
+exactly /external-actions/{id}/review,
+/external-actions/review-queue, /identity-reviews, or
+/identity-reviews/{id}, each with at most one
 trailing slash; UUID validity is irrelevant, so
 malformed-UUID 422s are covered too. Request bodies, headers,
 statuses, and unrelated response headers pass through untouched,
@@ -55,6 +57,20 @@ def _is_review_queue_path(path: object) -> bool:
     )
 
 
+def _is_identity_review_path(path: object) -> bool:
+    """Match the identity-review list/detail paths, one trailing slash max."""
+    if not isinstance(path, str):
+        return False
+
+    segments = path.removesuffix("/").split("/")
+
+    if len(segments) not in (2, 3):
+        return False
+    if segments[0] != "" or segments[1] != "identity-reviews":
+        return False
+    return len(segments) == 2 or bool(segments[2])
+
+
 class ReviewNoStoreMiddleware:
     """Stamp no-store on review-endpoint responses (pure ASGI)."""
 
@@ -64,7 +80,9 @@ class ReviewNoStoreMiddleware:
     async def __call__(self, scope, receive, send) -> None:
         path = scope.get("path", "")
         if scope.get("type") != "http" or not (
-            _is_review_path(path) or _is_review_queue_path(path)
+            _is_review_path(path)
+            or _is_review_queue_path(path)
+            or _is_identity_review_path(path)
         ):
             await self.app(scope, receive, send)
             return

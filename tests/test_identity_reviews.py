@@ -1321,6 +1321,321 @@ def test_live_queue_driver_failure_yields_503_without_durable_decision(monkeypat
             conn.commit()
 
 
+# --- IR-3B (live): read-only inspection ---------------------------------------------
+
+
+def _live_insert_review_row(cur, **overrides):  # type: ignore[no-untyped-def]
+    """Insert one synthetic review row directly; returns its review_id."""
+    import json as _json
+
+    params = {
+        "rid": str(uuid4()),
+        "key": f"key-{uuid4().hex}",
+        "source": "intake",
+        "reason": "NAME_CONFLICT",
+        "observed": _json.dumps({"name": "Direct Seed Tower"}),
+        "provider": None,
+        "external_id": None,
+        "listing_url": None,
+        "pids": [str(uuid4())],
+        "candidate": None,
+        "disputes": None,
+        "run": f"run-{uuid4().hex}",
+        "status": "PENDING",
+        "count": 1,
+    }
+    params.update(overrides)
+    if "decision_eid" not in params or "last_eid" not in params:
+        raise AssertionError("direct review seeds must name real parent events")
+    cur.execute(
+        "INSERT INTO identity_reviews (review_id, dedup_key, source, reason_code, "
+        "observed_identity, provider, external_id, listing_url, "
+        "conflicting_property_ids, candidate_key, identity_disputes, "
+        "decision_event_id, run_id, status, occurrence_count, last_event_id) "
+        "VALUES (%(rid)s, %(key)s, %(source)s, %(reason)s, %(observed)s, "
+        "%(provider)s, %(external_id)s, %(listing_url)s, "
+        "CAST(%(pids)s AS uuid[]), %(candidate)s, %(disputes)s, "
+        "%(decision_eid)s, %(run)s, %(status)s, %(count)s, %(last_eid)s)",
+        params,
+    )
+    return params["rid"]
+
+
+def _live_insert_occurrence_row(cur, review_id: str, event_id: str) -> None:
+    cur.execute(
+        "INSERT INTO identity_review_occurrences (occurrence_id, review_id, event_id) "
+        "VALUES (%(oid)s, %(rid)s, %(eid)s)",
+        {"oid": str(uuid4()), "rid": review_id, "eid": event_id},
+    )
+
+
+@needs_live_pg
+def test_live_review_list_filters_total_and_paging() -> None:
+    from app import identity_reviews_db as reviews
+    from app.agents.gabriel.intake import process_intake
+    from app.properties_db import get_connection
+
+    _live_config()
+    _require_review_tables()
+    street = f"700 Identity Review Way {uuid4().hex}"
+    url_a = f"https://example.com/listings/read-a-{uuid4().hex}"
+    url_b = f"https://example.com/listings/read-b-{uuid4().hex}"
+    created_props: list[str] = []
+    created_reviews: list[str] = []
+    event_ids: list[str] = []
+    run_ids: list[str] = []
+    try:
+        # One pipeline-created PENDING intake case (IR-3A behavior intact).
+        first = process_intake(_intake_body(name="Read Tower A", listing_url=url_a,
+                                            street_address=street))
+        assert first.outcome.value == "created"
+        created_props.append(first.property_id)
+        run_ids.append(first.run_id)
+        second = process_intake(_intake_body(name="Read Tower B", listing_url=url_b,
+                                             street_address=street))
+        assert second.outcome.value == "needs_identity_review"
+        run_ids.append(second.run_id)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT event_id FROM agent_events "
+                    "WHERE event_type = 'gabriel.intake.decision' AND run_id = %(run)s",
+                    {"run": second.run_id},
+                )
+                event_ids.append(cur.fetchone()["event_id"])
+                cur.execute(
+                    "SELECT review_id FROM identity_reviews WHERE decision_event_id = %(eid)s",
+                    {"eid": event_ids[0]},
+                )
+                created_reviews.append(cur.fetchone()["review_id"])
+        # Three direct seeds spanning source/status under a reason code
+        # no other test uses, so filter totals stay exact even if alien
+        # rows ever linger in the shared development database.
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                seeds = [
+                    {"source": "intake", "reason": "READ_PROBE", "status": "PENDING"},
+                    {"source": "discovery", "reason": "READ_PROBE", "status": "PENDING"},
+                    {"source": "intake", "reason": "READ_PROBE", "status": "RESOLVED"},
+                ]
+                for seed in seeds:
+                    eid = f"evt-{uuid4().hex}"
+                    _live_insert_parent_event(cur, eid)
+                    event_ids.append(eid)
+                    created_reviews.append(
+                        _live_insert_review_row(
+                            cur, decision_eid=eid, last_eid=eid, **seed
+                        )
+                    )
+            conn.commit()
+        probe = {"reason_code": "READ_PROBE"}
+        page, total = reviews.list_identity_reviews(**probe)
+        assert total == 3
+        assert {str(row["review_id"]) for row in page} == set(created_reviews[1:])
+        # Single filters combine with the probe scope.
+        assert reviews.list_identity_reviews(status="PENDING", **probe)[1] == 2
+        assert reviews.list_identity_reviews(status="RESOLVED", **probe)[1] == 1
+        assert reviews.list_identity_reviews(source="discovery", **probe)[1] == 1
+        assert reviews.list_identity_reviews(source="research", **probe) == ([], 0)
+        assert reviews.list_identity_reviews(reason_code="NO_SUCH_REASON") == ([], 0)
+        # Combined filters share one predicate for page and total.
+        page, total = reviews.list_identity_reviews(status="PENDING", source="intake", **probe)
+        assert total == 1 and len(page) == 1
+        # Paging windows over a stable total.
+        first_page, total = reviews.list_identity_reviews(limit=2, offset=0, **probe)
+        assert total == 3 and len(first_page) == 2
+        second_page, total = reviews.list_identity_reviews(limit=2, offset=2, **probe)
+        assert total == 3 and len(second_page) == 1
+        assert {r["review_id"] for r in first_page}.isdisjoint(
+            {r["review_id"] for r in second_page}
+        )
+        assert {str(r["review_id"]) for r in [*first_page, *second_page]} == set(
+            created_reviews[1:]
+        )
+        tail, total = reviews.list_identity_reviews(limit=2, offset=3, **probe)
+        assert (tail, total) == ([], 3)
+        # The pipeline-created case is visible through the same reader.
+        pipeline_page, _ = reviews.list_identity_reviews(
+            status="PENDING", reason_code="NAME_CONFLICT", limit=200
+        )
+        assert str(created_reviews[0]) in {str(row["review_id"]) for row in pipeline_page}
+    finally:
+        _live_cleanup_queue(created_reviews, event_ids)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                if run_ids:
+                    cur.execute("DELETE FROM agent_events WHERE run_id = ANY(%(ids)s)",
+                                {"ids": run_ids})
+                if created_props:
+                    cur.execute("DELETE FROM listing_evidence WHERE property_id = ANY(%(ids)s)",
+                                {"ids": created_props})
+                    cur.execute("DELETE FROM properties WHERE id = ANY(%(ids)s)",
+                                {"ids": created_props})
+            conn.commit()
+
+
+@needs_live_pg
+def test_live_review_list_ordering_is_deterministic() -> None:
+    from app import identity_reviews_db as reviews
+    from app.properties_db import get_connection
+
+    _live_config()
+    _require_review_tables()
+    created_reviews: list[str] = []
+    event_ids: list[str] = []
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                stamps = [
+                    "2026-10-20T12:00:00+00:00",
+                    "2026-10-21T12:00:00+00:00",
+                    "2026-10-21T12:00:00+00:00",
+                ]
+                for stamp in stamps:
+                    eid = f"evt-{uuid4().hex}"
+                    _live_insert_parent_event(cur, eid)
+                    event_ids.append(eid)
+                    rid = _live_insert_review_row(
+                        cur, decision_eid=eid, last_eid=eid, reason="READ_ORDER"
+                    )
+                    cur.execute(
+                        "UPDATE identity_reviews SET updated_at = %(ts)s WHERE review_id = %(rid)s",
+                        {"ts": stamp, "rid": rid},
+                    )
+                    created_reviews.append(rid)
+            conn.commit()
+        page, total = reviews.list_identity_reviews(reason_code="READ_ORDER")
+        assert total == 3
+        got = [str(row["review_id"]) for row in page]
+        # Newest activity first; same-timestamp ties break by review_id DESC.
+        assert got[0] != created_reviews[0]
+        assert got[2] == created_reviews[0]
+        assert got[0] == max(str(created_reviews[1]), str(created_reviews[2]))
+        assert got[1] == min(str(created_reviews[1]), str(created_reviews[2]))
+    finally:
+        _live_cleanup_queue(created_reviews, event_ids)
+
+
+@needs_live_pg
+def test_live_review_detail_history_and_provenance() -> None:
+    from app import identity_reviews_db as reviews
+    from app.agents.gabriel.intake import process_intake
+    from app.properties_db import get_connection
+
+    _live_config()
+    _require_review_tables()
+    street = f"701 Identity Review Way {uuid4().hex}"
+    url_a = f"https://example.com/listings/detail-a-{uuid4().hex}"
+    url_b = f"https://example.com/listings/detail-b-{uuid4().hex}"
+    created_props: list[str] = []
+    created_reviews: list[str] = []
+    event_ids: list[str] = []
+    run_ids: list[str] = []
+    try:
+        first = process_intake(_intake_body(name="Detail Tower A", listing_url=url_a,
+                                            street_address=street))
+        created_props.append(first.property_id)
+        run_ids.append(first.run_id)
+        for _ in range(2):
+            result = process_intake(_intake_body(name="Detail Tower B", listing_url=url_b,
+                                                 street_address=street))
+            assert result.outcome.value == "needs_identity_review"
+            run_ids.append(result.run_id)
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT event_id FROM agent_events "
+                        "WHERE event_type = 'gabriel.intake.decision' AND run_id = %(run)s",
+                        {"run": result.run_id},
+                    )
+                    event_ids.append(cur.fetchone()["event_id"])
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT review_id FROM identity_reviews WHERE decision_event_id = %(eid)s",
+                    {"eid": event_ids[0]},
+                )
+                created_reviews.append(cur.fetchone()["review_id"])
+        detail = reviews.get_identity_review(created_reviews[0])
+        assert detail is not None
+        assert detail["source"] == "intake"
+        assert detail["reason_code"] == "NAME_CONFLICT"
+        assert detail["status"] == "PENDING"
+        assert detail["occurrence_count"] == 2
+        assert [str(pid) for pid in detail["conflicting_property_ids"]] == [first.property_id]
+        assert detail["observed_identity"]["name"] == "Detail Tower B"
+        assert detail["occurrences_truncated"] is False
+        assert [occ["event_id"] for occ in detail["occurrences"]] == event_ids
+        assert detail["decision_event"]["event_id"] == event_ids[0]
+        assert detail["decision_event"]["event_type"] == "gabriel.intake.decision"
+        assert detail["decision_event"]["outcome"] == "needs_identity_review"
+        assert detail["decision_event"]["reason_code"] == "NAME_CONFLICT"
+        assert "details" not in detail["decision_event"]
+    finally:
+        _live_cleanup_queue(created_reviews, event_ids)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                if run_ids:
+                    cur.execute("DELETE FROM agent_events WHERE run_id = ANY(%(ids)s)",
+                                {"ids": run_ids})
+                if created_props:
+                    cur.execute("DELETE FROM listing_evidence WHERE property_id = ANY(%(ids)s)",
+                                {"ids": created_props})
+                    cur.execute("DELETE FROM properties WHERE id = ANY(%(ids)s)",
+                                {"ids": created_props})
+            conn.commit()
+
+
+@needs_live_pg
+def test_live_review_detail_truncates_long_histories() -> None:
+    from app import identity_reviews_db as reviews
+    from app.properties_db import get_connection
+
+    _live_config()
+    _require_review_tables()
+    created_reviews: list[str] = []
+    event_ids: list[str] = []
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                first_eid = f"evt-{uuid4().hex}"
+                _live_insert_parent_event(cur, first_eid)
+                event_ids.append(first_eid)
+                rid = _live_insert_review_row(
+                    cur, decision_eid=first_eid, last_eid=first_eid, count=201
+                )
+                _live_insert_occurrence_row(cur, rid, first_eid)
+                for _ in range(200):
+                    eid = f"evt-{uuid4().hex}"
+                    _live_insert_parent_event(cur, eid)
+                    event_ids.append(eid)
+                    _live_insert_occurrence_row(cur, rid, eid)
+                cur.execute(
+                    "UPDATE identity_reviews SET last_event_id = %(eid)s "
+                    "WHERE review_id = %(rid)s",
+                    {"eid": event_ids[-1], "rid": rid},
+                )
+            conn.commit()
+            created_reviews.append(rid)
+        detail = reviews.get_identity_review(rid)
+        assert detail is not None
+        assert detail["occurrence_count"] == 201
+        assert len(detail["occurrences"]) == 200
+        assert detail["occurrences_truncated"] is True
+        assert detail["occurrences"][0]["event_id"] == first_eid
+    finally:
+        _live_cleanup_queue(created_reviews, event_ids)
+
+
+@needs_live_pg
+def test_live_review_detail_missing_returns_none() -> None:
+    from app import identity_reviews_db as reviews
+
+    _live_config()
+    _require_review_tables()
+    assert reviews.get_identity_review(str(uuid4())) is None
+
+
 @needs_live_pg
 def test_live_discovery_queue_driver_failure_aborts_loudly(monkeypatch) -> None:
     from app import identity_reviews_db as reviews
