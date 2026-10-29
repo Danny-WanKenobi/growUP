@@ -1,4 +1,4 @@
-"""Durable identity-review queue writes (IR-3A).
+"""Durable identity-review queue writes (IR-3A, IR-3C C1a).
 
 Builds exact-match review cases from permanent Gabriel decision events
 and records one occurrence row per counted encounter. The caller owns
@@ -56,6 +56,17 @@ DISCOVERY_REVIEW_REASONS = frozenset(
 
 SOURCE_INTAKE = "intake"
 SOURCE_DISCOVERY = "discovery"
+SOURCE_RESEARCH = "research"
+
+# Literal research verdict types (pinned to the producing builders by
+# tests/test_research_review_writer.py, which builds real verdicts).
+RESEARCH_VERDICT_EVENTS = frozenset(
+    {
+        "gabriel.research.candidate_decision",
+        "gabriel.dossier.verdict",
+    }
+)
+RESEARCH_REASON_IDENTITY_DISPUTE = "IDENTITY_DISPUTE"
 
 _DEDUP_VERSION = 1
 
@@ -123,14 +134,56 @@ def _discovery_key_dims(observed: dict[str, Any], inferred: Any) -> dict[str, An
     return dims
 
 
+def _research_key_dims(details: dict[str, Any], run_id: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Canonical research dedup dimensions plus the validated identity payload.
+
+    Returns ``(dims, candidate_key, disputes)``. The dims key on the
+    full candidate group key, the grouping basis, and the sorted
+    disputed FIELD names -- never the disputed values, so evolving
+    observations of one identity question stay in one case. Bare
+    ``ungrouped:`` ordinals repeat every run, so those candidates are
+    additionally scoped to their originating run.
+    """
+    ref = details.get("candidate_ref")
+    if not isinstance(ref, dict):
+        raise IdentityReviewError("research verdict missing candidate reference")
+    key = ref.get("group_key")
+    if not isinstance(key, str) or not key.strip():
+        raise IdentityReviewError("research verdict missing candidate identity")
+    basis = ref.get("basis")
+    if basis is None or (isinstance(basis, str) and not basis.strip()):
+        basis = "unknown"
+    if not isinstance(basis, str):
+        raise IdentityReviewError("research verdict has an unusable grouping basis")
+    disputes = details.get("identity_disputes")
+    if not isinstance(disputes, dict) or not disputes:
+        raise IdentityReviewError("research verdict missing identity disputes")
+    fields: list[str] = []
+    for field, variants in disputes.items():
+        if not isinstance(variants, list):
+            raise IdentityReviewError("research verdict has a malformed identity dispute")
+        if not any(str(variant).strip() for variant in variants):
+            raise IdentityReviewError("research verdict dispute has no observed variants")
+        fields.append(field)
+    dims: dict[str, Any] = {
+        "candidate_key": key,
+        "basis": basis,
+        "disputed_fields": sorted(fields),
+    }
+    if key.startswith("ungrouped:"):
+        dims["run_id"] = run_id
+    return dims, key, dict(disputes)
+
+
 def review_context_from_event(event: Any) -> dict[str, Any] | None:
     """Translate one permanent decision event into a queue-write context.
 
-    Returns None for events that are not PENDING-eligible operational
-    reviews (creations, enrichments, duplicates, rejections, failures,
-    run summaries, research verdicts). Raises IdentityReviewError when
-    the event is review-shaped but its required identity data is
-    missing or contradictory -- the caller must fail closed.
+    Returns None for events that are not PENDING-eligible reviews
+    (creations, enrichments, duplicates, rejections, failures, run
+    summaries, verdicts without identity disputes). Raises
+    IdentityReviewError when the event is review-shaped but its
+    required identity data is missing or contradictory -- the caller
+    must fail closed.
     """
     details = getattr(event, "details", None)
     if not isinstance(details, dict):
@@ -151,6 +204,14 @@ def review_context_from_event(event: Any) -> dict[str, Any] | None:
         if not (isinstance(outcome, str) and outcome.startswith("skipped_")):
             raise IdentityReviewError(f"unsupported discovery review outcome: {outcome!r}")
         source = SOURCE_DISCOVERY
+    elif event_type in RESEARCH_VERDICT_EVENTS:
+        # Eligibility depends on a nonempty disputes object, never on a
+        # reason code: clean and screened verdicts carry no disputes.
+        disputes = details.get("identity_disputes")
+        if not isinstance(disputes, dict) or not disputes:
+            return None
+        source = SOURCE_RESEARCH
+        reason = RESEARCH_REASON_IDENTITY_DISPUTE
     else:
         return None
     if mutation != MUTATION_NOT_ATTEMPTED:
@@ -162,15 +223,27 @@ def review_context_from_event(event: Any) -> dict[str, Any] | None:
     observed = details.get("observed")
     if not isinstance(observed, dict):
         raise IdentityReviewError("review event missing observed identity")
-    pids = _conflicting_ids(details.get("conflicting_property_ids"))
-    if source == SOURCE_INTAKE:
-        provider = observed.get("source_name")
-        listing_url = observed.get("listing_url")
-        dims = _intake_key_dims(observed, details.get("inferred"))
+    candidate_key: str | None = None
+    identity_disputes: dict[str, Any] | None = None
+    if source == SOURCE_RESEARCH:
+        # Research candidates are never operational properties: no
+        # property association may be invented or inherited here.
+        if getattr(event, "property_id", None) is not None:
+            raise IdentityReviewError("research review must not claim an operational property")
+        dims, candidate_key, identity_disputes = _research_key_dims(details, run_id)
+        pids: list[str] = []
+        provider = None
+        listing_url = None
     else:
-        provider = observed.get("source")
-        listing_url = observed.get("element_url")
-        dims = _discovery_key_dims(observed, details.get("inferred"))
+        pids = _conflicting_ids(details.get("conflicting_property_ids"))
+        if source == SOURCE_INTAKE:
+            provider = observed.get("source_name")
+            listing_url = observed.get("listing_url")
+            dims = _intake_key_dims(observed, details.get("inferred"))
+        else:
+            provider = observed.get("source")
+            listing_url = observed.get("element_url")
+            dims = _discovery_key_dims(observed, details.get("inferred"))
     if provider is not None and not isinstance(provider, str):
         raise IdentityReviewError("review event has an unusable provider")
     dedup_key = json.dumps(
@@ -187,6 +260,8 @@ def review_context_from_event(event: Any) -> dict[str, Any] | None:
         "external_id": observed.get("external_id"),
         "listing_url": listing_url,
         "conflicting_property_ids": pids,
+        "candidate_key": candidate_key,
+        "identity_disputes": identity_disputes,
         "decision_event_id": event_id,
         "run_id": run_id,
     }
@@ -195,10 +270,12 @@ def review_context_from_event(event: Any) -> dict[str, Any] | None:
 _UPSERT_SQL = (
     "INSERT INTO identity_reviews (review_id, dedup_key, source, reason_code, "
     "observed_identity, provider, external_id, listing_url, conflicting_property_ids, "
+    "candidate_key, identity_disputes, "
     "decision_event_id, run_id, occurrence_count, last_event_id) "
     "VALUES (%(review_id)s, %(dedup_key)s, %(source)s, %(reason_code)s, "
     "%(observed_identity)s, %(provider)s, %(external_id)s, %(listing_url)s, "
-    "CAST(%(conflicting_property_ids)s AS uuid[]), %(decision_event_id)s, %(run_id)s, "
+    "CAST(%(conflicting_property_ids)s AS uuid[]), %(candidate_key)s, %(identity_disputes)s, "
+    "%(decision_event_id)s, %(run_id)s, "
     "1, %(decision_event_id)s) "
     "ON CONFLICT (dedup_key) WHERE status = 'PENDING' DO UPDATE SET "
     "occurrence_count = identity_reviews.occurrence_count + 1, "
@@ -218,7 +295,7 @@ def record_review_occurrence(conn: Any, event: Any) -> str | None:
     Runs on the caller's open connection without committing: the review
     upsert and its occurrence row commit or roll back with the
     surrounding event transaction. Returns the case id, or None when
-    the event is not a queue-eligible operational review.
+    the event is not a queue-eligible review.
     """
     ctx = review_context_from_event(event)
     if ctx is None:
@@ -233,6 +310,12 @@ def record_review_occurrence(conn: Any, event: Any) -> str | None:
         "external_id": ctx["external_id"],
         "listing_url": ctx["listing_url"],
         "conflicting_property_ids": list(ctx["conflicting_property_ids"]),
+        "candidate_key": ctx["candidate_key"],
+        "identity_disputes": (
+            json.dumps(ctx["identity_disputes"], sort_keys=True)
+            if ctx["identity_disputes"] is not None
+            else None
+        ),
         "decision_event_id": ctx["decision_event_id"],
         "run_id": ctx["run_id"],
     }
