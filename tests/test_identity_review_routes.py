@@ -1078,6 +1078,39 @@ def test_summary_reader_uses_single_readonly_snapshot(monkeypatch) -> None:
     assert "AS day, COUNT(*) AS count" in sql
 
 
+def test_summary_nullable_filters_carry_explicit_type_casts() -> None:
+    import re
+
+    from app.identity_reviews_db import _SUMMARY_SQL
+
+    # PostgreSQL cannot infer the type of a bare `%(param)s IS NULL`
+    # (psycopg AmbiguousParameter: could not determine data type of
+    # parameter). Every nullable parameter tested for NULL must be
+    # explicitly cast; comparisons against typed columns infer fine.
+    uncast = [
+        match.group(0)
+        for match in re.finditer(r"%\(\w+\)s IS NULL", _SUMMARY_SQL)
+    ]
+    assert uncast == []
+    assert "(%(source)s::text IS NULL OR source = %(source)s)" in _SUMMARY_SQL
+    assert "(%(run_id)s::text IS NULL OR run_id = %(run_id)s)" in _SUMMARY_SQL
+
+
+def test_summary_null_filters_pass_none_parameters(monkeypatch) -> None:
+    from app import identity_reviews_db as reviews_db
+
+    conn = _summary_conn(monkeypatch, _summary_payload())
+    reviews_db.get_review_summary(
+        source=None,
+        run_id=None,
+        since=_aware("2026-10-01T00:00:00+00:00"),
+        until=_aware("2026-10-29T12:00:00+00:00"),
+    )
+    _, params = conn.cursor_obj.statements[0]
+    assert params["source"] is None
+    assert params["run_id"] is None
+
+
 def test_summary_reader_maps_buckets_and_days(monkeypatch) -> None:
     from app import identity_reviews_db as reviews_db
 
