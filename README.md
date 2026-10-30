@@ -88,7 +88,7 @@ Grow Up is being developed using:
 | Programming language | Python |
 | Backend framework | FastAPI |
 | Database | PostgreSQL |
-| Artificial intelligence | Meta AI models (runtime adapter: live + labeled replay) |
+| Artificial intelligence | Meta AI models via Baseten inference (shared budget boundary: live + labeled replay) |
 | AI-assisted development | Meta Muse Code |
 | Version control | Git |
 | Source repository | GitHub |
@@ -98,7 +98,7 @@ The architecture emphasizes modularity, deterministic financial calculations, sh
 
 AI models assist with language understanding, analysis, explanations, and opportunity development. Financial arithmetic remains in inspectable Python code.
 
-At runtime, Meta inference works through a small adapter (`app/model_adapter.py`): it interprets Wondrue commands and proposes configuration comparisons from an approved parameter catalog. Structured output is validated before use; deterministic Python performs all calculations and authorization checks. Live calls require explicit spending approval (`META_SPEND_APPROVED=1`) and are recorded with provider, model, usage, and digests; labeled replays cover rehearsal and read-only mode.
+At runtime, Meta inference runs through one shared boundary (`app/inference.py`) over a small transport adapter (`app/model_adapter.py`, Baseten chat-completions transport): it interprets Wondrue commands, proposes configuration comparisons from an approved parameter catalog, explains stored results and economics, analyzes evidence, extracts document claims, and drafts Uriel copy. Structured output is validated before use; deterministic Python performs all calculations and authorization checks. Every live call reserves allowance from a shared PostgreSQL budget (`app/inference_budget.py`, migration 016) before any provider request and is recorded with principal, agent, capability, association, provider, model, usage, and digests; labeled replays cover rehearsal and read-only mode. Live calls require explicit spending approval (`META_SPEND_APPROVED=1`), a granted token allowance, and configured pricing — otherwise they are refused before spending anything.
 
 ---
 
@@ -133,7 +133,7 @@ python -m app.migrate           # apply SQL migrations in filename order
 uvicorn app.main:app --port 8001
 ```
 
-Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` / `META_API_KEY` / `META_MODEL` / `META_SPEND_APPROVED` / `META_MAX_TOKENS` for Meta inference (live calls refused unless spending is approved), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1K_TOKENS` (required blended rate) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
 
 Run the local suite with `python -m pytest -q tests` (PostgreSQL-gated tests skip without `GROWUP_PG_INTEGRATION=1`).
 
@@ -303,6 +303,24 @@ events, provenance columns on `pilot_events` (`run_id`, `record_key`,
 active worker per scope. It is additive: no existing table is altered
 beyond `ADD COLUMN` with safe defaults, and no rows are rewritten.
 
+Migration `016_inference_usage.sql` adds the shared inference budget
+tables: `inference_allowance` (singleton competition-wide token
+allowance, consumed units, demonstration reserve), the
+`inference_usage` request-status ledger (request/idempotency
+identity, principal, agent, capability, dossier/run/package
+association, provider, model, prompt/schema versions, digests,
+limits, bound/reserved/reported/excess units, estimated cost,
+outcome, live/replay status, `replay_of` links, timestamps), and
+`extraction_originals` (page originals keyed by document and page
+with digests and source references). Ledger rows transition status
+exactly once with spend columns only increasing — status-tracking,
+not append-only. It creates new tables only: no existing table is
+altered, no rows are rewritten, and application rollback needs no
+schema reversal. Validate with
+`python -m pytest -q tests/test_inference_assist.py` (mocked) plus
+the `GROWUP_PG_INTEGRATION`-gated budget round-trip and concurrency
+checks on a disposable database after `python -m app.migrate`.
+
 ### Migrations & rollback
 
 `python -m app.migrate` applies pending files in filename order inside
@@ -315,11 +333,12 @@ rename is **not** rollback-transparent: older application code that
 queries `michael_intake` will fail after 014 is applied. Rolling back
 past 014 therefore requires either keeping code that reads the new
 table name or a reviewed forward migration restoring a compatible view.
-Migrations 012, 013, and 015 are additive-only and need no schema
-reversal on application rollback. Local coverage is transaction-faithful
-fakes plus the focused suites (`tests/test_priscilla_sim.py`,
-`tests/test_pilot.py`, `tests/test_discovery_runner.py`,
-`tests/test_funnel_acceptance.py`).
+Migrations 012, 013, 015, and 016 are additive-only and need no
+schema reversal on application rollback. Local coverage is
+transaction-faithful fakes plus the focused suites
+(`tests/test_priscilla_sim.py`, `tests/test_pilot.py`,
+`tests/test_discovery_runner.py`, `tests/test_funnel_acceptance.py`,
+`tests/test_inference_assist.py`).
 `GROWUP_PG_INTEGRATION`-gated live tests exist for the migration-created
 schema — runner SQL replay, backlog round-trip, crash recovery fold,
 ceiling drain, two-connection exclusion (`tests/test_discovery_runner.py`),
@@ -330,24 +349,22 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_workflow_store.py`), pilot round-trip
 (`tests/test_pilot.py`), Raphael authorize idempotency
 (`tests/test_raphael.py`), and the full coordinator chain
-(`tests/test_funnel_acceptance.py`). Owner-run execution against
-disposable PostgreSQL 16 database `growup_mvp_gate` (migrations
-001–015 applied) progressed across three runs: the first produced
-11 passed and 5 failed — all five custody-ordering failures
-described under "Shared dossier custody"; the corrected-code rerun
-(17 live tests, including the new concurrent-issuance check)
-produced 15 passed and 2 failed on two test-contract mismatches
-(a simulation-counts assertion missing the
-`response_pct`/`customer_pct` fields, and a Wondrue
-`preview_simulation` call passing a native list instead of the
-required JSON-encoded `package_entries` string); the second
-corrected-code rerun reached **17 passed, zero failures/skips**
-on targeted validation. Full PostgreSQL regression then produced
-2,037 passed and 2 failed (17 warnings): two Wondrue route tests
-assumed no ambient database configuration and diverged once a real
-connection was available. Both route tests are corrected locally
-to isolate the route's connection boundary; the rerun is **pending
-owner execution**. Final database health checks have not run.
+(`tests/test_funnel_acceptance.py`), and the inference budget
+reserve/reconcile round trip (`tests/test_inference_assist.py`).
+Confirmed deployed checkpoint `6ec0177`
+(`/var/www/growup/releases/20261030T195130Z_6ec0177`, migrations
+001–015 on both databases): targeted PostgreSQL validation reached
+**17 passed, zero failures/skips**; full regression reached **2,039
+passed, zero failures/skips** (17 deprecation warnings); operational
+health checks passed for both databases, application
+health/readiness, PostgreSQL availability, and the service. Earlier
+runs had surfaced (and corrected) five custody-ordering failures,
+two test-contract mismatches, and two route-test ambient-database
+assumptions. The shared-inference work in this tree is newer than
+that checkpoint: it needs migration 016 applied, a targeted rerun
+(including the new budget round-trip test), full regression, health
+checks, and the bounded live inference smoke test — all **pending
+owner execution**.
 
 ### Synthetic demo fixture
 
@@ -1951,7 +1968,15 @@ live calls. Credentials stay server-side.
   `stop`, `compare_scenarios`, `inspect_packages`,
   `preview_simulation`, `run_simulation`, `inspect_simulation`,
   `inspect_discovery`, `start_discovery`, `resume_discovery`,
-  `stop_discovery`, `help`; plus `start_demo` for the synthetic target.
+  `stop_discovery`, `assist_explain`, `analyze_evidence`,
+  `explain_economics`, `draft_outreach`, `inspect_inference_usage`,
+  `help`; plus `start_demo` for the synthetic target.
+- `POST /wondrue/assist/extract` — extract unverified claims from
+  caller-supplied pages (`doc_id`, `source_ref`, `pages` with inline
+  PNG/JPEG/WebP images or extracted text, optional `run_id` /
+  `dossier_id` association). Consequential: read-only refused, ask
+  previews with an approval token, full executes within the shared
+  inference budget. Never fetches URLs or reads the filesystem.
 - `POST /wondrue/demo/reset` — resets only the demo store; requires the
   operator grant.
 
@@ -1969,7 +1994,9 @@ permitted operations within explicit scopes and limits. Read-only
 intents (`inspect_*`, `preview_simulation`, `explain_decision`,
 `help`) never mutate records or issue metered calls; consequential
 intents (`start_*`, `resume_discovery`, `stop*`, `run_simulation`,
-`compare_scenarios`) need ask-with-token or full. Discovery bursts
+`compare_scenarios`, `assist_explain`, `analyze_evidence`,
+`explain_economics`, `draft_outreach`, `extract_document`) need
+ask-with-token or full. Discovery bursts
 through Wondrue are request-safe (at most 5 passes / 900 seconds);
 longer campaigns use repeated bursts or the runner CLI. Bursts run
 free OSM discovery only unless `acquire: true` is passed: acquisition
@@ -1993,6 +2020,142 @@ fallback. Automated tests keep working, and emergency diagnostic
 execution requires explicit owner authorization
 (`EMERGENCY_DIAGNOSTIC_DEMO=1`). Provider failure never substitutes
 synthetic results automatically.
+
+### Shared inference capabilities (Baseten)
+
+Meta runtime work flows through one shared boundary
+(`app/inference.py`): natural-language interpretation, catalog
+proposals, result/evidence/economics assistance, document extraction,
+and Uriel drafting. Provider transport stays in
+`app/model_adapter.py`; capability briefs and validators live in
+`app/assist.py` plus per-capability validators in the adapter;
+deterministic engineering, financial, and verification logic is never
+reimplemented. `META_API_URL` accepts the Baseten API base
+(`https://inference.baseten.co/v1`) or the full chat-completions
+endpoint (`.../v1/chat/completions`); other chat-path spellings are
+refused outright, and any other base resolves by appending the
+suffix (a wrong base then fails closed at request time). The
+hackathon model is `meta-models/muse-spark-open-1026`; no other model
+or provider is substituted. The API key stays server-side in
+`META_API_KEY` and never enters prompts, responses, logs, or files.
+
+Enforcement is a competition-wide token-unit allowance
+(`INFERENCE_TOKEN_ALLOWANCE`, default `0` = live disabled, never
+auto-reset) — not a monetary ceiling. Every live call reserves a
+conservative bound before any provider request, computed from the
+exact bytes the transport will send (one shared request builder
+sizes budgets and HTTP alike, so the two cannot diverge): one unit
+per UTF-8 byte of the serialized request body (directive, context,
+labels, and chat framing; image data URLs ride in the transmitted
+body but are excluded from the sized bytes), plus max_tokens for
+the completion, plus the
+explicitly configured per-image allowance for each supplied image
+(`INFERENCE_TOKENS_PER_IMAGE`, no default — live media without it
+is refused). The byte bound is a stated conservative assumption,
+not a proven tokenizer ceiling for the configured model:
+byte-pair-style tokenizers typically stay far below one token per
+byte, but no guarantee is claimed without tokenizer support;
+honesty comes from reconciliation, not from the bound itself —
+reported usage past the reservation is charged back as excess, so
+underestimation cannot hide spend. Reservation is one atomic
+conditional update so concurrent
+callers cannot overspend; HTTP runs outside long-held
+workflow/custody transactions (reads happen before, writes after,
+and no workflow/custody locks are held across the provider call).
+Reported usage is reconciled afterward, and overruns are charged
+back to the same allowance — excess reported units never disappear
+from budget totals (`excess_units` is persisted per row).
+Consumption states stay distinct: bound, reserved, actual, and
+unresolved. Billing exposure follows the failure taxonomy, not the
+error text: confirmed pre-provider refusal (connection refused, DNS,
+TLS — the request never reached the provider) releases its
+reservation at zero spend; provider rejections (HTTP 4xx) fail with
+reported usage preserved; timeouts (detected by type, never by
+message sniffing), mid-stream interruptions, response-size aborts,
+malformed envelopes, HTTP 5xx, and semantically rejected output
+with missing usage stay explicitly `unresolved`, keeping the
+reservation plus any available request IDs, reported usage, and
+cost estimates — never assumed zero, never auto-retried, and a
+ledger warning discourages retrying under a fresh key without
+reviewing for double charges. Only pre-provider refusals
+(including the concurrency bound) release; the concurrency bound
+is process-local, protecting one worker, not a multi-worker
+deployment. Pricing is a required owner-configured finite
+nonnegative blended rate (`INFERENCE_USD_PER_1K_TOKENS`); without
+it live execution is refused rather than invented, and application
+estimates stay distinct from provider billing. Consumed-fraction
+thresholds: 50% warns with usage by agent/capability; 75% defers
+optional requests (audience variants) visibly instead of spending;
+90% requires an ask-mode approval token for large batches and
+protects the demonstration reserve (`INFERENCE_DEMO_RESERVE`);
+100% refuses further spending until the owner raises the
+allowance. Every live call and idempotent replay is recorded in
+the `inference_usage` request-status ledger (migration 016) with
+request/idempotency identity, principal, agent, capability,
+dossier/run/package association, provider, model, prompt/schema
+versions, digests, limits, bound/reserved/reported/excess units,
+estimated cost, outcome, live/replay status, and timestamps; an
+observability activity event is emitted per call. Dossier
+association is deterministic: an explicitly supplied, validated
+`dossier_key` wins; otherwise an unambiguous stored
+run→dossier association is selected; ambiguity requires the
+caller to choose (`assist_explain` and extraction accept
+`dossier_key`); null is recorded only when no stored association
+genuinely exists; versions derive from stored lineage, never
+invention. Extraction verifies a caller-supplied dossier link
+against stored records — an unverified assertion is labeled
+caller-asserted, not written as ledger fact. Rows transition
+`reserved` → `completed`/`failed`/`unresolved`/`rejected`/
+`released` exactly once — the ledger tracks status, it is not
+append-only. Replays are labeled `replay`, record zero new usage,
+and link the original spend through `replay_of`; reuse binds the
+full original identity (principal, capability, model, versions,
+limits, dossier context, payload digest), not the payload alone.
+Usage summaries report consumed units (reserved plus excess,
+excluding releases) separately from released units, reconciling
+with the singleton allowance across reserve, release, replay,
+failure, and overrun.
+
+| Capability | Wondrue path | Inputs | Limits |
+|---|---|---|---|
+| Conversational assistance | `POST /wondrue/command` text (no `intent`), `assist_explain` | run id, record key, optional question | validated commands only; read-only never live; stored facts/estimates/assumptions/unknowns labeled |
+| Evidence analysis | `analyze_evidence` | run id | citations must name supplied evidence with matching excerpts; suggestions only, no verification or auto-research |
+| Engineering/finance assistance | `compare_scenarios`, `explain_economics` | run id, scenario | catalog-validated model proposals; deterministic Onesimus/Michael math only; explanations cite figure labels |
+| Document extraction | `POST /wondrue/assist/extract` | doc id, source ref, inline pages (PNG/JPEG/WebP ≤5MB with magic-byte check, or extracted text), optional run/dossier link | ≤12 pages, ≤6 images, 8MB aggregate; ask-mode approval binds the full digest-pinned spec; originals retained in DB; no URL fetching, no PDFs, no floor-plan approval inference; claims unverified |
+| Uriel drafting | `draft_outreach` | eligible package entry, draft kind | prepared/reviewed genuine packages only; drafts never send, publish, or automate; website/video/image-review kinds excluded |
+| Budget inspection | `inspect_inference_usage` (read-only) | none | allowance state plus usage by agent/capability |
+
+Every live request carries a versioned directive (instructions,
+explicit output schema, approved catalog where needed) alongside the
+untrusted context; validators enforce the transmitted contracts, and
+a mocked transport assertion pins the outgoing shape. Evidence
+conflicts and gaps must cite supplied evidence verbatim
+(research questions may be uncited); economics commentary cites
+figure labels while the server renders authoritative values, and
+money-like figures in model prose are rejected; draft briefs carry
+unknowns/blockers with explicit omission counts. Extraction approval
+binds identities, page digests, association, live selection, limits,
+and idempotency key — resubmitted operations must match exactly.
+Page originals persist in `extraction_originals` under database
+access control with conflict-safe retention: each page inserts
+atomically, identical resubmission reuses the retained original
+(zero new inserts), and conflicting content at the same locator is
+refused — racing writers cannot both appear successful, and claims
+never attach to a different retained original. Run/dossier links
+are checked against stored identity (stored, caller-asserted, or
+none). Successful run-scoped results attach as
+new `wondrue_assistance` workflow records plus `model_execution`
+provenance; authoritative dossier contents and historical snapshots
+are never mutated, and nothing becomes a dossier revision. Provider
+usage and request metadata are extracted before output parsing, so
+truncation, malformed JSON, and refusals still reconcile billing
+evidence; responses stream through a mid-read size bound. Budget,
+provider, or validation failure changes no verification state,
+advances no custody, and authorizes nothing. Responses are JSON
+only; the static results page echoes no model text. Image-vision
+support depends on the deployed model and is verified by a
+separately authorized live image probe, not assumed; text pages are
+the supported fallback.
 
 ### Shared dossier custody
 
@@ -2039,12 +2202,15 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; subsequent owner runs confirmed the
-custody fixes, including the new concurrent-issuance test, and
-targeted validation reached 17 passed. The remaining failures
-moved to two Wondrue route tests with ambient-database
-assumptions (corrected locally); the rerun is pending owner
-execution.
+updated) resolve them; the confirmed `6ec0177` checkpoint passed
+targeted validation (17 passed), full regression (2,039 passed),
+and operational health checks with these fixes deployed. The
+shared-inference work in this tree (local suite green: 1,951
+passed, 133 skipped — 131 PG-gated, 2 POSIX-only — 17 warnings,
+mocked providers only) needs a fresh validation cycle (migration 016,
+targeted rerun including the inference-budget round trip and the
+originals race check, full regression, health checks, live smoke
+test) — **pending owner execution**.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2257,17 +2423,18 @@ reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
-its own owner approval): the corrected-code rerun of full
-PostgreSQL regression against `growup_mvp_gate` (targeted checks
-reached 17 passed; the full run produced 2,037 passed and 2 failed
-with 17 warnings on two Wondrue route tests with ambient-database
-assumptions, corrected locally; DDL↔SQL schema, backlog checkpoint,
-`identity_review` record, crash recovery, ceiling drain, worker
-exclusion, simulation idempotency/concurrency, archival retrieval,
-concurrent issuance, and the full coordinator chain), final database
-health checks (not yet executed), a live Meta call
-proving meaningful runtime inference, and real discovery runs
-(the two-hour timed preset is defined but not launched).
+its own owner approval): migration 016 plus the targeted rerun
+(including the new inference-budget round trip and the originals
+race check), full regression, and final database health checks
+for the shared-inference work in this tree (local suite:
+1,951 passed, 133 skips — 131 PG-gated, 2 POSIX-only —
+17 warnings, mocked providers; checkpoint `6ec0177` was
+fully green: 17 targeted,
+2,039 full, health checks passed); a bounded live smoke test
+proving meaningful Meta runtime inference (see Demonstration);
+and real
+discovery runs (the two-hour timed preset is defined but not
+launched).
 
 ## 🎥 Demonstration
 
@@ -2305,9 +2472,58 @@ the deterministic cohort funnel (for N=144: 14 responses, 5 customers);
 simulation writes simulated rows only and changes no dossier, finance,
 actual-metric, or execution state.
 
+**C. Assisted capabilities (needs PostgreSQL + approvals; mockable).**
+With a persisted run, send `assist_explain` (stored brief plus why the
+property stopped), `analyze_evidence` (citation-checked conflicts, gaps,
+research questions), and `explain_economics` (labeled Michael figures
+explained); with a prepared package, send `draft_outreach` (draft copy
+that never sends); with owner-supplied pages, post
+`POST /wondrue/assist/extract` (page-validated claims, unverified).
+All are consequential (ask-with-token or full, never read-only) and
+spend at most one model call each from the shared budget; without
+`use_live`, labeled replays rehearse the same shapes for free.
+`inspect_inference_usage` (read-only) shows allowance state and spend
+by agent/capability.
+
 Model output is labeled `live` or `replay` in every response; read-only
 mode never issues live calls. Live Meta and Brave calls were not executed
 during implementation (pending explicit spending authorization).
+Mocked success is not proof of live compatibility: the bounded live
+smoke test below stays owner-executed.
+
+**Bounded live smoke test (proposed, not executed).** After migration
+016 and regression are green, the owner enables `META_SPEND_APPROVED=1`
+with an explicit allowance and runs, in order, one
+`interpret_command` ("help me"), one `assist_explain` over a stopped
+run, one `analyze_evidence`, one `explain_economics`, one
+`draft_outreach` (`intro_letter`), and one text-page
+`extract_document` — six live calls, each `max_tokens = 1024`, each
+with a distinct idempotency key, then one repeated key proving
+replay-without-spend. Each reservation is transmitted text bytes
++ 1,024 completion units (no images in these six). Measured over
+representative fixtures with the actual request builder:
+interpret_command 2,633; assist_explain 2,402; analyze_evidence
+3,390; explain_economics 2,619; draft_outreach 2,535;
+extract_document 3,306 — **16,885 units total**. These are
+representative measurements, not worst-case limits: the 60KB
+payload cap bounds any single text call near 63K (payload plus
+directive/framing plus 1,024 output). Suggested ceiling: **40,000
+token units** plus the configured USD rate — 2.4× the measured
+sum, with per-call overruns and retained unresolved exposure
+charged back to the same allowance. The allowance is a token-unit
+spending gate, not a bill: application cost estimates
+(`INFERENCE_USD_PER_1K_TOKENS` blended rate) stay distinct from
+actual provider billing, and only provider-reported usage is
+ground truth for spend. Expected: six `completed` ledger rows
+with reported usage and cost estimates, one zero-spend `replayed`
+row linked through `replay_of`, all outputs schema-valid,
+`wondrue_assistance` artifacts attached, and no verification,
+custody, or execution-state changes. A single one-image extraction
+follows as a **separately authorized** probe only after the owner
+sets `INFERENCE_TOKENS_PER_IMAGE` (live media is refused without
+it), with a top-up sized to the configured media bound plus ≈3K
+text/completion units; vision is confirmed only if the model
+answers it, otherwise text pages remain the supported path.
 
 **Demonstration limitations.** The walkthroughs above show software
 behavior, not findings: the synthetic path uses fictional fixtures with
@@ -2316,17 +2532,19 @@ simulated verification, and the real path is expected to stop at
 executes discovery autonomously, spends budget, performs outreach, or
 counts toward the 144-dossier target (only qualified operational
 dossiers recorded in the pilot ledger do that). Custody, pilot,
-Michael, Uriel, Priscilla, funnel, runner, and coordinator flows are
-exercised by the acceptance suites (`tests/test_custody.py`,
-`tests/test_pilot.py`, `tests/test_michael.py`, `tests/test_uriel.py`,
+Michael, Uriel, Priscilla, funnel, runner, coordinator, and shared
+inference flows are exercised by the acceptance suites
+(`tests/test_custody.py`, `tests/test_pilot.py`,
+`tests/test_michael.py`, `tests/test_uriel.py`,
 `tests/test_priscilla.py`, `tests/test_priscilla_sim.py`,
 `tests/test_modes.py`, `tests/test_wondrue.py`,
 `tests/test_wondrue_ops.py`, `tests/test_discovery_runner.py`,
-`tests/test_mvp_flow.py`, `tests/test_funnel_acceptance.py`);
-live-PostgreSQL variants run only where `GROWUP_PG_INTEGRATION=1` and
-migrations 001–015 are applied to a disposable database (never the
-operational records). Migration 015, live Meta proof, and
-real discovery launches remain unexecuted owner-approval gates.
+`tests/test_mvp_flow.py`, `tests/test_funnel_acceptance.py`,
+`tests/test_inference_assist.py`); live-PostgreSQL variants run only
+where `GROWUP_PG_INTEGRATION=1` and migrations 001–016 are applied
+to a disposable database (never the operational records). Migration
+016 application, the inference rerun, the bounded live smoke test,
+and real discovery launches remain unexecuted owner-approval gates.
 
 ---
 

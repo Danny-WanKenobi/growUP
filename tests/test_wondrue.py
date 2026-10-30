@@ -107,21 +107,35 @@ def test_live_adapter_success_and_usage(monkeypatch) -> None:
 
     class _Resp:
         status_code = 200
+        headers: dict[str, str] = {}
 
-        def json(self) -> Any:
-            return {
+        def __init__(self) -> None:
+            import json as _json
+
+            self._raw = _json.dumps({
                 "choices": [{"message": {"content": '{"intent": "help", "args": {}}'}}],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-            }
+            }).encode()
+
+        def __enter__(self) -> _Resp:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def iter_bytes(self, chunk_size: int = 16384):  # type: ignore[no-untyped-def]
+            yield self._raw[:7]
+            yield self._raw[7:]
 
     seen: dict[str, Any] = {}
 
-    def _post(url: str, **kwargs: Any) -> _Resp:
+    def _stream(method: str, url: str, **kwargs: Any) -> _Resp:
+        seen["method"] = method
         seen["url"] = url
         seen["auth"] = kwargs["headers"]["Authorization"]
         return _Resp()
 
-    monkeypatch.setattr(httpx, "post", _post)
+    monkeypatch.setattr(httpx, "stream", _stream)
     adapter = MetaLiveAdapter(api_url="http://meta.test/v1", api_key="secret", model="llama-mvp")
     result = adapter.complete(ModelRequest("interpret_command", {"text": "hi"}), approved=True)
     assert result.mode == "live"
@@ -139,25 +153,36 @@ def test_live_adapter_provider_failures(monkeypatch) -> None:
     monkeypatch.setenv("META_SPEND_APPROVED", "1")
     adapter = MetaLiveAdapter(api_url="http://meta.test/v1", api_key="k", model="m")
 
-    class _Bad:
-        status_code = 500
+    class _StreamResp:
+        def __init__(self, status_code: int, raw: bytes) -> None:
+            self.status_code = status_code
+            self.headers: dict[str, str] = {}
+            self._raw = raw
 
-        def json(self) -> Any:
-            return {}
+        def __enter__(self) -> _StreamResp:
+            return self
 
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Bad())
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def iter_bytes(self, chunk_size: int = 16384):  # type: ignore[no-untyped-def]
+            yield self._raw
+
+    monkeypatch.setattr(
+        httpx, "stream", lambda *a, **k: _StreamResp(500, b"{}")
+    )
     with pytest.raises(ModelError, match="HTTP 500"):
-        adapter.complete(ModelRequest("p", {}), approved=True)
+        adapter.complete(ModelRequest("interpret_command", {}), approved=True)
 
-    class _Garbled:
-        status_code = 200
-
-        def json(self) -> Any:
-            return {"choices": [{"message": {"content": "not json"}}]}
-
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Garbled())
+    monkeypatch.setattr(
+        httpx,
+        "stream",
+        lambda *a, **k: _StreamResp(
+            200, b'{"choices": [{"message": {"content": "not json"}}]}'
+        ),
+    )
     with pytest.raises(ModelError, match="not valid JSON"):
-        adapter.complete(ModelRequest("p", {}), approved=True)
+        adapter.complete(ModelRequest("interpret_command", {}), approved=True)
 
 
 def test_read_only_blocks_consequential_intents() -> None:

@@ -293,6 +293,8 @@ def test_new_intents_are_operational_only() -> None:
     for intent in (
         "inspect_packages", "preview_simulation", "run_simulation",
         "inspect_simulation", "inspect_discovery", "stop_discovery",
+        "assist_explain", "analyze_evidence", "explain_economics",
+        "draft_outreach", "inspect_inference_usage",
     ):
         with pytest.raises(WondrueError, match="not a demo intent"):
             handle_command(

@@ -29,9 +29,6 @@ from uuid import UUID
 from app.demo import DEMO_LABEL, DemoStore, run_demo_workflow
 from app.model_adapter import (
     ModelError,
-    ModelRequest,
-    ReplayAdapter,
-    spending_approved,
     validate_config_proposal,
     validate_intent,
 )
@@ -50,6 +47,7 @@ READ_ONLY_INTENTS = frozenset(
         "preview_simulation",
         "inspect_simulation",
         "inspect_discovery",
+        "inspect_inference_usage",
     }
 )
 CONSEQUENTIAL_INTENTS = frozenset(
@@ -62,6 +60,10 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "start_discovery",
         "stop_discovery",
         "resume_discovery",
+        "assist_explain",
+        "analyze_evidence",
+        "explain_economics",
+        "draft_outreach",
     }
 )
 # Request-safety caps for Wondrue-driven discovery bursts; longer
@@ -114,38 +116,56 @@ APPROVALS = ApprovalStore()
 DEMO = DemoStore()
 
 
-def _adapter(use_live: bool, mode: str) -> Any:
-    if use_live:
-        if mode == "read-only":
-            raise WondrueError("read-only mode uses replay explanations, never live calls")
-        if not spending_approved():
-            raise WondrueError("live inference refused: spending not approved")
-        from app.model_adapter import MetaLiveAdapter
-
-        return MetaLiveAdapter()
-    return ReplayAdapter(
-        {
-            "interpret_command": {"intent": "help", "args": {}},
-            "propose_configs": {
-                "options": [{"config": "bench"}, {"config": "rack3"}],
-                "note": "replay: default two-configuration comparison",
-            },
-            "explain": {"text": "replay: explanation unavailable offline"},
-        }
-    )
+def _capability_context(
+    *,
+    principal: str = "",
+    use_live: bool = False,
+    mode: str = "read-only",
+    approval_via_token: bool = False,
+    demo: bool = False,
+) -> dict[str, Any]:
+    return {
+        "principal": principal,
+        "use_live": use_live,
+        "mode": mode,
+        "approval_via_token": approval_via_token,
+        "demo": demo,
+    }
 
 
-def _complete(adapter: Any, request: ModelRequest, *, approved: bool) -> Any:
-    if adapter.provider == "meta":
-        return adapter.complete(request, approved=approved)
-    return adapter.complete(request)
+def interpret_command(
+    text: str,
+    *,
+    use_live: bool,
+    mode: str,
+    principal: str = "",
+) -> tuple[dict[str, Any], Any]:
+    """Interpret a command into a validated intent plus the model result.
 
+    Every interpretation passes through the shared inference boundary:
+    live calls spend from the budgeted allowance, replays are labeled
+    and free.
+    """
+    from app.inference import complete_capability
+    from app.model_adapter import INTERPRET_SCHEMA_VERSION
 
-def interpret_command(text: str, *, use_live: bool, mode: str) -> tuple[dict[str, Any], Any]:
-    """Interpret a command into a validated intent plus the model result."""
-    adapter = _adapter(use_live, mode)
-    result = _complete(adapter, ModelRequest("interpret_command", {"text": text}), approved=True)
-    return validate_intent(result.result), result
+    try:
+        completion = complete_capability(
+            agent="wondrue",
+            capability="interpret",
+            purpose="interpret_command",
+            payload={"text": text},
+            principal=principal,
+            use_live=use_live,
+            mode=mode,
+            approved=True,
+            schema_version=INTERPRET_SCHEMA_VERSION,
+            validator=validate_intent,
+        )
+    except ModelError as exc:
+        raise WondrueError(str(exc)) from exc
+    result = completion["model_result"]
+    return validate_intent(completion["result"]), result
 
 
 def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, Any]:
@@ -243,6 +263,34 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"scope": args.get("scope", "")},
             "effects": "worker exits at the next pass boundary; checkpoints preserved",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": 0},
+        }
+    if intent == "assist_explain":
+        return {
+            "operations": ["retrieve stored run/dossier/decision/scenario records", "compose explanation (validated prose)"],
+            "inputs": {"run_id": args.get("run_id", ""), "dossier_key": args.get("dossier_key", args.get("key", ""))},
+            "effects": "read-only brief plus attributed assistance artifact; no dossier changes",
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+        }
+    if intent == "analyze_evidence":
+        return {
+            "operations": ["retrieve stored research artifacts", "suggest conflicts/gaps/research questions (citation-validated)"],
+            "inputs": {"run_id": args.get("run_id", "")},
+            "effects": "suggestions only; no verification, authorization, or new research",
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+        }
+    if intent == "explain_economics":
+        return {
+            "operations": ["retrieve stored scenario/financial records", "explain labeled Michael figures"],
+            "inputs": {"run_id": args.get("run_id", ""), "scenario": args.get("scenario", "")},
+            "effects": "explanation only; deterministic figures unchanged",
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+        }
+    if intent == "draft_outreach":
+        return {
+            "operations": ["load eligible Uriel package", "draft campaign copy (validated shape)"],
+            "inputs": {"package_entry": args.get("package_entry", ""), "draft_kind": args.get("draft_kind", "")},
+            "effects": "draft content only; never sends, publishes, or automates outreach",
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
         }
     raise WondrueError(f"no preview for intent {intent!r}")
 
@@ -386,8 +434,10 @@ def _help_text() -> str:
         "Wondrue (MVP): inspect candidates and evidence, start real or "
         "synthetic evaluations, explain Raphael decisions, compare "
         "Kratky scenarios, inspect Uriel packages, preview/run/inspect "
-        "Priscilla cohort simulations, or start/stop/resume/inspect "
-        "bounded discovery. Modes: read-only (inspect only), ask "
+        "Priscilla cohort simulations, start/stop/resume/inspect "
+        "bounded discovery, explain stored results and economics, "
+        "analyze evidence, draft Uriel copy, or inspect inference "
+        "usage. Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits)."
     )
 
@@ -521,12 +571,19 @@ def _burst_report(
 
 
 def _execute_real(
-    intent: str, args: dict[str, Any], conn: Any, *, acquire_authorized: bool = False
+    intent: str,
+    args: dict[str, Any],
+    conn: Any,
+    *,
+    acquire_authorized: bool = False,
+    ctx: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from app import mvp as mvp_module
     from app import priscilla as priscilla_module
     from app import uriel as uriel_module
     from app.workflow_db import get_record_in_transaction
+
+    capability_ctx = dict(ctx or _capability_context())
 
     if intent == "start_real_evaluation":
         assignment_id = str(args.get("assignment_id", ""))
@@ -659,6 +716,28 @@ def _execute_real(
         return {"stop_requested": runner_module.request_stop_in_transaction(conn, scope)}
     if intent == "help":
         return {"help": _help_text()}
+    if intent == "assist_explain":
+        from app import assist as assist_module
+
+        return assist_module.assist_explain(conn, args, capability_ctx)
+    if intent == "analyze_evidence":
+        from app import assist as assist_module
+
+        return assist_module.analyze_evidence(conn, args, capability_ctx)
+    if intent == "explain_economics":
+        from app import assist as assist_module
+
+        return assist_module.explain_economics(conn, args, capability_ctx)
+    if intent == "draft_outreach":
+        from app import assist as assist_module
+
+        return assist_module.draft_outreach(conn, args, capability_ctx)
+    if intent == "inspect_inference_usage":
+        if conn is None:
+            raise WondrueError("real target requires a database connection")
+        from app import assist as assist_module
+
+        return {"inference_usage": assist_module.inference_usage_snapshot()}
     raise WondrueError(f"unknown intent {intent!r}")
 
 
@@ -673,6 +752,7 @@ def handle_command(
     intent_override: dict[str, Any] | None = None,
     store: DemoStore | None = None,
     conn: Any = None,
+    principal: str = "",
 ) -> dict[str, Any]:
     """Interpret (or accept a validated intent) and enforce mode gates.
 
@@ -698,9 +778,12 @@ def handle_command(
     if intent_override is not None:
         intent_args = validate_intent(intent_override)
     else:
-        intent_args, model_result = interpret_command(text, use_live=use_live, mode=mode)
+        intent_args, model_result = interpret_command(
+            text, use_live=use_live, mode=mode, principal=principal
+        )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
+    approval_via_token = False
     if intent in CONSEQUENTIAL_INTENTS:
         if mode == "read-only":
             raise WondrueError(f"intent {intent!r} is blocked in read-only mode")
@@ -720,15 +803,37 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = entry["args"]
+            approval_via_token = True
+    ctx = _capability_context(
+        principal=principal,
+        use_live=use_live,
+        mode=mode,
+        approval_via_token=approval_via_token,
+        demo=(target == "demo"),
+    )
     if intent == "compare_scenarios":
-        proposal_adapter = _adapter(use_live, mode)
-        proposal = _complete(
-            proposal_adapter,
-            ModelRequest("propose_configs", {"target": target}),
-            approved=True,
-        )
+        from app.inference import complete_capability
+        from app.model_adapter import PROPOSE_SCHEMA_VERSION
+
+        try:
+            proposal_completion = complete_capability(
+                agent="onesimus",
+                capability="propose",
+                purpose="propose_configs",
+                payload={"target": target},
+                principal=principal,
+                use_live=use_live,
+                mode=mode,
+                approved=True,
+                demo=(target == "demo"),
+                approval_via_token=approval_via_token,
+                schema_version=PROPOSE_SCHEMA_VERSION,
+            )
+        except ModelError as exc:
+            raise WondrueError(str(exc)) from exc
+        proposal = proposal_completion["model_result"]
         site_inputs = args.get("site_inputs") if isinstance(args.get("site_inputs"), dict) else None
-        comparison = compare_with_proposal(proposal.result, site_inputs)
+        comparison = compare_with_proposal(proposal_completion["result"], site_inputs)
         if target == "demo":
             comparison["label"] = DEMO_LABEL
         return {
@@ -741,7 +846,10 @@ def handle_command(
     if target == "demo":
         data = _execute_demo(intent, args, store or DEMO)
     else:
-        data = _execute_real(intent, args, conn, acquire_authorized=(max_mode == "full"))
+        data = _execute_real(
+            intent, args, conn,
+            acquire_authorized=(max_mode == "full"), ctx=ctx,
+        )
     return {
         "outcome": "result",
         "intent": intent,

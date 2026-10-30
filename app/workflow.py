@@ -29,6 +29,7 @@ KIND_SCENARIO = "scenario"
 KIND_MODEL_EXECUTION = "model_execution"
 KIND_CUSTODY_LINK = "custody_link"
 KIND_IDENTITY_REVIEW = "identity_review"
+KIND_WONDRUE_ASSISTANCE = "wondrue_assistance"
 
 RECORD_KINDS = frozenset(
     {
@@ -40,6 +41,7 @@ RECORD_KINDS = frozenset(
         KIND_MODEL_EXECUTION,
         KIND_CUSTODY_LINK,
         KIND_IDENTITY_REVIEW,
+        KIND_WONDRUE_ASSISTANCE,
     }
 )
 

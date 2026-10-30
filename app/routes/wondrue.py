@@ -70,6 +70,7 @@ def post_command(body: CommandRequest, request: Request) -> dict[str, Any]:
     confers no authority.
     """
     grant = wondrue_grant(request)
+    principal = "wondrue-operator" if grant == "full" else "wondrue-reader"
     conn = None
     if body.target == "real":
         try:
@@ -88,6 +89,7 @@ def post_command(body: CommandRequest, request: Request) -> dict[str, Any]:
             use_live=body.use_live,
             intent_override=body.intent,
             conn=conn,
+            principal=principal,
         )
     except (
         WondrueError,
@@ -118,6 +120,141 @@ def post_command(body: CommandRequest, request: Request) -> dict[str, Any]:
             ) from exc
         _close_conn(conn, rollback=False)
     return result
+
+
+class ExtractRequest(BaseModel):
+    mode: str = "read-only"
+    approval_token: str | None = None
+    use_live: bool = False
+    doc_id: str = ""
+    source_ref: str = ""
+    pages: list[dict[str, Any]] = []
+    run_id: str | None = None
+    dossier_id: str | None = None
+    dossier_key: str | None = None
+    idempotency_key: str | None = None
+
+
+@router.post("/wondrue/assist/extract")
+def post_assist_extract(body: ExtractRequest, request: Request) -> dict[str, Any]:
+    """Extract unverified claims from caller-supplied pages/images.
+
+    Extraction is consequential: read-only callers are refused, ask
+    mode returns a preview plus a single-use approval token, and full
+    mode executes within the shared inference budget. Pages arrive
+    inline; the route never fetches URLs or reads the filesystem.
+    """
+    from app import assist as assist_module
+    from app.wondrue import APPROVALS, MODES
+
+    grant = wondrue_grant(request)
+    principal = "wondrue-operator" if grant == "full" else "wondrue-reader"
+    if body.mode not in MODES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown mode")
+    if MODES.index(body.mode) > MODES.index(grant):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="mode exceeds grant")
+    if body.mode == "read-only":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="intent 'extract_document' is blocked in read-only mode",
+        )
+    spec = {
+        "doc_id": body.doc_id,
+        "source_ref": body.source_ref,
+        "pages": body.pages,
+        "run_id": body.run_id,
+        "dossier_id": body.dossier_id,
+        "dossier_key": body.dossier_key,
+        "idempotency_key": body.idempotency_key,
+    }
+    ctx = {
+        "principal": principal,
+        "use_live": body.use_live,
+        "mode": body.mode,
+        "approval_via_token": False,
+        "demo": False,
+    }
+    # Bounded inputs are validated before any preview is issued; the
+    # canonical spec (identities, page digests, association, live
+    # selection, limits, idempotency key) is what approval binds to.
+    try:
+        validated = assist_module.validate_extraction_body(spec, ctx)
+    except (WondrueError, ModelError, ValueError) as exc:
+        raise _command_error(exc)
+    canonical = validated["canonical"]
+    approved_spec: dict[str, Any] | None = None
+    if body.mode == "ask" and body.approval_token is None:
+        token = APPROVALS.issue("extract_document", {"spec": canonical}, "real")
+        return {
+            "outcome": "preview",
+            "intent": "extract_document",
+            "target": "real",
+            "preview": {
+                "operations": ["validate supplied pages", "extract candidate claims (page-validated)"],
+                "inputs": {
+                    "doc_id": canonical["doc_id"],
+                    "pages": [
+                        {"page_no": page["page_no"], "mime": page["mime"]}
+                        for page in canonical["pages"]
+                    ],
+                    "run_id": canonical["run_id"],
+                    "dossier_id": canonical["dossier_id"],
+                    "dossier_key": canonical["dossier_key"],
+                    "use_live": canonical["use_live"],
+                },
+                "effects": "unverified claims plus attributed artifact; no dossier changes",
+                "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            },
+            "approval_token": token,
+            "model": {"mode": "none"},
+        }
+    if body.mode == "ask":
+        assert body.approval_token is not None
+        entry = APPROVALS.redeem(body.approval_token)
+        if entry["intent"] != "extract_document" or entry["target"] != "real":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="approval token does not match this command",
+            )
+        approved_spec = entry["args"].get("spec")
+        if not isinstance(approved_spec, dict):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="approval token does not match this command",
+            )
+        ctx["approval_via_token"] = True
+    conn = None
+    try:
+        conn = get_connection()
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        conn = None
+    try:
+        data = assist_module.extract_document(conn, spec, ctx, approved_spec)
+    except (WondrueError, ModelError, WorkflowError, ValueError) as exc:
+        _close_conn(conn, rollback=True)
+        raise _command_error(exc)
+    except HTTPException:
+        _close_conn(conn, rollback=True)
+        raise
+    except Exception:
+        _close_conn(conn, rollback=True)
+        raise
+    if conn is not None:
+        try:
+            conn.commit()
+        except Exception as exc:
+            _close_conn(conn, rollback=True)
+            raise HTTPException(
+                status_code=503, detail="database_unavailable"
+            ) from exc
+        _close_conn(conn, rollback=False)
+    return {
+        "outcome": "result",
+        "intent": "extract_document",
+        "target": "real",
+        "data": data,
+        "model": (data.get("model") or {"mode": "none"}),
+    }
 
 
 @router.post("/wondrue/demo/reset")
