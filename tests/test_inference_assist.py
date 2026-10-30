@@ -124,6 +124,12 @@ class _BudgetCursor:
                     "outcome": "reserved",
                     "live": p.get("live", True),
                     "replay_of": p.get("replay_of"),
+                    "profile_name": p.get("profile", ""),
+                    "effective_max_tokens": p.get("effective_tokens", 0),
+                    "effective_max_input_bytes": p.get("effective_input", 0),
+                    "pricing_basis": (
+                        json.loads(p["pricing"]) if p.get("pricing") else None
+                    ),
                     "reported_input_tokens": None,
                     "reported_output_tokens": None,
                     "reported_total_tokens": None,
@@ -162,6 +168,8 @@ class _BudgetCursor:
                     row["provider_request_id"] = p["provider_ref"]
                     row["error"] = p["error"]
                     row["result"] = json.loads(p["result"]) if p["result"] else None
+                    if p.get("pricing"):
+                        row["pricing_basis"] = json.loads(p["pricing"])
                     self._result = [{"reserved_units": row["reserved_units"]}]
             elif sql.startswith("UPDATE inference_usage SET excess_units"):
                 row = db["rows"].get(str(p["request_id"]))
@@ -525,7 +533,16 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("META_API_KEY", "test-key")
     monkeypatch.setenv("META_MODEL", "meta-models/muse-spark-open-1026")
     monkeypatch.setenv("INFERENCE_TOKEN_ALLOWANCE", "100000")
-    monkeypatch.setenv("INFERENCE_USD_PER_1K_TOKENS", "0.002")
+    monkeypatch.setenv("META_MAX_TOKENS", "8192")
+    monkeypatch.setenv("INFERENCE_USD_PER_1M_INPUT", "1.25")
+    monkeypatch.setenv("INFERENCE_USD_PER_1M_OUTPUT", "4.25")
+    monkeypatch.setenv("INFERENCE_PRICING_MULTIPLIER", "2.0")
+    monkeypatch.setenv("INFERENCE_PRICING_STATUS", "provisional")
+    monkeypatch.setenv(
+        "INFERENCE_PRICING_SOURCE",
+        "https://www.baseten.co/library/muse-spark-open/",
+    )
+    monkeypatch.setenv("INFERENCE_PRICING_DATE", "2026-10-30")
     monkeypatch.setenv("INFERENCE_TOKENS_PER_IMAGE", "2000")
 
 
@@ -612,7 +629,9 @@ def test_all_capabilities_use_shared_budget_and_ledger(
         assert row["outcome"] == "completed"
         assert row["live"] is True
         assert row["reported_total_tokens"] == 15
-        assert row["estimated_cost_usd"] == "0.000030"
+        assert row["estimated_cost_usd"] == "0.000068"
+        assert row["pricing_basis"]["status"] == "provisional"
+        assert row["pricing_basis"]["estimate_label"].startswith("split")
         assert row["provider_request_id"] == "req-live-1"
     assert str(by_capability["assist_explain"]["run_id"]) == run
     assert str(by_capability["draft_outreach"]["package_entry"]) == str(ids["entry"])
@@ -662,10 +681,10 @@ def test_missing_approval_budget_config_and_grant_fail_closed(
     with pytest.raises(WondrueError, match="no allowance"):
         _attempt()
     monkeypatch.setenv("INFERENCE_TOKEN_ALLOWANCE", "100000")
-    monkeypatch.delenv("INFERENCE_USD_PER_1K_TOKENS")
-    with pytest.raises(WondrueError, match="pricing is not configured"):
+    monkeypatch.delenv("INFERENCE_USD_PER_1M_INPUT")
+    with pytest.raises(WondrueError, match="reference rate"):
         _attempt()
-    monkeypatch.setenv("INFERENCE_USD_PER_1K_TOKENS", "0.002")
+    monkeypatch.setenv("INFERENCE_USD_PER_1M_INPUT", "1.25")
     with pytest.raises(WondrueError, match="blocked in read-only mode"):
         handle_command(
             mode="read-only", max_mode="read-only", text="", target="real",
@@ -705,8 +724,15 @@ def test_exhausted_allowance_refuses_before_provider(
         )
 
 
-def test_endpoint_resolution_and_pricing_math() -> None:
-    from app.inference_budget import estimate_cost_usd
+def test_endpoint_resolution_and_pricing_math(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decimal import Decimal
+
+    from app.inference_budget import (
+        estimate_cost_from_usage,
+        get_pricing_basis,
+    )
     from app.model_adapter import resolve_chat_endpoint
 
     assert resolve_chat_endpoint("https://inference.baseten.co/v1") == (
@@ -719,14 +745,21 @@ def test_endpoint_resolution_and_pricing_math() -> None:
         resolve_chat_endpoint("")
     with pytest.raises(ModelError):
         resolve_chat_endpoint("https://host/v1/chat/completions/extra")
-    import os
-
-    os.environ["INFERENCE_USD_PER_1K_TOKENS"] = "0.002"
-    try:
-        assert str(estimate_cost_usd(15)) == "0.000030"
-        assert str(estimate_cost_usd(0)) == "0.000000"
-    finally:
-        del os.environ["INFERENCE_USD_PER_1K_TOKENS"]
+    basis = get_pricing_basis()
+    assert basis["planning_input_per_1m_usd"] == Decimal("2.50")
+    assert basis["planning_output_per_1m_usd"] == Decimal("8.50")
+    assert basis["status"] == "provisional"
+    cost, label = estimate_cost_from_usage(
+        {"prompt_tokens": 10000, "completion_tokens": 1000}, basis
+    )
+    assert str(cost) == "0.033500"
+    assert label == "split input/output planning rates"
+    fallback, fallback_label = estimate_cost_from_usage(
+        {"total_tokens": 15}, basis
+    )
+    assert str(fallback) == "0.000128"
+    assert "fallback" in fallback_label
+    assert estimate_cost_from_usage({}, basis) == (None, "unknown usage")
 
 
 # --- Acceptance: concurrent reservations + ambiguous outcomes ---
@@ -1428,13 +1461,26 @@ def test_rates_must_be_finite_and_media_bound_explicit(
     _env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.inference import complete_capability
-    from app.inference_budget import BudgetConfigError, get_usd_per_1k_tokens
+    from app.inference_budget import BudgetConfigError, get_pricing_basis
 
-    for bad in ("NaN", "Infinity", "-0.5", "nope"):
-        monkeypatch.setenv("INFERENCE_USD_PER_1K_TOKENS", bad)
-        with pytest.raises(BudgetConfigError, match="[Pp]ricing"):
-            get_usd_per_1k_tokens()
+    for var in ("INFERENCE_USD_PER_1M_INPUT", "INFERENCE_USD_PER_1M_OUTPUT"):
+        for bad in ("NaN", "Infinity", "-0.5", "nope", ""):
+            monkeypatch.setenv(var, bad)
+            with pytest.raises(BudgetConfigError, match="[Rr]ate"):
+                get_pricing_basis()
+        monkeypatch.setenv(
+            var, "1.25" if var.endswith("INPUT") else "4.25"
+        )
+    for bad in ("NaN", "0", "-2", "nope", ""):
+        monkeypatch.setenv("INFERENCE_PRICING_MULTIPLIER", bad)
+        with pytest.raises(BudgetConfigError, match="[Mm]ultiplier"):
+            get_pricing_basis()
+    monkeypatch.setenv("INFERENCE_PRICING_MULTIPLIER", "2.0")
+    # A legacy blended rate never silently overrides the new basis.
     monkeypatch.setenv("INFERENCE_USD_PER_1K_TOKENS", "0.002")
+    with pytest.raises(BudgetConfigError, match="legacy"):
+        get_pricing_basis()
+    monkeypatch.delenv("INFERENCE_USD_PER_1K_TOKENS")
 
     # Live media without an explicit bound is refused; text-only is not.
     budget_db = _new_budget_db()
@@ -2143,7 +2189,8 @@ def test_failure_cost_estimate_preserved_and_missing_usage_unknown(
     failed, ambiguous = list(budget_db["rows"].values())
     assert failed["outcome"] == "failed"
     assert failed["reported_total_tokens"] == 15
-    assert failed["estimated_cost_usd"] == "0.000030"
+    assert failed["estimated_cost_usd"] == "0.000068"
+    assert failed["pricing_basis"]["estimate_label"].startswith("split")
     assert ambiguous["outcome"] == "unresolved"
     assert ambiguous["reported_total_tokens"] is None
     assert ambiguous["estimated_cost_usd"] is None
@@ -2248,7 +2295,400 @@ def test_consumed_reconciles_across_outcomes(
     assert seen["calls"] == 1
 
 
-# --- Live PostgreSQL: migration-016 round trip (owner-executed) ---
+# --- Throttle profiles + provisional pricing ---
+
+
+def test_profile_table_and_medium_default() -> None:
+    from app.inference_budget import (
+        DEFAULT_INFERENCE_PROFILE,
+        INFERENCE_PROFILES,
+        resolve_effective_limits,
+    )
+
+    assert DEFAULT_INFERENCE_PROFILE == "medium"
+    assert INFERENCE_PROFILES == {
+        "low": {"max_completion_tokens": 1024, "max_input_bytes": 8192},
+        "medium": {"max_completion_tokens": 2048, "max_input_bytes": 16384},
+        "high": {"max_completion_tokens": 4096, "max_input_bytes": 32768},
+        "extra_high": {"max_completion_tokens": 8192, "max_input_bytes": 60000},
+    }
+    assert resolve_effective_limits(None, None)["profile"] == "medium"
+
+
+def test_unknown_profile_rejected(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.assist import validate_extraction_body
+    from app.inference import complete_capability
+
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    _provider(monkeypatch)
+    with pytest.raises(ModelError, match="unknown inference profile"):
+        complete_capability(
+            agent="wondrue", capability="assist_explain",
+            purpose="assist_explain", payload={"brief": {}},
+            profile="turbo", use_live=True, mode="full", approved=True,
+        )
+    flow_db, ids = _seed_flow()
+    with pytest.raises(WondrueError, match="unknown inference profile"):
+        handle_command(
+            mode="full", max_mode="full", text="", target="real",
+            use_live=True,
+            intent_override=_override(
+                "assist_explain", {"run_id": str(ids["run_id"])}
+            ),
+            conn=_FlowConn(flow_db), principal="wondrue-operator",
+            profile="turbo",
+        )
+    with pytest.raises(WondrueError, match="unknown inference profile"):
+        validate_extraction_body(
+            {
+                "doc_id": "d", "source_ref": "s",
+                "pages": [{"page_no": 1, "mime": "text/plain", "text": "hi"}],
+            },
+            {"profile": "turbo"},
+        )
+    assert budget_db["rows"] == {}
+
+
+def test_admin_ceiling_reports_requested_vs_effective(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.inference import complete_capability
+
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    seen = _provider(monkeypatch)
+    monkeypatch.setenv("META_MAX_TOKENS", "512")
+    monkeypatch.setenv("INFERENCE_MAX_PROMPT_CHARS", "4096")
+    completed = complete_capability(
+        agent="wondrue", capability="assist_explain",
+        purpose="assist_explain", payload={"brief": {}},
+        profile="medium", use_live=True, mode="full", approved=True,
+    )
+    profile = completed["profile"]
+    assert profile["profile"] == "medium"
+    assert profile["requested_completion_tokens"] == 2048
+    assert profile["requested_input_bytes"] == 16384
+    assert profile["effective_completion_tokens"] == 512
+    assert profile["effective_input_bytes"] == 4096
+    assert profile["capped_by_admin"] is True
+    assert seen["bodies"][0]["max_tokens"] == 512
+    (row,) = list(budget_db["rows"].values())
+    assert row["profile_name"] == "medium"
+    assert row["effective_max_tokens"] == 512
+    assert row["effective_max_input_bytes"] == 4096
+
+
+def test_oversized_context_refused_before_provider(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.inference import complete_capability
+
+    httpx = pytest.importorskip("httpx")
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+
+    def _must_not_call(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("provider must not be reached")
+
+    monkeypatch.setattr(httpx, "stream", _must_not_call)
+    with pytest.raises(ModelError, match="narrow"):
+        complete_capability(
+            agent="wondrue", capability="assist_explain",
+            purpose="assist_explain",
+            payload={"brief": {"bulk": "z" * 12000}},
+            profile="low", use_live=True, mode="full", approved=True,
+        )
+    assert budget_db["rows"] == {}
+    assert budget_db["allowance"]["used"] == 0
+
+
+def test_approval_binds_full_inference_spec(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    _provider(monkeypatch)
+    flow_db, ids = _seed_flow()
+    conn = _FlowConn(flow_db)
+    run = str(ids["run_id"])
+
+    def _command(**kwargs: Any) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "mode": "ask", "max_mode": "full", "text": "",
+            "target": "real", "use_live": True,
+            "intent_override": _override("assist_explain", {"run_id": run}),
+            "conn": conn, "principal": "wondrue-operator",
+            "profile": "low",
+        }
+        params.update(kwargs)
+        return handle_command(**params)
+
+    preview = _command()
+    assert preview["outcome"] == "preview"
+    assert preview["preview"]["inference"]["profile"] == "low"
+    # Changed profile is rejected.
+    with pytest.raises(WondrueError, match="does not cover this profile"):
+        _command(profile="high", approval_token=preview["approval_token"])
+    # Replay preview followed by live execution is rejected.
+    replay_preview = _command(use_live=False)
+    with pytest.raises(WondrueError, match="does not cover this use_live"):
+        _command(use_live=True, approval_token=replay_preview["approval_token"])
+    # A different principal is rejected.
+    with pytest.raises(WondrueError, match="does not cover this principal"):
+        _command(
+            principal="wondrue-reader",
+            approval_token=_command()["approval_token"],
+        )
+    # Same profile with increased effective limits is rejected.
+    monkeypatch.setenv("META_MAX_TOKENS", "512")
+    capped = _command()
+    monkeypatch.setenv("META_MAX_TOKENS", "8192")
+    with pytest.raises(
+        WondrueError, match="does not cover this effective_completion_tokens"
+    ):
+        _command(approval_token=capped["approval_token"])
+    # The unchanged approved path still works.
+    executed = _command(approval_token=_command()["approval_token"])
+    assert executed["outcome"] == "result"
+    (row,) = list(budget_db["rows"].values())
+    assert row["profile_name"] == "low"
+
+
+def test_idempotency_rejects_profile_change(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.inference import complete_capability
+
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    _provider(monkeypatch)
+    kwargs: dict[str, Any] = {
+        "agent": "wondrue", "capability": "assist_explain",
+        "purpose": "assist_explain", "payload": {"brief": {}},
+        "principal": "w", "use_live": True, "mode": "full",
+        "approved": True, "idempotency_key": "profile-key-1",
+    }
+    first = complete_capability(**{**kwargs, "profile": "low"})
+    assert first["outcome"] == "completed"
+    replayed = complete_capability(**{**kwargs, "profile": "low"})
+    assert replayed["outcome"] == "replayed"
+    with pytest.raises(ModelError, match="different request"):
+        complete_capability(**{**kwargs, "profile": "high"})
+
+
+def test_profile_propagates_across_capabilities(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.wondrue as wondrue_module
+
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    _provider(monkeypatch)
+    flow_db, ids = _seed_flow()
+    conn = _FlowConn(flow_db)
+    run = str(ids["run_id"])
+    calls: list[dict[str, Any]] = []
+    real_interpret = wondrue_module.interpret_command
+
+    def _spy(text: str, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return real_interpret(text, **kwargs)
+
+    monkeypatch.setattr(wondrue_module, "interpret_command", _spy)
+    # Interpretation honors the request profile (replay, no spend).
+    handle_command(
+        mode="read-only", max_mode="read-only", text="help me",
+        target="demo", conn=conn, principal="wondrue-reader",
+        profile="high",
+    )
+    assert calls and calls[0]["profile"] == "high"
+
+    def _run(intent: str, args: dict[str, Any]) -> dict[str, Any]:
+        return handle_command(
+            mode="full", max_mode="full", text="", target="real",
+            use_live=True, intent_override=_override(intent, args),
+            conn=conn, principal="wondrue-operator", profile="high",
+        )
+
+    _run("assist_explain", {"run_id": run})
+    _run("analyze_evidence", {"run_id": run})
+    _run("explain_economics", {"run_id": run})
+    _run(
+        "draft_outreach",
+        {"package_entry": str(ids["entry"]), "draft_kind": "intro_letter"},
+    )
+    compared = _run("compare_scenarios", {})
+    assert compared["inference"]["profile"]["profile"] == "high"
+    rows = list(budget_db["rows"].values())
+    assert len(rows) == 5
+    for row in rows:
+        assert row["profile_name"] == "high"
+        assert row["effective_max_tokens"] == 4096
+        assert row["effective_max_input_bytes"] == 32768
+
+
+def test_extraction_canonical_binds_profile(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.inference as inference_module
+    import app.routes.wondrue as wondrue_routes
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    budget_db = _new_budget_db()
+    flow_db, ids = _seed_flow()
+    monkeypatch.setattr(
+        inference_module, "get_connection", lambda: _BudgetConn(budget_db)
+    )
+    monkeypatch.setattr(
+        wondrue_routes, "get_connection", lambda: _FlowConn(flow_db)
+    )
+    _provider(monkeypatch)
+    client = TestClient(app, raise_server_exceptions=False)
+    operator = {"X-Wondrue-Key": "operator-secret"}
+    body = {
+        "mode": "ask", "use_live": False, "profile": "low",
+        "doc_id": "prof-doc", "source_ref": "owner scan",
+        "pages": [{"page_no": 1, "mime": "text/plain", "text": "Hall spans fifty."}],
+        "run_id": str(ids["run_id"]),
+    }
+    preview = client.post("/wondrue/assist/extract", headers=operator, json=body)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["preview"]["inference"]["profile"] == "low"
+    token = preview.json()["approval_token"]
+    switched = client.post(
+        "/wondrue/assist/extract", headers=operator,
+        json={**body, "profile": "high", "approval_token": token},
+    )
+    assert switched.status_code == 403
+    assert budget_db["allowance"]["used"] == 0
+
+
+def test_total_only_fallback_and_no_reasoning_double_count(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.inference import complete_capability
+
+    httpx = pytest.importorskip("httpx")
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    replies = [
+        _Resp({"summary": "s", "points": [], "unknowns": []},
+              usage={"total_tokens": 1000}),
+        _Resp({"summary": "s", "points": [], "unknowns": []},
+              usage={"prompt_tokens": 10, "completion_tokens": 5,
+                     "total_tokens": 15, "reasoning_tokens": 5}),
+    ]
+    monkeypatch.setattr(httpx, "stream", lambda *a, **k: replies.pop(0))
+
+    def _attempt() -> dict[str, Any]:
+        return complete_capability(
+            agent="wondrue", capability="assist_explain",
+            purpose="assist_explain", payload={"brief": {}},
+            use_live=True, mode="full", approved=True,
+        )
+
+    fallback = _attempt()
+    assert fallback["outcome"] == "completed"
+    assert fallback["estimated_cost_usd"] == "0.008500"
+    assert "fallback" in str(fallback["estimate_label"])
+    split = _attempt()
+    assert split["estimated_cost_usd"] == "0.000068"
+    assert split["pricing"]["status"] == "provisional"
+    rows = list(budget_db["rows"].values())
+    assert rows[0]["pricing_basis"]["estimate_label"].startswith("total-only")
+    assert rows[1]["pricing_basis"]["estimate_label"].startswith("split")
+
+
+def test_preview_discloses_consumption(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.wondrue import preview_intent
+
+    block = preview_intent(
+        "assist_explain", {"run_id": "r"}, "real", "medium",
+        {"allowance": 100000, "used": 1000, "warnings": []},
+    )["inference"]
+    assert block["profile"] == "medium"
+    assert block["effective_limits"] == {
+        "completion_tokens": 2048, "input_bytes": 16384,
+    }
+    assert block["capped_by_admin"] is False
+    assert block["max_provider_calls"] == 1
+    assert block["max_reservation_units"] == 16384 + 2048
+    assert block["max_cost_exposure_usd"] == "0.058368"
+    assert block["pricing"]["status"] == "provisional"
+    assert block["allowance_remaining_units"] == 99000
+    assert block["budget_warnings"] == []
+
+
+def test_preview_marks_unknown_media_exposure(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.inference_budget import describe_profile_preview
+
+    # Configured media bound: totals include image consumption.
+    full = describe_profile_preview("low", 2, None)
+    assert full["max_reservation_units"] == 8192 + 2 * 2000 + 1024
+    assert full["max_cost_exposure_usd"] == "0.039184"
+    assert full["media_note"] is None
+    # Missing bound: no complete-looking estimate, execution refused.
+    monkeypatch.delenv("INFERENCE_TOKENS_PER_IMAGE")
+    unknown = describe_profile_preview("low", 2, None)
+    assert unknown["max_reservation_units"] is None
+    assert unknown["max_cost_exposure_usd"] is None
+    assert "unavailable" in str(unknown["media_note"])
+    assert "unknown" in str(unknown["media_note"])
+
+
+def test_previews_disclose_capability_vs_whole_request_calls(
+    _env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.wondrue as wondrue_module
+
+    budget_db = _new_budget_db()
+    _wired(monkeypatch, budget_db)
+    _provider(monkeypatch)
+    flow_db, ids = _seed_flow()
+    conn = _FlowConn(flow_db)
+    run = str(ids["run_id"])
+    # Structured call: no interpretation, one execution call at most.
+    direct = handle_command(
+        mode="ask", max_mode="full", text="", target="real",
+        use_live=True,
+        intent_override=_override("assist_explain", {"run_id": run}),
+        conn=conn, principal="wondrue-operator", profile="low",
+    )
+    assert direct["calls"]["interpretation_performed"] is False
+    assert direct["calls"]["execution_max_calls"] == 1
+    assert direct["calls"]["whole_request_max_calls"] == 1
+    # Natural language: interpretation already ran, execution awaits.
+    from types import SimpleNamespace
+
+    def _fake_interpret(text: str, **kwargs: Any) -> Any:
+        return (
+            {"intent": "assist_explain", "args": {"run_id": run}},
+            SimpleNamespace(mode="replay", provider="meta", model="m"),
+        )
+
+    monkeypatch.setattr(wondrue_module, "interpret_command", _fake_interpret)
+    spoken = handle_command(
+        mode="ask", max_mode="full", text="explain the stop", target="real",
+        use_live=False, conn=conn, principal="wondrue-operator",
+        profile="low",
+    )
+    assert spoken["calls"]["interpretation_performed"] is True
+    assert spoken["calls"]["interpretation_mode"] == "replay"
+    assert spoken["calls"]["execution_max_calls"] == 1
+    assert spoken["calls"]["whole_request_max_calls"] == 2
+    assert "at most one provider call" in wondrue_module._help_text()
+
+
+# --- Live PostgreSQL: 016/017 round trip + races (owner-executed) ---
 
 _LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
 needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
@@ -2279,21 +2719,41 @@ def test_live_budget_reserve_reconcile_round_trip(
     first = complete_capability(
         agent="wondrue", capability="assist_explain",
         purpose="assist_explain", payload={"brief": {"live": True}},
-        principal="wondrue-operator", use_live=True, mode="full",
+        principal="wondrue-operator", profile="high",
+        use_live=True, mode="full",
         approved=True, idempotency_key=key,
         validator=validate_explanation,
     )
     assert first["outcome"] == "completed"
     assert first["model_result"].mode == "live"
+    assert first["profile"]["profile"] == "high"
     second = complete_capability(
         agent="wondrue", capability="assist_explain",
         purpose="assist_explain", payload={"brief": {"live": True}},
-        principal="wondrue-operator", use_live=True, mode="full",
+        principal="wondrue-operator", profile="high",
+        use_live=True, mode="full",
         approved=True, idempotency_key=key,
         validator=validate_explanation,
     )
     assert second["outcome"] == "replayed"
     assert second["replay_of"] == first["request_id"]
+    persisted = get_connection()
+    try:
+        with persisted.cursor() as cur:
+            cur.execute(
+                "SELECT profile_name, effective_max_tokens, "
+                "effective_max_input_bytes, pricing_basis "
+                "FROM inference_usage WHERE request_id = %(rid)s",
+                {"rid": first["request_id"]},
+            )
+            stored = cur.fetchone()
+        assert stored is not None
+        assert stored["profile_name"] == "high"
+        assert stored["effective_max_tokens"] == 4096
+        assert stored["effective_max_input_bytes"] == 32768
+        assert stored["pricing_basis"]["status"] == "provisional"
+    finally:
+        persisted.close()
     conn = get_connection()
     try:
         after = read_budget_in_transaction(conn)

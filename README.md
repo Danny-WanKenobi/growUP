@@ -98,7 +98,7 @@ The architecture emphasizes modularity, deterministic financial calculations, sh
 
 AI models assist with language understanding, analysis, explanations, and opportunity development. Financial arithmetic remains in inspectable Python code.
 
-At runtime, Meta inference runs through one shared boundary (`app/inference.py`) over a small transport adapter (`app/model_adapter.py`, Baseten chat-completions transport): it interprets Wondrue commands, proposes configuration comparisons from an approved parameter catalog, explains stored results and economics, analyzes evidence, extracts document claims, and drafts Uriel copy. Structured output is validated before use; deterministic Python performs all calculations and authorization checks. Every live call reserves allowance from a shared PostgreSQL budget (`app/inference_budget.py`, migration 016) before any provider request and is recorded with principal, agent, capability, association, provider, model, usage, and digests; labeled replays cover rehearsal and read-only mode. Live calls require explicit spending approval (`META_SPEND_APPROVED=1`), a granted token allowance, and configured pricing — otherwise they are refused before spending anything.
+At runtime, Meta inference runs through one shared boundary (`app/inference.py`) over a small transport adapter (`app/model_adapter.py`, Baseten chat-completions transport): it interprets Wondrue commands, proposes configuration comparisons from an approved parameter catalog, explains stored results and economics, analyzes evidence, extracts document claims, and drafts Uriel copy. Structured output is validated before use; deterministic Python performs all calculations and authorization checks. Every live call reserves allowance from a shared PostgreSQL budget (`app/inference_budget.py`, migrations 016–017) before any provider request and is recorded with principal, agent, capability, association, provider, model, profile, usage, pricing provenance, and digests; labeled replays cover rehearsal and read-only mode. Live calls require explicit spending approval (`META_SPEND_APPROVED=1`), a granted token allowance, and configured pricing — otherwise they are refused before spending anything.
 
 ---
 
@@ -133,7 +133,7 @@ python -m app.migrate           # apply SQL migrations in filename order
 uvicorn app.main:app --port 8001
 ```
 
-Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1K_TOKENS` (required blended rate) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
 
 Run the local suite with `python -m pytest -q tests` (PostgreSQL-gated tests skip without `GROWUP_PG_INTEGRATION=1`).
 
@@ -333,8 +333,8 @@ rename is **not** rollback-transparent: older application code that
 queries `michael_intake` will fail after 014 is applied. Rolling back
 past 014 therefore requires either keeping code that reads the new
 table name or a reviewed forward migration restoring a compatible view.
-Migrations 012, 013, 015, and 016 are additive-only and need no
-schema reversal on application rollback. Local coverage is
+Migrations 012, 013, and 015 through 017 are additive-only and
+need no schema reversal on application rollback. Local coverage is
 transaction-faithful fakes plus the focused suites
 (`tests/test_priscilla_sim.py`, `tests/test_pilot.py`,
 `tests/test_discovery_runner.py`, `tests/test_funnel_acceptance.py`,
@@ -351,20 +351,19 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_raphael.py`), and the full coordinator chain
 (`tests/test_funnel_acceptance.py`), and the inference budget
 reserve/reconcile round trip (`tests/test_inference_assist.py`).
-Confirmed deployed checkpoint `6ec0177`
-(`/var/www/growup/releases/20261030T195130Z_6ec0177`, migrations
-001–015 on both databases): targeted PostgreSQL validation reached
-**17 passed, zero failures/skips**; full regression reached **2,039
-passed, zero failures/skips** (17 deprecation warnings); operational
-health checks passed for both databases, application
-health/readiness, PostgreSQL availability, and the service. Earlier
-runs had surfaced (and corrected) five custody-ordering failures,
-two test-contract mismatches, and two route-test ambient-database
-assumptions. The shared-inference work in this tree is newer than
-that checkpoint: it needs migration 016 applied, a targeted rerun
-(including the new budget round-trip test), full regression, health
-checks, and the bounded live inference smoke test — all **pending
-owner execution**.
+Confirmed deployed checkpoint `4d9fd72` (migrations 001–016 on
+both databases): targeted PostgreSQL validation reached **20
+passed, zero failures/skips**; full regression reached **2,084
+passed, zero failures/skips** (17 deprecation warnings);
+operational health checks passed for both databases, application
+health/readiness, PostgreSQL availability, and the service.
+Earlier runs had surfaced (and corrected) five custody-ordering
+failures, two test-contract mismatches, and two route-test
+ambient-database assumptions. The throttle-profile work in this
+tree is newer than that checkpoint: it needs migration 017
+applied, a targeted rerun (including the extended 016/017
+round-trip test), full regression, health checks, and the bounded
+live inference smoke test — all **pending owner execution**.
 
 ### Synthetic demo fixture
 
@@ -2057,7 +2056,33 @@ byte-pair-style tokenizers typically stay far below one token per
 byte, but no guarantee is claimed without tokenizer support;
 honesty comes from reconciliation, not from the bound itself —
 reported usage past the reservation is charged back as excess, so
-underestimation cannot hide spend. Reservation is one atomic
+underestimation cannot hide spend. Request limits come from one
+centralized throttle profile (`INFERENCE_PROFILES`, default
+`medium`), shared by every capability and requesting agent:
+
+| Setting | Profile | Max completion tokens | Max serialized input bytes |
+|---|---|---|---|
+| Low | `low` | 1,024 | 8,192 |
+| Medium | `medium` | 2,048 | 16,384 |
+| High | `high` | 4,096 | 32,768 |
+| Extra High | `extra_high` | 8,192 | 60,000 |
+
+These are application resource profiles, not measures of
+intelligence or accuracy — larger settings permit more context and
+completion space but guarantee nothing about result quality. The
+cockpit offers one selector (request-scoped, with optional
+browser-local memory); API callers pass one validated `profile`
+field. Unknown profiles are rejected server-side before any
+reservation. The complete serialized prompt/directive/framing bytes
+count against the input limit; oversized context is refused with
+guidance (narrow the request or choose a larger setting) — never
+silently truncated, never auto-upgraded, never retried. Profiles
+never grant permission or enable spending, and read-only mode
+still cannot make paid calls. Administrator ceilings
+(`META_MAX_TOKENS`, `INFERENCE_MAX_PROMPT_CHARS`) can only reduce
+profile limits; requested-vs-effective is reported whenever a cap
+bites, and the transport clamps through the same completion
+ceiling. Reservation is one atomic
 conditional update so concurrent
 callers cannot overspend; HTTP runs outside long-held
 workflow/custody transactions (reads happen before, writes after,
@@ -2080,22 +2105,56 @@ ledger warning discourages retrying under a fresh key without
 reviewing for double charges. Only pre-provider refusals
 (including the concurrency bound) release; the concurrency bound
 is process-local, protecting one worker, not a multi-worker
-deployment. Pricing is a required owner-configured finite
-nonnegative blended rate (`INFERENCE_USD_PER_1K_TOKENS`); without
-it live execution is refused rather than invented, and application
-estimates stay distinct from provider billing. Consumed-fraction
+deployment. Pricing is a required owner-configured **provisional**
+basis: reference input/output rates per million tokens plus a
+safety multiplier (`INFERENCE_USD_PER_1M_INPUT=1.25`,
+`INFERENCE_USD_PER_1M_OUTPUT=4.25`,
+`INFERENCE_PRICING_MULTIPLIER=2.0`, status/source/date), taken
+from the standard Muse Spark Open reference prices ($1.25/M
+input, $4.25/M output at
+`https://www.baseten.co/library/muse-spark-open/`, checked
+2026-10-30) — planning rates are therefore $2.50/M input and
+$8.50/M output. The hackathon model stays
+`meta-models/muse-spark-open-1026`; the provisional rate is not a
+guaranteed upper price, and the advertised $100 is neither a
+verified remaining balance nor permission to consume it.
+Estimates use separate input/output rates when reported usage
+permits, else conservatively price the reported total at the
+higher output rate with a labeled fallback; reasoning tokens are
+never added on top of completion usage. All arithmetic is
+deterministic `Decimal`. The retired blended-rate variable
+(`INFERENCE_USD_PER_1K_TOKENS`) must stay unset — its presence
+fails closed rather than silently overriding the new basis. Four
+figures stay distinct: reserved token-unit exposure,
+provider-reported usage, application cost estimate, and actual
+provider charges (unconfirmed). Consumed-fraction
 thresholds: 50% warns with usage by agent/capability; 75% defers
 optional requests (audience variants) visibly instead of spending;
 90% requires an ask-mode approval token for large batches and
 protects the demonstration reserve (`INFERENCE_DEMO_RESERVE`);
 100% refuses further spending until the owner raises the
 allowance. Every live call and idempotent replay is recorded in
-the `inference_usage` request-status ledger (migration 016) with
-request/idempotency identity, principal, agent, capability,
+the `inference_usage` request-status ledger (migrations 016, 017)
+with request/idempotency identity, principal, agent, capability,
 dossier/run/package association, provider, model, prompt/schema
-versions, digests, limits, bound/reserved/reported/excess units,
-estimated cost, outcome, live/replay status, and timestamps; an
-observability activity event is emitted per call. Dossier
+versions, digests, profile plus requested/effective limits,
+bound/reserved/reported/excess units, estimated cost with pricing
+provenance, outcome, live/replay status, and timestamps; an
+observability activity event is emitted per call. Before
+execution, previews disclose the setting, effective limits, max
+calls for that capability (one), maximum reservation and
+planning-cost exposure, pricing status, and remaining allowance
+with threshold warnings; after execution, responses carry
+reported usage, estimate plus status, unresolved exposure, and
+live/replay state. Whole-request previews separately report
+whether interpretation already ran and the combined call ceiling:
+a structured capability call spends at most one provider call,
+while a natural-language request may spend one more for command
+interpretation. When images are supplied but the per-image bound
+is missing or invalid, previews mark media execution unavailable
+and reservation/cost totals unknown rather than presenting a
+complete-looking estimate that excludes image consumption;
+execution stays fail-closed. Dossier
 association is deterministic: an explicitly supplied, validated
 `dossier_key` wins; otherwise an unambiguous stored
 run→dossier association is selected; ambiguity requires the
@@ -2110,7 +2169,17 @@ caller-asserted, not written as ledger fact. Rows transition
 append-only. Replays are labeled `replay`, record zero new usage,
 and link the original spend through `replay_of`; reuse binds the
 full original identity (principal, capability, model, versions,
-limits, dossier context, payload digest), not the payload alone.
+profile plus effective limits, dossier context, payload digest),
+not the payload alone — a changed profile needs its own key.
+Ask-mode approval binds the full inference specification for
+assistance commands: intent, target, approved arguments,
+live/replay selection, canonical profile, effective completion
+and input limits, and the authenticated principal. Redemption
+re-resolves the current spec and rejects any material drift —
+including effective limits that shifted because administrator
+configuration changed after preview — before provider execution.
+Tokens stay single-use; extraction keeps its canonical-spec
+comparison.
 Usage summaries report consumed units (reserved plus excess,
 excluding releases) separately from released units, reconciling
 with the singleton allowance across reserve, release, replay,
@@ -2134,8 +2203,9 @@ conflicts and gaps must cite supplied evidence verbatim
 figure labels while the server renders authoritative values, and
 money-like figures in model prose are rejected; draft briefs carry
 unknowns/blockers with explicit omission counts. Extraction approval
-binds identities, page digests, association, live selection, limits,
-and idempotency key — resubmitted operations must match exactly.
+binds identities, page digests, association, live selection,
+profile plus effective limits, and idempotency key — resubmitted
+operations must match exactly.
 Page originals persist in `extraction_originals` under database
 access control with conflict-safe retention: each page inserts
 atomically, identical resubmission reuses the retained original
@@ -2149,7 +2219,10 @@ provenance; authoritative dossier contents and historical snapshots
 are never mutated, and nothing becomes a dossier revision. Provider
 usage and request metadata are extracted before output parsing, so
 truncation, malformed JSON, and refusals still reconcile billing
-evidence; responses stream through a mid-read size bound. Budget,
+evidence; responses stream through a mid-read size bound.
+Always-on model reasoning can consume completion space: a truncated
+response fails safely and never automatically triggers a larger
+profile. Budget,
 provider, or validation failure changes no verification state,
 advances no custody, and authorizes nothing. Responses are JSON
 only; the static results page echoes no model text. Image-vision
@@ -2202,15 +2275,16 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the confirmed `6ec0177` checkpoint passed
-targeted validation (17 passed), full regression (2,039 passed),
-and operational health checks with these fixes deployed. The
-shared-inference work in this tree (local suite green: 1,951
-passed, 133 skipped — 131 PG-gated, 2 POSIX-only — 17 warnings,
-mocked providers only) needs a fresh validation cycle (migration 016,
-targeted rerun including the inference-budget round trip and the
-originals race check, full regression, health checks, live smoke
-test) — **pending owner execution**.
+updated) resolve them; the confirmed `4d9fd72` checkpoint passed
+targeted validation (20 passed), full regression (2,084 passed,
+zero failures/skips), migration 016 on both databases, and
+operational health checks with the shared-inference work
+deployed. The throttle-profile work in this tree (local suite
+green: 1,963 passed, 133 skipped — 131 PG-gated, 2 POSIX-only —
+17 warnings, mocked providers only) needs a fresh validation
+cycle (migration 017, targeted rerun including the extended
+016/017 round trip and the originals race check, full regression,
+health checks, live smoke test) — **pending owner execution**.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2423,16 +2497,16 @@ reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
-its own owner approval): migration 016 plus the targeted rerun
-(including the new inference-budget round trip and the originals
+its own owner approval): migration 017 plus the targeted rerun
+(including the extended 016/017 round trip and the originals
 race check), full regression, and final database health checks
-for the shared-inference work in this tree (local suite:
-1,951 passed, 133 skips — 131 PG-gated, 2 POSIX-only —
-17 warnings, mocked providers; checkpoint `6ec0177` was
-fully green: 17 targeted,
-2,039 full, health checks passed); a bounded live smoke test
-proving meaningful Meta runtime inference (see Demonstration);
-and real
+for the throttle-profile work in this tree (local suite:
+1,963 passed, 133 skips — 131 PG-gated, 2 POSIX-only —
+17 warnings, mocked providers; checkpoint `4d9fd72` was
+fully green: 20 targeted,
+2,084 full with zero failures/skips, health checks passed);
+a bounded live smoke test proving meaningful Meta runtime
+inference (see Demonstration); and real
 discovery runs (the two-hour timed preset is defined but not
 launched).
 
@@ -2492,36 +2566,39 @@ Mocked success is not proof of live compatibility: the bounded live
 smoke test below stays owner-executed.
 
 **Bounded live smoke test (proposed, not executed).** After migration
-016 and regression are green, the owner enables `META_SPEND_APPROVED=1`
+017 and regression are green, the owner enables `META_SPEND_APPROVED=1`
 with an explicit allowance and runs, in order, one
 `interpret_command` ("help me"), one `assist_explain` over a stopped
 run, one `analyze_evidence`, one `explain_economics`, one
 `draft_outreach` (`intro_letter`), and one text-page
-`extract_document` — six live calls, each `max_tokens = 1024`, each
-with a distinct idempotency key, then one repeated key proving
-replay-without-spend. Each reservation is transmitted text bytes
-+ 1,024 completion units (no images in these six). Measured over
-representative fixtures with the actual request builder:
-interpret_command 2,633; assist_explain 2,402; analyze_evidence
-3,390; explain_economics 2,619; draft_outreach 2,535;
-extract_document 3,306 — **16,885 units total**. These are
-representative measurements, not worst-case limits: the 60KB
-payload cap bounds any single text call near 63K (payload plus
-directive/framing plus 1,024 output). Suggested ceiling: **40,000
-token units** plus the configured USD rate — 2.4× the measured
-sum, with per-call overruns and retained unresolved exposure
-charged back to the same allowance. The allowance is a token-unit
-spending gate, not a bill: application cost estimates
-(`INFERENCE_USD_PER_1K_TOKENS` blended rate) stay distinct from
-actual provider billing, and only provider-reported usage is
-ground truth for spend. Expected: six `completed` ledger rows
-with reported usage and cost estimates, one zero-spend `replayed`
-row linked through `replay_of`, all outputs schema-valid,
-`wondrue_assistance` artifacts attached, and no verification,
-custody, or execution-state changes. A single one-image extraction
-follows as a **separately authorized** probe only after the owner
-sets `INFERENCE_TOKENS_PER_IMAGE` (live media is refused without
-it), with a top-up sized to the configured media bound plus ≈3K
+`extract_document` — six live calls, all at the `medium` profile
+(2,048 completion / 16,384 input bytes), each with a distinct
+idempotency key, then one repeated key proving replay-without-spend.
+Each reservation is transmitted text bytes + 2,048 completion
+units (no images in these six). Measured over representative
+fixtures with the actual request builder: interpret_command 3,657;
+assist_explain 3,426; analyze_evidence 4,414; explain_economics
+3,643; draft_outreach 3,559; extract_document 4,330 — **23,029
+units total**. These are representative measurements, not
+worst-case limits: a medium call can reserve at most 18,432 units
+(16,384 + 2,048). Suggested ceiling: **50,000 token units** —
+2.2× the measured sum, with per-call overruns and retained
+unresolved exposure charged back to the same allowance. Maximum
+planning exposure if every reserved unit billed at the higher
+planning rate is 23,029 × $8.50/M ≈ **$0.20**; the allowance is a
+token-unit spending gate, not a bill, and only provider-reported
+usage is ground truth for spend. **Stop conditions:** halt on the
+first failure or unresolved billing outcome, on any refusal, or
+if cumulative reservations approach the ceiling; review the ledger
+before any retry (a fresh key may double-charge). Expected: six
+`completed` ledger rows with reported usage and provisional cost
+estimates, one zero-spend `replayed` row linked through
+`replay_of`, all outputs schema-valid, `wondrue_assistance`
+artifacts attached, and no verification, custody, or
+execution-state changes. A single one-image extraction follows as
+a **separately authorized** probe only after the owner sets
+`INFERENCE_TOKENS_PER_IMAGE` (live media is refused without it),
+with a top-up sized to the configured media bound plus ≈4K
 text/completion units; vision is confirmed only if the model
 answers it, otherwise text pages remain the supported path.
 
@@ -2541,9 +2618,9 @@ inference flows are exercised by the acceptance suites
 `tests/test_wondrue_ops.py`, `tests/test_discovery_runner.py`,
 `tests/test_mvp_flow.py`, `tests/test_funnel_acceptance.py`,
 `tests/test_inference_assist.py`); live-PostgreSQL variants run only
-where `GROWUP_PG_INTEGRATION=1` and migrations 001–016 are applied
+where `GROWUP_PG_INTEGRATION=1` and migrations 001–017 are applied
 to a disposable database (never the operational records). Migration
-016 application, the inference rerun, the bounded live smoke test,
+017 application, the inference rerun, the bounded live smoke test,
 and real discovery launches remain unexecuted owner-approval gates.
 
 ---

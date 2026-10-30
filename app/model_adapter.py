@@ -777,12 +777,21 @@ def spending_approved() -> bool:
     return os.getenv(META_SPEND_APPROVED_ENV, "") == "1"
 
 
-def _max_tokens(requested: int) -> int:
+def global_completion_ceiling() -> int:
+    """Administrator-controlled completion cap (single reader).
+
+    The budget boundary and the transport both clamp through this
+    value, so reservation and transmission cannot disagree.
+    """
     try:
         ceiling = int(os.getenv(META_MAX_TOKENS_ENV, str(DEFAULT_MAX_TOKENS)))
     except ValueError:
         ceiling = DEFAULT_MAX_TOKENS
-    return max(1, min(requested, ceiling))
+    return max(1, ceiling)
+
+
+def _max_tokens(requested: int) -> int:
+    return max(1, min(requested, global_completion_ceiling()))
 
 
 def build_chat_body(

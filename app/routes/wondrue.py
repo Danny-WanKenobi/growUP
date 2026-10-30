@@ -27,6 +27,7 @@ class CommandRequest(BaseModel):
     approval_token: str | None = None
     use_live: bool = False
     intent: dict[str, Any] | None = None
+    profile: str | None = None
 
 
 def _close_conn(conn: Any, *, rollback: bool) -> None:
@@ -90,6 +91,7 @@ def post_command(body: CommandRequest, request: Request) -> dict[str, Any]:
             intent_override=body.intent,
             conn=conn,
             principal=principal,
+            profile=body.profile,
         )
     except (
         WondrueError,
@@ -133,6 +135,7 @@ class ExtractRequest(BaseModel):
     dossier_id: str | None = None
     dossier_key: str | None = None
     idempotency_key: str | None = None
+    profile: str | None = None
 
 
 @router.post("/wondrue/assist/extract")
@@ -167,12 +170,18 @@ def post_assist_extract(body: ExtractRequest, request: Request) -> dict[str, Any
         "dossier_key": body.dossier_key,
         "idempotency_key": body.idempotency_key,
     }
+    from app.inference_budget import DEFAULT_INFERENCE_PROFILE
+
     ctx = {
         "principal": principal,
         "use_live": body.use_live,
         "mode": body.mode,
         "approval_via_token": False,
         "demo": False,
+        "profile": (
+            body.profile if body.profile is not None
+            else DEFAULT_INFERENCE_PROFILE
+        ),
     }
     # Bounded inputs are validated before any preview is issued; the
     # canonical spec (identities, page digests, association, live
@@ -184,7 +193,27 @@ def post_assist_extract(body: ExtractRequest, request: Request) -> dict[str, Any
     canonical = validated["canonical"]
     approved_spec: dict[str, Any] | None = None
     if body.mode == "ask" and body.approval_token is None:
+        from app.inference_budget import describe_profile_preview
+        from app.wondrue import preview_budget_snapshot
+
         token = APPROVALS.issue("extract_document", {"spec": canonical}, "real")
+        image_count = sum(
+            1 for page in canonical["pages"] if page["mime"] != "text/plain"
+        )
+        preview_conn = None
+        try:
+            preview_conn = get_connection()
+        except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+            preview_conn = None
+        try:
+            inference_block = describe_profile_preview(
+                canonical["profile"], image_count,
+                preview_budget_snapshot(preview_conn),
+            )
+        except (WondrueError, ModelError, ValueError) as exc:
+            raise _command_error(exc)
+        finally:
+            _close_conn(preview_conn, rollback=False)
         return {
             "outcome": "preview",
             "intent": "extract_document",
@@ -201,12 +230,24 @@ def post_assist_extract(body: ExtractRequest, request: Request) -> dict[str, Any
                     "dossier_id": canonical["dossier_id"],
                     "dossier_key": canonical["dossier_key"],
                     "use_live": canonical["use_live"],
+                    "profile": canonical["profile"],
                 },
                 "effects": "unverified claims plus attributed artifact; no dossier changes",
                 "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+                "inference": inference_block,
             },
             "approval_token": token,
             "model": {"mode": "none"},
+            "calls": {
+                "interpretation_performed": False,
+                "interpretation_mode": "none",
+                "execution_max_calls": 1,
+                "whole_request_max_calls": 1,
+                "note": (
+                    "this structured call spends at most one provider "
+                    "call; no interpretation call is involved"
+                ),
+            },
         }
     if body.mode == "ask":
         assert body.approval_token is not None
@@ -311,8 +352,16 @@ input[type=text] {{ width: 70%; }}
 <option value="real">Real-property evaluation</option>
 </select></label>
 <label><input type="checkbox" id="useLive"> Use live Meta inference</label>
+<label>Inference setting:
+<select id="profile">
+<option value="low">Low (1K out / 8K in)</option>
+<option value="medium" selected>Medium (2K out / 16K in)</option>
+<option value="high">High (4K out / 32K in)</option>
+<option value="extra_high">Extra High (8K out / 60K in)</option>
+</select></label>
 <label>Key: <input type="password" id="apiKey" placeholder="X-Wondrue-Key" autocomplete="off"></label>
 </div>
+<div class="row">Larger settings permit more context and completion space; they do not guarantee better results.</div>
 <div class="row">
 <input type="text" id="command" placeholder="e.g. run the synthetic demo">
 <button id="send">Send</button>
@@ -344,12 +393,15 @@ function refreshBanner() {{
 }}
 document.getElementById("target").addEventListener("change", refreshBanner);
 async function send(approvalToken) {{
+  const profile = document.getElementById("profile").value;
+  try {{ localStorage.setItem("wondrue-profile", profile); }} catch (e) {{}}
   const body = {{
     mode: document.getElementById("mode").value,
     text: document.getElementById("command").value,
     target: document.getElementById("target").value,
     use_live: document.getElementById("useLive").checked,
     approval_token: approvalToken || null,
+    profile: profile,
   }};
   const key = document.getElementById("apiKey").value;
   const resp = await fetch("/wondrue/command", {{
@@ -381,6 +433,10 @@ document.getElementById("resetDemo").addEventListener("click", async () => {{
   show(await resp.json());
 }});
 refreshBanner();
+try {{
+  const saved = localStorage.getItem("wondrue-profile");
+  if (saved) {{ document.getElementById("profile").value = saved; }}
+}} catch (e) {{}}
 </script>
 </body>
 </html>

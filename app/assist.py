@@ -343,7 +343,7 @@ def _dispatch(
             dossier_version=dossier_version,
             run_id=run_id,
             package_entry=package_entry,
-            max_tokens=int(ctx.get("max_tokens", 1024) or 1024),
+            profile=ctx.get("profile"),
             use_live=bool(ctx.get("use_live", False)),
             mode=str(ctx.get("mode", "read-only")),
             approved=True,
@@ -371,6 +371,7 @@ def _envelope(
             "deferred": True,
             "deferred_reason": completion.get("deferred_reason", ""),
             "budget": completion.get("budget"),
+            "profile": completion.get("profile"),
         }
     model_result = completion.get("model_result")
     envelope = {
@@ -384,7 +385,12 @@ def _envelope(
         "live": bool(completion.get("live", False)),
         "outcome": completion.get("outcome"),
         "request_id": completion.get("request_id"),
+        "profile": completion.get("profile"),
+        "reported_usage": completion.get("reported_usage"),
+        "billing_unresolved": completion.get("billing_unresolved"),
         "estimated_cost_usd": completion.get("estimated_cost_usd"),
+        "estimate_label": completion.get("estimate_label"),
+        "pricing": completion.get("pricing"),
         "budget": completion.get("budget"),
         "demo_mode": demo_mode_enabled(),
     }
@@ -741,10 +747,16 @@ def validate_extraction_body(
     if dossier_key and run_id is None:
         raise WondrueError("dossier_key requires a run_id")
     use_live = bool(ctx.get("use_live", False))
+    from app.inference_budget import (
+        DEFAULT_INFERENCE_PROFILE,
+        resolve_effective_limits,
+    )
+
+    profile = ctx.get("profile", DEFAULT_INFERENCE_PROFILE)
     try:
-        max_tokens = int(ctx.get("max_tokens", 1024) or 1024)
-    except (TypeError, ValueError) as exc:
-        raise WondrueError("max_tokens must be an integer") from exc
+        limits = resolve_effective_limits(profile, None)
+    except ValueError as exc:
+        raise WondrueError(str(exc)) from exc
     idempotency_key = str(body.get("idempotency_key", "") or "") or None
     canonical = {
         "doc_id": doc_id,
@@ -760,7 +772,9 @@ def validate_extraction_body(
         "dossier_id": str(dossier_id) if dossier_id else None,
         "dossier_key": dossier_key,
         "use_live": use_live,
-        "max_tokens": max_tokens,
+        "profile": limits["profile"],
+        "effective_max_tokens": limits["effective_completion_tokens"],
+        "effective_max_input_bytes": limits["effective_input_bytes"],
         "idempotency_key": idempotency_key,
     }
     return {

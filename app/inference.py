@@ -35,14 +35,19 @@ from app.inference_budget import (
     BudgetConfigError,
     BudgetDeferred,
     BudgetExhausted,
+    DEFAULT_INFERENCE_PROFILE,
     bound_input_units,
-    estimate_cost_usd,
+    estimate_cost_from_usage,
     get_allowance,
-    get_usd_per_1k_tokens,
+    get_pricing_basis,
+    global_input_ceiling_chars,
+    preview_cost_exposure,
+    pricing_basis_record,
     read_budget_in_transaction,
     reconcile_in_transaction,
     release_reservation_in_transaction,
     reserve_in_transaction,
+    resolve_effective_limits,
     usage_by_agent_in_transaction,
 )
 from app.model_adapter import (
@@ -66,9 +71,7 @@ from app.db import DatabaseUnavailableError
 from app.properties_db import get_connection
 
 PROMPT_VERSION = "assist-prompts-1"
-MAX_PROMPT_CHARS_ENV_VAR = "INFERENCE_MAX_PROMPT_CHARS"
 MAX_CONCURRENT_ENV_VAR = "INFERENCE_MAX_CONCURRENT"
-DEFAULT_MAX_PROMPT_CHARS = 60000
 DEFAULT_MAX_CONCURRENT = 4
 
 REPLAYS: dict[str, dict[str, Any]] = {
@@ -119,14 +122,6 @@ def _concurrency_slot() -> threading.BoundedSemaphore:
         _semaphore = threading.BoundedSemaphore(size)
         _semaphore_size = size
     return _semaphore
-
-
-def _max_prompt_chars() -> int:
-    try:
-        value = int(os.getenv(MAX_PROMPT_CHARS_ENV_VAR, str(DEFAULT_MAX_PROMPT_CHARS)))
-    except ValueError:
-        return DEFAULT_MAX_PROMPT_CHARS
-    return max(4096, value)
 
 
 def read_usage_snapshot() -> dict[str, Any]:
@@ -209,7 +204,8 @@ def complete_capability(
     dossier_version: int | None = None,
     run_id: Any = None,
     package_entry: Any = None,
-    max_tokens: int = 1024,
+    profile: str | None = None,
+    max_tokens: int | None = None,
     use_live: bool = False,
     mode: str = "read-only",
     approved: bool = False,
@@ -222,13 +218,26 @@ def complete_capability(
     schema_version: str = "",
     validator: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run one capability completion through the shared budget boundary."""
+    """Run one capability completion through the shared budget boundary.
+
+    ``profile`` selects the centralized throttle profile (default
+    medium); ``max_tokens`` is an optional extra caller cap applied
+    on top of the profile. Profiles never grant permission or
+    enable spending: all grant, approval, spending, concurrency,
+    reserve, and allowance checks still apply.
+    """
     from app.inference_budget import (
         find_by_idempotency_key_in_transaction,
         insert_request_in_transaction,
     )
 
-    request = ModelRequest(purpose, dict(payload), max_tokens, images)
+    try:
+        limits = resolve_effective_limits(profile, max_tokens)
+    except BudgetConfigError as exc:
+        raise ModelError(str(exc)) from exc
+    effective_tokens = limits["effective_completion_tokens"]
+    effective_input = limits["effective_input_bytes"]
+    request = ModelRequest(purpose, dict(payload), effective_tokens, images)
     if use_live and mode == "read-only":
         raise ModelError("read-only mode uses replay explanations, never live calls")
     if not use_live:
@@ -241,32 +250,37 @@ def complete_capability(
             "model_result": result,
             "request_id": f"replay-{uuid4().hex[:12]}",
             "budget": None,
+            "profile": limits,
         }
     if not approved:
         raise ModelError("live inference requires explicit approval")
     if not spending_approved():
         raise ModelError("META_SPEND_APPROVED=1 is not set; live call refused")
     try:
-        get_usd_per_1k_tokens()
+        pricing = get_pricing_basis()
         get_allowance()
     except BudgetConfigError as exc:
         raise ModelError(str(exc)) from exc
-    payload_bytes = len(json.dumps(request.payload, default=str).encode("utf-8"))
-    if payload_bytes > _max_prompt_chars():
-        raise ModelError("inference prompt exceeds configured size bound")
     adapter = MetaLiveAdapter()
     _, model_name = adapter.endpoint_config()  # recorded before spend
     # Sized from the exact transmitted body (same builder transport
     # uses), so budget and transport cannot diverge.
     _, text_bytes = build_chat_body(
-        purpose, request.payload, request.images, model_name, max_tokens
+        purpose, request.payload, request.images, model_name, effective_tokens
     )
+    if text_bytes > effective_input:
+        raise ModelError(
+            f"serialized context is {text_bytes} bytes but the "
+            f"{limits['profile']} profile allows {effective_input}; narrow "
+            "the request or choose a larger setting (no automatic "
+            "upgrade, no retry, no additional call was made)"
+        )
     image_count = len(request.images)
     try:
         bound = bound_input_units(text_bytes, image_count)
     except BudgetConfigError as exc:
         raise ModelError(str(exc)) from exc
-    units = bound + max(1, max_tokens)
+    units = bound + max(1, effective_tokens)
 
     conn = get_connection()
     try:
@@ -282,7 +296,9 @@ def complete_capability(
                     model=model_name,
                     prompt_version=prompt_version,
                     schema_version=schema_version,
-                    max_tokens=max_tokens,
+                    max_tokens=effective_tokens,
+                    profile=limits["profile"],
+                    effective_input_bytes=effective_input,
                     dossier_id=dossier_id,
                     dossier_version=dossier_version,
                     run_id=run_id,
@@ -314,11 +330,17 @@ def complete_capability(
                             "prompt_version": prompt_version,
                             "schema_version": schema_version,
                             "request_digest": request.digest(),
-                            "requested_max_tokens": max_tokens,
+                            "requested_max_tokens": effective_tokens,
                             "bound_input_units": 0,
                             "reserved_units": 0,
                             "live": False,
                             "replay_of": str(found.get("request_id", "")),
+                            "profile_name": limits["profile"],
+                            "effective_max_tokens": effective_tokens,
+                            "effective_max_input_bytes": effective_input,
+                            "pricing_basis": pricing_basis_record(
+                                pricing, "replay: original spend is historical"
+                            ),
                         },
                     )
                     # Zero-spend replay: no new usage is recorded here;
@@ -349,6 +371,7 @@ def complete_capability(
                     "request_id": replay_id,
                     "replay_of": str(found.get("request_id", "")),
                     "budget": None,
+                    "profile": limits,
                 }
             if found is not None:
                 if found.get("outcome") == "reserved":
@@ -377,6 +400,7 @@ def complete_capability(
                 "request_id": f"deferred-{uuid4().hex[:12]}",
                 "budget": exc.snapshot,
                 "deferred_reason": str(exc),
+                "profile": limits,
             }
         except BudgetExhausted as exc:
             conn.rollback()
@@ -399,10 +423,16 @@ def complete_capability(
                     "prompt_version": prompt_version,
                     "schema_version": schema_version,
                     "request_digest": request.digest(),
-                    "requested_max_tokens": max_tokens,
+                    "requested_max_tokens": effective_tokens,
                     "bound_input_units": bound,
                     "reserved_units": units,
                     "live": True,
+                    "profile_name": limits["profile"],
+                    "effective_max_tokens": effective_tokens,
+                    "effective_max_input_bytes": effective_input,
+                    "pricing_basis": pricing_basis_record(
+                        pricing, "pending reported usage"
+                    ),
                 },
             )
             conn.commit()
@@ -432,11 +462,13 @@ def complete_capability(
         raise ModelError(f"{exc}; no spend recorded") from exc
     except (ModelTimeout, ModelUnresolved) as exc:
         usage = dict(getattr(exc, "usage", None) or {})
+        error_cost, error_label = _cost_for_usage(usage, pricing)
         _reconcile_owned(
             request_id,
             outcome="unresolved",
             reported=usage,
-            estimated_cost_usd=_cost_for(usage.get("total_tokens")),
+            estimated_cost_usd=error_cost,
+            pricing_basis=pricing_basis_record(pricing, error_label),
             provider_request_id=str(
                 getattr(exc, "provider_request_id", "") or ""
             ),
@@ -448,11 +480,13 @@ def complete_capability(
         ) from exc
     except ModelFailure as exc:
         failure_usage = dict(getattr(exc, "usage", None) or {})
+        failure_cost, failure_label = _cost_for_usage(failure_usage, pricing)
         _reconcile_owned(
             request_id,
             outcome="failed",
             reported=failure_usage,
-            estimated_cost_usd=_cost_for(failure_usage.get("total_tokens")),
+            estimated_cost_usd=failure_cost,
+            pricing_basis=pricing_basis_record(pricing, failure_label),
             provider_request_id=exc.provider_request_id,
             error=str(exc),
         )
@@ -469,6 +503,7 @@ def complete_capability(
     usage = dict(model_result.usage or {})
     provider_ref = str(usage.pop("provider_request_id", "") or "")
     total = usage.get("total_tokens")
+    cost, cost_label = _cost_for_usage(usage, pricing)
     if validator is not None:
         try:
             cleaned = validator(dict(model_result.result))
@@ -477,7 +512,8 @@ def complete_capability(
                 request_id,
                 outcome="rejected",
                 reported=usage,
-                estimated_cost_usd=_cost_for(total),
+                estimated_cost_usd=cost,
+                pricing_basis=pricing_basis_record(pricing, cost_label),
                 provider_request_id=provider_ref,
                 error=str(exc),
             )
@@ -486,15 +522,14 @@ def complete_capability(
         cleaned = dict(model_result.result)
     if total is None:
         outcome = "unresolved"
-        cost: Any = None
     else:
         outcome = "completed"
-        cost = _cost_for(total)
     _reconcile_owned(
         request_id,
         outcome=outcome,
         reported=usage,
         estimated_cost_usd=cost,
+        pricing_basis=pricing_basis_record(pricing, cost_label),
         provider_request_id=provider_ref,
         result=model_result.result,
     )
@@ -516,6 +551,9 @@ def complete_capability(
             "excess": max(0, int(total) - units) if total is not None else None,
         },
         "estimated_cost_usd": str(cost) if cost is not None else None,
+        "estimate_label": cost_label,
+        "pricing": pricing_basis_record(pricing, cost_label),
+        "profile": limits,
         "provider_request_id": provider_ref,
         "budget": snapshot,
     }
@@ -525,8 +563,9 @@ def _check_replay_identity(found: dict[str, Any], **current: Any) -> None:
     """Bind idempotent reuse to the full original identity.
 
     Principal, scope, capability, model, prompt/schema versions,
-    material limits, dossier context, and the payload digest must all
-    match; anything else is a different operation needing its own key.
+    profile plus effective material limits, dossier context, and the
+    payload digest must all match; anything else is a different
+    operation needing its own key.
     """
     expected = {
         "request_digest": str(found.get("request_digest", "") or ""),
@@ -537,6 +576,10 @@ def _check_replay_identity(found: dict[str, Any], **current: Any) -> None:
         "prompt_version": str(found.get("prompt_version", "") or ""),
         "schema_version": str(found.get("schema_version", "") or ""),
         "max_tokens": int(found.get("requested_max_tokens", 0) or 0),
+        "profile": str(found.get("profile_name", "") or ""),
+        "effective_input_bytes": int(
+            found.get("effective_max_input_bytes", 0) or 0
+        ),
         "dossier_id": str(found.get("dossier_id") or ""),
         "dossier_version": found.get("dossier_version"),
         "run_id": str(found.get("run_id") or ""),
@@ -551,6 +594,10 @@ def _check_replay_identity(found: dict[str, Any], **current: Any) -> None:
         "prompt_version": str(current.get("prompt_version", "") or ""),
         "schema_version": str(current.get("schema_version", "") or ""),
         "max_tokens": int(current.get("max_tokens", 0) or 0),
+        "profile": str(current.get("profile", "") or ""),
+        "effective_input_bytes": int(
+            current.get("effective_input_bytes", 0) or 0
+        ),
         "dossier_id": str(current.get("dossier_id") or ""),
         "dossier_version": current.get("dossier_version"),
         "run_id": str(current.get("run_id") or ""),
@@ -588,13 +635,14 @@ def replay_from_ledger(found: dict[str, Any], stored: dict[str, Any]) -> Any:
     )
 
 
-def _cost_for(total: Any) -> Any:
-    if total is None:
-        return None
+def _cost_for_usage(
+    usage: dict[str, Any], pricing: dict[str, Any]
+) -> tuple[Any, str]:
+    """Planning estimate plus label; unknown usage stays unknown."""
     try:
-        return estimate_cost_usd(int(total))
-    except (BudgetConfigError, ValueError, TypeError):
-        return None
+        return estimate_cost_from_usage(usage, pricing)
+    except (BudgetConfigError, ValueError, TypeError, ArithmeticError):
+        return None, "unknown usage"
 
 
 def _reconcile_owned(request_id: str, **fields: Any) -> None:

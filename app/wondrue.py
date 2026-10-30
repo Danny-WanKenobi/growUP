@@ -66,6 +66,18 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "draft_outreach",
     }
 )
+# Consequential intents that may spend inference budget: approval
+# binds the selected throttle profile for these, and previews
+# disclose consumption.
+INFERENCE_INTENTS = frozenset(
+    {
+        "compare_scenarios",
+        "assist_explain",
+        "analyze_evidence",
+        "explain_economics",
+        "draft_outreach",
+    }
+)
 # Request-safety caps for Wondrue-driven discovery bursts; longer
 # campaigns use repeated bursts or the runner CLI with the same bounds.
 WONDRUE_BURST_MAX_PASSES = 5
@@ -123,6 +135,7 @@ def _capability_context(
     mode: str = "read-only",
     approval_via_token: bool = False,
     demo: bool = False,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     return {
         "principal": principal,
@@ -130,6 +143,7 @@ def _capability_context(
         "mode": mode,
         "approval_via_token": approval_via_token,
         "demo": demo,
+        "profile": profile,
     }
 
 
@@ -139,12 +153,14 @@ def interpret_command(
     use_live: bool,
     mode: str,
     principal: str = "",
+    profile: str | None = None,
 ) -> tuple[dict[str, Any], Any]:
     """Interpret a command into a validated intent plus the model result.
 
     Every interpretation passes through the shared inference boundary:
     live calls spend from the budgeted allowance, replays are labeled
-    and free.
+    and free. The request-scoped throttle profile governs the call;
+    model output can never change it.
     """
     from app.inference import complete_capability
     from app.model_adapter import INTERPRET_SCHEMA_VERSION
@@ -156,6 +172,7 @@ def interpret_command(
             purpose="interpret_command",
             payload={"text": text},
             principal=principal,
+            profile=profile,
             use_live=use_live,
             mode=mode,
             approved=True,
@@ -168,7 +185,22 @@ def interpret_command(
     return validate_intent(completion["result"]), result
 
 
-def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, Any]:
+def _inference_preview(profile: str | None, budget: dict[str, Any] | None) -> dict[str, Any]:
+    from app.inference_budget import BudgetConfigError, describe_profile_preview
+
+    try:
+        return describe_profile_preview(profile, 0, budget)
+    except BudgetConfigError as exc:
+        raise WondrueError(str(exc)) from exc
+
+
+def preview_intent(
+    intent: str,
+    args: dict[str, Any],
+    target: str,
+    profile: str | None = None,
+    budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Concrete preview for ask mode (operations, effects, cost bounds)."""
     if intent == "start_real_evaluation":
         return {
@@ -190,6 +222,7 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"target": target},
             "effects": "read-only comparison; may spend one model call",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            "inference": _inference_preview(profile, budget),
         }
     if intent == "stop":
         return {
@@ -270,6 +303,7 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"run_id": args.get("run_id", ""), "dossier_key": args.get("dossier_key", args.get("key", ""))},
             "effects": "read-only brief plus attributed assistance artifact; no dossier changes",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            "inference": _inference_preview(profile, budget),
         }
     if intent == "analyze_evidence":
         return {
@@ -277,6 +311,7 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"run_id": args.get("run_id", "")},
             "effects": "suggestions only; no verification, authorization, or new research",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            "inference": _inference_preview(profile, budget),
         }
     if intent == "explain_economics":
         return {
@@ -284,6 +319,7 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"run_id": args.get("run_id", ""), "scenario": args.get("scenario", "")},
             "effects": "explanation only; deterministic figures unchanged",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            "inference": _inference_preview(profile, budget),
         }
     if intent == "draft_outreach":
         return {
@@ -291,6 +327,7 @@ def preview_intent(intent: str, args: dict[str, Any], target: str) -> dict[str, 
             "inputs": {"package_entry": args.get("package_entry", ""), "draft_kind": args.get("draft_kind", "")},
             "effects": "draft content only; never sends, publishes, or automates outreach",
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
+            "inference": _inference_preview(profile, budget),
         }
     raise WondrueError(f"no preview for intent {intent!r}")
 
@@ -438,7 +475,10 @@ def _help_text() -> str:
         "bounded discovery, explain stored results and economics, "
         "analyze evidence, draft Uriel copy, or inspect inference "
         "usage. Modes: read-only (inspect only), ask "
-        "(approve before acting), full (act within limits)."
+        "(approve before acting), full (act within limits). "
+        "Each assistance capability spends at most one provider "
+        "call; a natural-language request may spend one more for "
+        "command interpretation."
     )
 
 
@@ -741,6 +781,68 @@ def _execute_real(
     raise WondrueError(f"unknown intent {intent!r}")
 
 
+def inference_approval_spec(
+    profile: str | None, use_live: bool, principal: str
+) -> dict[str, Any]:
+    """Canonical inference spec bound into ask-mode approval tokens.
+
+    Small shared representation (mirroring extraction's canonical
+    spec): live/replay selection, canonical profile, effective
+    material limits, and the authenticated principal. Intent, target,
+    and approved arguments ride in the token entry itself.
+    """
+    from app.inference_budget import resolve_effective_limits
+
+    limits = resolve_effective_limits(profile, None)
+    return {
+        "profile": limits["profile"],
+        "effective_completion_tokens": limits["effective_completion_tokens"],
+        "effective_input_bytes": limits["effective_input_bytes"],
+        "use_live": bool(use_live),
+        "principal": str(principal or ""),
+    }
+
+
+def check_inference_approval_spec(
+    approved: Any, current: dict[str, Any]
+) -> None:
+    """Reject material drift from the approved inference spec.
+
+    Any change — profile, effective limits (including silent
+    administrator-ceiling drift), live selection, or principal —
+    needs a fresh preview before provider execution.
+    """
+    if not isinstance(approved, dict):
+        raise WondrueError(
+            "approval token carries no inference specification; "
+            "preview the command again"
+        )
+    for key in (
+        "profile",
+        "effective_completion_tokens",
+        "effective_input_bytes",
+        "use_live",
+        "principal",
+    ):
+        if approved.get(key) != current.get(key):
+            raise WondrueError(
+                f"approval token does not cover this {key}; "
+                "preview the command again"
+            )
+
+
+def preview_budget_snapshot(conn: Any) -> dict[str, Any] | None:
+    """Best-effort allowance snapshot for previews (None when unreadable)."""
+    if conn is None:
+        return None
+    try:
+        from app.inference_budget import read_budget_in_transaction
+
+        return read_budget_in_transaction(conn)
+    except Exception:
+        return None
+
+
 def handle_command(
     *,
     mode: str,
@@ -753,6 +855,7 @@ def handle_command(
     store: DemoStore | None = None,
     conn: Any = None,
     principal: str = "",
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Interpret (or accept a validated intent) and enforce mode gates.
 
@@ -763,7 +866,17 @@ def handle_command(
     ``max_mode`` is the caller's server-side grant, derived from the
     authenticated credential at the route. The requested mode is capped
     by it: supplying ``"mode": "full"`` confers no authority by itself.
+
+    ``profile`` is the request-scoped throttle profile (default
+    medium), validated server-side before anything else runs. It
+    never grants permission or enables spending.
     """
+    from app.inference_budget import (
+        DEFAULT_INFERENCE_PROFILE,
+        BudgetConfigError,
+        resolve_effective_limits,
+    )
+
     if mode not in MODES:
         raise WondrueError(f"unknown mode: {mode!r}")
     if max_mode not in MODES:
@@ -774,12 +887,20 @@ def handle_command(
         )
     if target not in TARGETS:
         raise WondrueError(f"unknown target: {target!r}")
+    try:
+        resolve_effective_limits(profile, None)
+    except BudgetConfigError as exc:
+        raise WondrueError(str(exc)) from exc
+    effective_profile = (
+        profile if profile is not None else DEFAULT_INFERENCE_PROFILE
+    )
     model_result: Any = None
     if intent_override is not None:
         intent_args = validate_intent(intent_override)
     else:
         intent_args, model_result = interpret_command(
-            text, use_live=use_live, mode=mode, principal=principal
+            text, use_live=use_live, mode=mode, principal=principal,
+            profile=effective_profile,
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
@@ -788,21 +909,64 @@ def handle_command(
         if mode == "read-only":
             raise WondrueError(f"intent {intent!r} is blocked in read-only mode")
         if mode == "ask" and approval_token is None:
-            token = APPROVALS.issue(intent, args, target)
+            issued_args = dict(args)
+            if intent in INFERENCE_INTENTS:
+                try:
+                    issued_args["inference_spec"] = inference_approval_spec(
+                        effective_profile, use_live, principal
+                    )
+                except BudgetConfigError as exc:
+                    raise WondrueError(str(exc)) from exc
+            token = APPROVALS.issue(intent, issued_args, target)
+            interpreted = intent_override is None
+            execution_calls = 1 if intent in INFERENCE_INTENTS else 0
             return {
                 "outcome": "preview",
                 "intent": intent,
                 "target": target,
-                "preview": preview_intent(intent, args, target),
+                "preview": preview_intent(
+                    intent, args, target, effective_profile,
+                    preview_budget_snapshot(conn),
+                ),
                 "approval_token": token,
                 "model": _model_label(model_result),
+                "calls": {
+                    "interpretation_performed": interpreted,
+                    "interpretation_mode": (
+                        _model_label(model_result)["mode"]
+                        if interpreted else "none"
+                    ),
+                    "execution_max_calls": execution_calls,
+                    "whole_request_max_calls": (
+                        (1 if interpreted else 0) + execution_calls
+                    ),
+                    "note": (
+                        "capability execution is at most one provider "
+                        "call; a natural-language request may add one "
+                        "earlier interpretation call"
+                    ),
+                },
             }
         if mode == "ask":
             assert approval_token is not None
             entry = APPROVALS.redeem(approval_token)
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
-            args = entry["args"]
+            args = dict(entry["args"])
+            if intent in INFERENCE_INTENTS:
+                try:
+                    current_spec = inference_approval_spec(
+                        effective_profile, use_live, principal
+                    )
+                except BudgetConfigError as exc:
+                    raise WondrueError(str(exc)) from exc
+                check_inference_approval_spec(
+                    entry["args"].get("inference_spec"), current_spec
+                )
+                # Execute under the approved specification (identical
+                # after the check above); drift needs a fresh preview.
+                effective_profile = str(current_spec["profile"])
+                args.pop("inference_spec", None)
             approval_via_token = True
     ctx = _capability_context(
         principal=principal,
@@ -810,6 +974,7 @@ def handle_command(
         mode=mode,
         approval_via_token=approval_via_token,
         demo=(target == "demo"),
+        profile=effective_profile,
     )
     if intent == "compare_scenarios":
         from app.inference import complete_capability
@@ -822,6 +987,7 @@ def handle_command(
                 purpose="propose_configs",
                 payload={"target": target},
                 principal=principal,
+                profile=effective_profile,
                 use_live=use_live,
                 mode=mode,
                 approved=True,
@@ -842,6 +1008,16 @@ def handle_command(
             "target": target,
             "data": comparison,
             "model": _model_label(proposal),
+            "inference": {
+                "profile": proposal_completion.get("profile"),
+                "reported_usage": proposal_completion.get("reported_usage"),
+                "billing_unresolved": proposal_completion.get("billing_unresolved"),
+                "estimated_cost_usd": proposal_completion.get("estimated_cost_usd"),
+                "estimate_label": proposal_completion.get("estimate_label"),
+                "pricing": proposal_completion.get("pricing"),
+                "live": bool(proposal_completion.get("live", False)),
+                "outcome": proposal_completion.get("outcome"),
+            },
         }
     if target == "demo":
         data = _execute_demo(intent, args, store or DEMO)
