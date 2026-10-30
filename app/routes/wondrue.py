@@ -359,7 +359,7 @@ input[type=text] { width: 70%; }
 <option value="high">High (4K out / 32K in)</option>
 <option value="extra_high">Extra High (8K out / 60K in)</option>
 </select></label>
-<label>Key: <input type="password" id="apiKey" placeholder="X-Wondrue-Key" autocomplete="off"></label>
+<label>Wondrue access key: <input type="password" id="apiKey" placeholder="Wondrue access key (not the Baseten API key)" autocomplete="off"></label>
 </div>
 <div class="row">Larger settings permit more context and completion space; they do not guarantee better results.</div>
 <div class="row">
@@ -368,6 +368,7 @@ input[type=text] { width: 70%; }
 <button id="resetDemo">Reset demo</button>
 </div>
 <div class="row"><span id="modelBadge" class="badge none">model: none</span>
+<span id="profileStatus">Inference setting: Medium</span>
 <span id="approvalBox"></span></div>
 <div id="output" aria-live="polite">Results appear here.</div>
 <script>
@@ -376,7 +377,6 @@ const badge = document.getElementById("modelBadge");
 const banner = document.getElementById("modeBanner");
 const approvalBox = document.getElementById("approvalBox");
 let pendingToken = null;
-function show(obj) { out.textContent = JSON.stringify(obj, null, 2); }
 function setBadge(modeName) {
   badge.textContent = "model: " + modeName;
   badge.className = "badge " + (modeName === "live" ? "live" : modeName === "replay" ? "replay" : "none");
@@ -385,16 +385,64 @@ function refreshBanner() {
   const target = document.getElementById("target").value;
   if (target === "real") {
     banner.className = "banner real";
-    banner.textContent = "REAL-PROPERTY EVALUATION \\u2014 genuine records only";
+    banner.textContent = "REAL-PROPERTY EVALUATION — genuine records only";
   } else {
     banner.className = "banner demo";
     banner.textContent = "__DEMO_LABEL__";
   }
 }
 document.getElementById("target").addEventListener("change", refreshBanner);
+const PROFILES = ["low", "medium", "high", "extra_high"];
+const PROFILE_LABELS = {"low": "Low", "medium": "Medium", "high": "High", "extra_high": "Extra High"};
+function selectedProfile() {
+  const value = document.getElementById("profile").value;
+  return PROFILES.indexOf(value) >= 0 ? value : "medium";
+}
+function refreshProfileStatus() {
+  document.getElementById("profileStatus").textContent =
+    "Inference setting: " + PROFILE_LABELS[selectedProfile()];
+}
+function saveProfile() {
+  try { localStorage.setItem("wondrue-profile", selectedProfile()); } catch (e) {}
+}
+document.getElementById("profile").addEventListener("change", () => {
+  saveProfile();
+  refreshProfileStatus();
+});
+function restoreProfile() {
+  let saved = null;
+  try { saved = localStorage.getItem("wondrue-profile"); } catch (e) {}
+  document.getElementById("profile").value =
+    (saved !== null && PROFILES.indexOf(saved) >= 0) ? saved : "medium";
+  refreshProfileStatus();
+}
+function authExplanation(data, status) {
+  const detail = (data && data.detail) || "";
+  if (detail === "wondrue_not_configured") {
+    return "Wondrue server credentials are not configured (owner setup step: "
+      + "set WONDRUE_OPERATOR_KEY / WONDRUE_READER_KEY in the server "
+      + "environment, then retry). The key field takes your Wondrue access "
+      + "key, not the Baseten API key.";
+  }
+  if (status === 401 || detail === "unauthorized") {
+    return "Missing or invalid Wondrue access key. Enter the operator or "
+      + "reader key in the Wondrue access key field — not the Baseten API "
+      + "key — and retry.";
+  }
+  if (status === 403) {
+    return "Insufficient permission for this action (" + detail + "). The "
+      + "requested mode may exceed your key's grant; check the mode "
+      + "selector or ask the owner for operator access.";
+  }
+  return null;
+}
+function showResponse(data, status) {
+  const note = authExplanation(data, status);
+  out.textContent = (note === null ? "" : note + "\\n\\n") + JSON.stringify(data, null, 2);
+}
 async function send(approvalToken) {
-  const profile = document.getElementById("profile").value;
-  try { localStorage.setItem("wondrue-profile", profile); } catch (e) {}
+  const profile = selectedProfile();
+  saveProfile();
   const body = {
     mode: document.getElementById("mode").value,
     text: document.getElementById("command").value,
@@ -422,7 +470,7 @@ async function send(approvalToken) {
     pendingToken = null;
     approvalBox.innerHTML = "";
   }
-  show(data);
+  showResponse(data, resp.status);
 }
 document.getElementById("send").addEventListener("click", () => send(null));
 document.getElementById("resetDemo").addEventListener("click", async () => {
@@ -430,13 +478,10 @@ document.getElementById("resetDemo").addEventListener("click", async () => {
   const resp = await fetch("/wondrue/demo/reset", {
     method: "POST", headers: {"X-Wondrue-Key": key},
   });
-  show(await resp.json());
+  showResponse(await resp.json(), resp.status);
 });
 refreshBanner();
-try {
-  const saved = localStorage.getItem("wondrue-profile");
-  if (saved) { document.getElementById("profile").value = saved; }
-} catch (e) {}
+restoreProfile();
 </script>
 </body>
 </html>

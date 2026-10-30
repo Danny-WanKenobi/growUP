@@ -351,24 +351,23 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_raphael.py`), and the full coordinator chain
 (`tests/test_funnel_acceptance.py`), and the inference budget
 reserve/reconcile round trip (`tests/test_inference_assist.py`).
-Confirmed deployed checkpoint `5e704b1` (migrations 001–017 on
-both databases): full regression reached **2,096 passed, zero
+Confirmed deployed checkpoint `0ec9e18` (migrations 001–017 on
+both databases): full regression reached **2,097 passed, zero
 failures/skips** (17 deprecation warnings); operational health
 checks passed for both databases, application health/readiness,
-PostgreSQL availability, and the service. Earlier runs had
-surfaced (and corrected) five custody-ordering failures, two
-test-contract mismatches, two route-test ambient-database
-assumptions, and the throttle-profile review gaps. The cockpit
-template fix in this tree is newer than that checkpoint: the
-`GET /wondrue` page previously served unrendered doubled
-CSS/JavaScript braces (backend tests stayed green because they
-never parsed the page); the static template now serves single
-braces with syntax-validated script. It needs a targeted rerun,
-full regression, and health checks — all **pending owner
-execution** — plus owner browser verification, which backend
-tests cannot establish. HTTPS routing setup also remains
-pending: an attempted Nginx change was rolled back, and no
-Nginx change is part of this fix.
+PostgreSQL availability, and the service; HTTPS `/wondrue`
+routing now works. Earlier runs had surfaced (and corrected)
+five custody-ordering failures, two test-contract mismatches,
+two route-test ambient-database assumptions, the
+throttle-profile review gaps, and the unrendered cockpit
+template braces. The cockpit preference/status work in this tree
+is newer than that checkpoint: immediate validated profile
+persistence, a separate inference-setting indicator, plain-text
+banner punctuation, masked Wondrue-access-key labeling, and
+actionable authentication explanations. It needs a targeted
+rerun, full regression, and health checks — all **pending owner
+execution** — plus owner browser acceptance, which scripted
+checks cannot establish. No Nginx change is part of this fix.
 
 ### Synthetic demo fixture
 
@@ -1986,7 +1985,15 @@ live calls. Credentials stay server-side.
 
 Authentication is the `X-Wondrue-Key` header against two enrolled
 credentials: `WONDRUE_OPERATOR_KEY` grants the full mode range,
-`WONDRUE_READER_KEY` grants read-only. The grant is derived
+`WONDRUE_READER_KEY` grants read-only. Enrolling server credentials
+is an owner-operated setup step; with both absent or blank the API
+fails closed with `wondrue_not_configured`, and no default
+credential exists. The cockpit labels its masked field **Wondrue
+access key** — it takes the operator or reader key, never the
+Baseten API key — stores nothing from it, and explains the three
+failure shapes inline above the preserved raw response: server
+credentials not configured, missing/invalid access key, and
+insufficient permission. The grant is derived
 server-side from the credential, and the requested mode is capped by
 it: supplying `"mode": "full"` confers no authority by itself, and an
 unknown grant fails closed. Modes are enforced server-side:
@@ -2075,9 +2082,13 @@ centralized throttle profile (`INFERENCE_PROFILES`, default
 These are application resource profiles, not measures of
 intelligence or accuracy — larger settings permit more context and
 completion space but guarantee nothing about result quality. The
-cockpit offers one selector (request-scoped, with optional
-browser-local memory); API callers pass one validated `profile`
-field. Unknown profiles are rejected server-side before any
+cockpit offers one selector (request-scoped, saved immediately
+to browser-local memory on change; only recognized values are
+restored, anything else falls back to Medium, and the page keeps
+working when storage is unavailable); API callers pass one
+validated `profile` field. A separate `Inference setting`
+indicator names the active profile next to the model badge,
+independent of the synthetic/real target banner. Unknown profiles are rejected server-side before any
 reservation. The complete serialized prompt/directive/framing bytes
 count against the input limit; oversized context is refused with
 guidance (narrow the request or choose a larger setting) — never
@@ -2280,16 +2291,17 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the confirmed `5e704b1` checkpoint passed
-full regression (2,096 passed, zero failures/skips),
+updated) resolve them; the confirmed `0ec9e18` checkpoint passed
+full regression (2,097 passed, zero failures/skips),
 migrations 001–017 on both databases, and operational health
-checks with the throttle-profile work deployed. The cockpit
-template fix in this tree (local suite green: 1,964 passed, 133
-skipped — 131 PG-gated, 2 POSIX-only — 17 warnings, mocked
-providers only; served script syntax-validated with Node, not
-visually accepted) needs a fresh validation cycle (targeted
+checks with the cockpit template fix deployed; HTTPS routing
+works. The cockpit preference/status work in this tree (local
+suite green: 1,964 passed, 133 skipped — 131 PG-gated, 2
+POSIX-only — 17 warnings, mocked providers only; served script
+syntax- and behavior-checked under Node with a DOM stub, not
+browser-accepted) needs a fresh validation cycle (targeted
 rerun, full regression, health checks, owner browser
-verification, live smoke test) — **pending owner execution**.
+acceptance, live smoke test) — **pending owner execution**.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2503,17 +2515,16 @@ event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
 its own owner approval): a targeted rerun, full regression, and
-final database health checks for the cockpit template fix in
-this tree (local suite: 1,964 passed, 133 skips — 131 PG-gated,
-2 POSIX-only — 17 warnings, mocked providers; checkpoint
-`5e704b1` was fully green: 2,096 full with zero
-failures/skips, health checks passed); owner browser
-verification of the cockpit (backend tests cannot establish it);
-a bounded live smoke test proving meaningful Meta runtime
-inference (see Demonstration); and real
+final database health checks for the cockpit preference/status
+work in this tree (local suite: 1,964 passed, 133 skips — 131
+PG-gated, 2 POSIX-only — 17 warnings, mocked providers;
+checkpoint `0ec9e18` was fully green: 2,097 full with zero
+failures/skips, health checks passed, HTTPS routing works);
+owner browser acceptance of the cockpit (scripted checks cannot
+establish it); a bounded live smoke test proving meaningful
+Meta runtime inference (see Demonstration); and real
 discovery runs (the two-hour timed preset is defined but not
-launched). HTTPS routing setup remains pending (the attempted
-Nginx change was rolled back).
+launched).
 
 ## 🎥 Demonstration
 
@@ -2625,9 +2636,9 @@ inference flows are exercised by the acceptance suites
 `tests/test_inference_assist.py`); live-PostgreSQL variants run only
 where `GROWUP_PG_INTEGRATION=1` and migrations 001–017 are applied
 to a disposable database (never the operational records). The
-cockpit template rerun, owner browser verification, the bounded
-live smoke test, and real discovery launches remain unexecuted
-owner-approval gates.
+cockpit preference/status rerun, owner browser acceptance, the
+bounded live smoke test, and real discovery launches remain
+unexecuted owner-approval gates.
 
 ---
 

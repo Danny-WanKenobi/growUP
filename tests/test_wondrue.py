@@ -740,3 +740,8 @@ def test_route_page_serves_valid_template() -> None:
     assert 'id="profile"' in text
     assert 'value="medium" selected' in text
     assert "extra_high" in text
+    assert 'id="profileStatus"' in text
+    assert "Wondrue access key:" in text
+    assert "not the Baseten API key" in text
+    assert "REAL-PROPERTY EVALUATION — genuine records only" in text
+    assert "\\u2014" not in text
