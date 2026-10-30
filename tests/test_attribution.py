@@ -255,7 +255,7 @@ def test_search_category_not_automatically_verified() -> None:
     assert result.verified is None
 
 
-def test_independent_origins_verify_category() -> None:
+def test_distinct_origin_labels_cannot_verify_category() -> None:
     result = evaluate_category_evidence(
         [
             CategoryObservation(value="high_rise", origin="osm_tags"),
@@ -263,8 +263,10 @@ def test_independent_origins_verify_category() -> None:
         ],
         search_category="high_rise",
     )
-    assert result.status is CategoryEvidenceStatus.VERIFIED
-    assert result.verified == "high_rise"
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "high_rise"
+    assert result.observed_origins == ["listing_text", "osm_tags"]
 
 
 def test_other_category_preserved() -> None:
@@ -323,15 +325,169 @@ def test_intake_plus_single_listing_claim_cannot_verify_category() -> None:
     assert result.verified is None
 
 
-def test_two_evidentiary_origins_still_verify_category() -> None:
+def test_two_evidentiary_origins_cannot_verify_category() -> None:
     result = evaluate_category_evidence(
         [
             CategoryObservation(value="warehouse_industrial", origin="provider"),
             CategoryObservation(value="warehouse_industrial", origin="listing_text"),
         ]
     )
-    assert result.status is CategoryEvidenceStatus.VERIFIED
-    assert result.verified == "warehouse_industrial"
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "warehouse_industrial"
+    assert result.observed_origins == ["listing_text", "provider"]
+
+
+def test_same_url_different_origins_cannot_verify_category() -> None:
+    url = "https://listings.example/properties/42"
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="commercial_property", origin="osm_tags", source_url=url),
+            CategoryObservation(value="commercial_property", origin="listing_text", source_url=url),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "commercial_property"
+    assert [o.source_url for o in result.observations] == [url, url]
+
+
+def test_empty_urls_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="high_rise", origin="osm_tags", source_url=""),
+            CategoryObservation(value="high_rise", origin="listing_text", source_url=""),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "high_rise"
+
+
+def test_different_urls_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(
+                value="warehouse_industrial",
+                origin="provider",
+                source_url="https://a.example/listing",
+            ),
+            CategoryObservation(
+                value="warehouse_industrial",
+                origin="listing_text",
+                source_url="https://b.example/other",
+            ),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "warehouse_industrial"
+
+
+def test_same_origin_different_urls_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(
+                value="high_rise", origin="listing_text", source_url="https://a.example/x"
+            ),
+            CategoryObservation(
+                value="high_rise", origin="listing_text", source_url="https://b.example/y"
+            ),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed_origins == ["listing_text"]
+
+
+def test_syndicated_sources_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(
+                value="commercial_property",
+                origin="provider",
+                source_url="https://broker.example/listings/tower",
+            ),
+            CategoryObservation(
+                value="commercial_property",
+                origin="listing_text",
+                source_url="https://mirror.example/broker/tower-repost",
+            ),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "commercial_property"
+
+
+def test_spoofed_trusted_origins_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(
+                value="high_rise", origin="osm_tags", source_url="https://untrusted.example/fake"
+            ),
+            CategoryObservation(
+                value="high_rise", origin="provider", source_url="https://untrusted.example/fake"
+            ),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed_origins == ["osm_tags", "provider"]
+
+
+def test_many_matching_origins_cannot_verify_category() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="high_rise", origin="osm_tags"),
+            CategoryObservation(value="high_rise", origin="listing_text"),
+            CategoryObservation(value="high_rise", origin="provider"),
+            CategoryObservation(value="high_rise", origin="search"),
+            CategoryObservation(value="high_rise", origin="intake"),
+        ],
+        search_category="high_rise",
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "high_rise"
+    assert result.observed_origins == ["intake", "listing_text", "osm_tags", "provider", "search"]
+
+
+def test_historical_alias_combined_with_canonical_stays_observed() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="downtown_commercial", origin="provider"),
+            CategoryObservation(value="commercial_property", origin="listing_text"),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.OBSERVED
+    assert result.verified is None
+    assert result.observed == "commercial_property"
+    assert result.conflicting_values == []
+
+
+def test_adversarial_conflicting_categories_stay_contradictory() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="high_rise", origin="osm_tags"),
+            CategoryObservation(value="commercial_property", origin="listing_text"),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.CONTRADICTORY
+    assert result.verified is None
+    assert result.conflicting_values == ["commercial_property", "high_rise"]
+
+
+def test_adversarial_unrecognized_categories_stay_unknown() -> None:
+    result = evaluate_category_evidence(
+        [
+            CategoryObservation(value="strip_mall", origin="provider"),
+            CategoryObservation(value="parking_lot", origin="listing_text"),
+        ]
+    )
+    assert result.status is CategoryEvidenceStatus.UNKNOWN
+    assert result.verified is None
+    assert result.observed is None
 
 
 def test_county_model_rejects_inconsistent_states() -> None:

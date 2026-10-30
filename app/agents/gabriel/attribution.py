@@ -31,11 +31,10 @@ from app.agents.gabriel.source_identity import evidence_host
 _COUNTY_RE = re.compile(r"^\s*([A-Za-z][A-Za-z .'\-]*?)\s+[Cc]ounty\s*(?:,\s*[A-Za-z]{2}\s*)?$")
 _WS_RE = re.compile(r"\s+")
 
-# Origins whose agreement may verify a category. The search assignment
-# itself ("search") never counts: search intent is not property evidence.
-# Manual intake assertions ("intake") are preserved as observations but
-# never count either: one caller's assertion is not independent evidence.
-_CATEGORY_VERIFY_ORIGINS = frozenset({"osm_tags", "listing_text", "provider"})
+# No caller-supplied origin set can verify a category: origin labels
+# ("osm_tags", "listing_text", "provider", "search", "intake") are
+# preserved as descriptive metadata only. Search intent is not property
+# evidence, and one caller's assertion is not independent evidence.
 
 _KNOWN_CATEGORIES = frozenset(
     {
@@ -289,9 +288,9 @@ def evaluate_category_evidence(
 ) -> CategoryAttribution:
     """Evaluate supplied category observations deterministically (pure).
 
-    The search-target category is recorded as context only. A verified
-    category requires agreement between at least two distinct
-    evidentiary origins; the search assignment itself never counts.
+    The search-target category is recorded as context only. Matching
+    observations cap at OBSERVED: no combination of caller-controlled
+    values, origins, or source URLs can produce VERIFIED.
     """
     parsed = [
         observation if isinstance(observation, CategoryObservation) else CategoryObservation.model_validate(observation)
@@ -311,10 +310,10 @@ def evaluate_category_evidence(
     value = distinct[0]
     result.observed = value
     result.observed_origins = sorted({origin for _, origin in known})
-    verify_origins = {origin for _, origin in known} & _CATEGORY_VERIFY_ORIGINS
-    if len(verify_origins) >= 2:
-        result.status = CategoryEvidenceStatus.VERIFIED
-        result.verified = value
-    else:
-        result.status = CategoryEvidenceStatus.OBSERVED
+    # No label-based verification: origin labels are caller-controlled
+    # and source URLs are not authenticated provenance, so matching
+    # observations can never promote a category to VERIFIED here.
+    # Future VERIFIED promotion requires a separately authorized
+    # trusted-evidence path; it does not exist yet.
+    result.status = CategoryEvidenceStatus.OBSERVED
     return result
