@@ -334,8 +334,15 @@ run lifecycle, atomic audit, and the `identity_review` record
 against disposable PostgreSQL 16 database `growup_mvp_gate`
 (migrations 001–015 applied) produced 11 passed and 5 failed — all
 five custody-ordering failures described under "Shared dossier
-custody" — and the corrected-code rerun (17 live tests, including the
-new concurrent-issuance check) is **pending owner execution**.
+custody". The corrected-code rerun (17 live tests, including the
+new concurrent-issuance check) produced 15 passed and 2 failed:
+custody passed, but two test-contract mismatches surfaced — a
+simulation-counts assertion missing the `response_pct`/`customer_pct`
+fields, and a Wondrue `preview_simulation` call passing a native
+list instead of the required JSON-encoded `package_entries` string.
+Both test contracts are corrected locally; the rerun is **pending
+owner execution**. Full PostgreSQL regression and final database
+health checks have not run.
 
 ### Synthetic demo fixture
 
@@ -2027,7 +2034,11 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the live rerun is pending owner execution.
+updated) resolve them; the owner-run rerun passed the custody
+checks, including the new concurrent-issuance test. That rerun
+reached 15 passed with 2 failed on two unrelated test-contract
+mismatches (corrected locally); the rerun is pending owner
+execution.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2208,7 +2219,10 @@ actual leads and exclusions — actual and simulated stay separate.
 Preview with `preview_simulation` (read-only: cohort, assumptions,
 expected counts), execute with `run_simulation`, inspect with
 `inspect_simulation`; Wondrue also lists eligible packages via
-`inspect_packages`.
+`inspect_packages`. `preview_simulation` and `run_simulation` accept
+an optional `package_entries` allowlist only as a JSON-encoded list
+string — intent args are scalar-only, so native nested lists are
+rejected.
 
 ### DEMO_MODE
 
@@ -2239,7 +2253,9 @@ proceeding blind (see bounded discovery above). Validation gates
 (each needs
 its own owner approval): the corrected-code rerun of the 17 live
 PostgreSQL checks against `growup_mvp_gate` (the first run passed 11
-and failed 5 on custody ordering; DDL↔SQL schema, backlog checkpoint,
+and failed 5 on custody ordering; the second run passed 15 and
+failed 2 on two corrected test-contract mismatches; DDL↔SQL schema,
+backlog checkpoint,
 `identity_review` record, crash recovery, ceiling drain, worker
 exclusion, simulation idempotency/concurrency, archival retrieval,
 concurrent issuance, and the full coordinator chain), a live Meta call

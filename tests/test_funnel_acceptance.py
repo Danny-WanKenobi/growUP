@@ -752,7 +752,7 @@ def test_live_full_chain_coordinator_then_wondrue(
             mode="read-only", max_mode="read-only", text="", target="real",
             intent_override=override(
                 "preview_simulation",
-                {"cohort": "mvp", "package_entries": [entry_id]},
+                {"cohort": "mvp", "package_entries": json.dumps([entry_id])},
             ),
             conn=conn,
         )

@@ -421,6 +421,7 @@ def test_live_simulation_idempotent_conflict_and_separation(
         )
         assert first["counts"] == {
             "cohort": 20, "deliveries": 20, "responses": 2, "customers": 1,
+            "response_pct": 10.0, "customer_pct": 50.0,
         }
         replayed = run_simulation_in_transaction(
             conn, idempotency_key=key, cohort="live", seed="s",

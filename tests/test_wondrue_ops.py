@@ -15,6 +15,7 @@ from app import priscilla as priscilla_module
 from app import uriel as uriel_module
 from app.demo import DemoStore
 from app.main import app
+from app.model_adapter import ModelError
 from app.wondrue import WondrueError, handle_command
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -89,6 +90,65 @@ def test_preview_simulation_is_read_only(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert result["data"]["expected"] == {"cohort": 40}
 
+
+def test_simulation_package_entries_json_string_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previewed: dict[str, Any] = {}
+    executed: dict[str, Any] = {}
+
+    def _preview(conn: Any, **kwargs: Any) -> dict[str, Any]:
+        previewed.update(kwargs)
+        return {"expected": {"cohort": 1}}
+
+    def _run(conn: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.update(kwargs)
+        return {"sim_id": "s1", "replayed": False}
+
+    monkeypatch.setattr(priscilla_module, "preview_simulation_in_transaction", _preview)
+    monkeypatch.setattr(priscilla_module, "run_simulation_in_transaction", _run)
+    entry = str(uuid4())
+    # Valid JSON-string path works through handle_command.
+    preview = handle_command(
+        mode="read-only", max_mode="read-only", text="", target="real",
+        intent_override=_override(
+            "preview_simulation",
+            {"cohort": "c", "package_entries": json.dumps([entry])},
+        ),
+        conn=_CONN,
+    )
+    assert preview["data"]["expected"] == {"cohort": 1}
+    assert previewed["package_entries"] == [entry]
+    ran = handle_command(
+        mode="full", max_mode="full", text="", target="real",
+        intent_override=_override(
+            "run_simulation",
+            {"cohort": "c", "package_entries": json.dumps([entry])},
+        ),
+        conn=_CONN,
+    )
+    assert ran["data"]["simulation"]["sim_id"] == "s1"
+    assert executed["package_entries"] == [entry]
+    # Native nested lists stay rejected by the scalar-arg contract.
+    for intent in ("preview_simulation", "run_simulation"):
+        with pytest.raises(ModelError, match="unsupported type"):
+            handle_command(
+                mode="full", max_mode="full", text="", target="real",
+                intent_override=_override(
+                    intent, {"cohort": "c", "package_entries": [entry]}
+                ),
+                conn=_CONN,
+            )
+    # Malformed JSON strings fail closed at the Wondrue boundary.
+    with pytest.raises(WondrueError, match="not valid JSON"):
+        handle_command(
+            mode="read-only", max_mode="read-only", text="", target="real",
+            intent_override=_override(
+                "preview_simulation",
+                {"cohort": "c", "package_entries": "not-json"},
+            ),
+            conn=_CONN,
+        )
 
 def test_run_simulation_modes_and_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
