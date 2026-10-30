@@ -26,11 +26,10 @@ from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER
+from app.agents.gabriel.source_identity import evidence_host
 
 _COUNTY_RE = re.compile(r"^\s*([A-Za-z][A-Za-z .'\-]*?)\s+[Cc]ounty\s*(?:,\s*[A-Za-z]{2}\s*)?$")
 _WS_RE = re.compile(r"\s+")
-
-_AUTHORITATIVE = "authoritative"
 
 # Origins whose agreement may verify a category. The search assignment
 # itself ("search") never counts: search intent is not property evidence.
@@ -200,26 +199,40 @@ def normalize_category_value(text: str) -> str | None:
 def _independent_groups(claims: list[CountyClaim]) -> list[list[CountyClaim]]:
     """Partition claims into independent corroboration voices.
 
-    Claims sharing a non-empty syndication id describe one underlying
-    report and form one voice however many domains repeat them. Within
-    the remaining claims, one domain is one voice. Deterministic.
+    Grouping is host-primary: every claim from one canonical source
+    host forms one voice, and no caller-supplied label can split it.
+    Host identity always derives through ``evidence_host`` (valid URLs
+    govern; supplied domains are validated, never trusted). Claims
+    without any attributable host form no voice at all. A shared
+    syndication id may merge voices across hosts -- dependence only,
+    never independence. Deterministic.
     """
-    syndicated: dict[str, list[CountyClaim]] = {}
-    rest: list[CountyClaim] = []
+    by_host: dict[str, list[CountyClaim]] = {}
     for claim in claims:
-        if claim.syndication_id:
-            syndicated.setdefault(claim.syndication_id, []).append(claim)
+        host = evidence_host(claim.source_domain, claim.source_url)
+        if host:
+            by_host.setdefault(host, []).append(claim)
+    groups = [
+        sorted(group, key=lambda c: (c.source_url, c.original))
+        for group in by_host.values()
+    ]
+    groups.sort(key=lambda group: (group[0].source_url, group[0].original))
+    merged: list[list[CountyClaim]] = []
+    for group in groups:
+        ids = {claim.syndication_id for claim in group if claim.syndication_id}
+        target = None
+        for candidate in merged:
+            candidate_ids = {claim.syndication_id for claim in candidate if claim.syndication_id}
+            if ids and ids & candidate_ids:
+                target = candidate
+                break
+        if target is None:
+            merged.append(list(group))
         else:
-            rest.append(claim)
-    groups = [sorted(group, key=lambda c: (c.source_domain, c.source_url, c.original)) for group in syndicated.values()]
-    by_domain: dict[str, list[CountyClaim]] = {}
-    for claim in rest:
-        by_domain.setdefault(claim.source_domain, []).append(claim)
-    groups.extend(
-        sorted(group, key=lambda c: (c.source_url, c.original)) for group in by_domain.values()
-    )
-    groups.sort(key=lambda group: (group[0].source_domain, group[0].source_url, group[0].original))
-    return groups
+            target.extend(group)
+    for group in merged:
+        group.sort(key=lambda c: (c.source_url, c.original))
+    return merged
 
 
 def evaluate_county_evidence(
@@ -237,36 +250,18 @@ def evaluate_county_evidence(
     """
     parsed = [claim if isinstance(claim, CountyClaim) else CountyClaim.model_validate(claim) for claim in claims]
     ordered = sorted(parsed, key=lambda c: (c.original, c.source_domain, c.source_url, c.round_no))
-    territory_set = frozenset(territory)
     base = CountyAttribution(claims=ordered, search_county=search_county)
     usable = [claim for claim in ordered if claim.normalized]
     if not usable:
         base.method = "no usable county evidence"
         return base
     distinct = sorted({claim.normalized for claim in usable if claim.normalized})
-    authoritative = [
-        claim
-        for claim in usable
-        if claim.authority == _AUTHORITATIVE and claim.property_match.strip()
-    ]
-    auth_values = sorted({claim.normalized for claim in authoritative if claim.normalized})
-    if len(auth_values) > 1:
-        base.evidence_status = CountyEvidenceStatus.CONTRADICTORY
-        base.conflicting_values = auth_values
-        base.method = "conflicting authoritative determinations preserved"
-        return base
-    if len(auth_values) == 1:
-        others = sorted(value for value in distinct if value != auth_values[0])
-        base.evidence_status = CountyEvidenceStatus.VERIFIED
-        base.value = auth_values[0]
-        base.conflicting_values = others
-        base.method = "authoritative property-specific determination"
-        base.territory = (
-            TerritoryEligibility.WITHIN_TERRITORY
-            if auth_values[0] in territory_set
-            else TerritoryEligibility.OUTSIDE_TERRITORY
-        )
-        return base
+    # No label-based verification: caller-supplied authority strings,
+    # property-match text, government-looking hostnames, and parcel
+    # references are preserved as raw evidence but can never promote a
+    # county to verified. Ordinary claims cap at corroborated. A future
+    # official-record adapter will establish verification through a
+    # separate, explicitly authorized path; it does not exist yet.
     if len(distinct) > 1:
         base.evidence_status = CountyEvidenceStatus.CONTRADICTORY
         base.conflicting_values = distinct

@@ -86,7 +86,7 @@ def test_syndicated_duplicates_not_independent() -> None:
     assert same_domain.evidence_status is CountyEvidenceStatus.OBSERVED
 
 
-def test_authoritative_property_specific_verification() -> None:
+def test_authoritative_label_alone_cannot_verify() -> None:
     result = evaluate_county_evidence(
         [
             _claim(
@@ -97,10 +97,36 @@ def test_authoritative_property_specific_verification() -> None:
             )
         ]
     )
-    assert result.evidence_status is CountyEvidenceStatus.VERIFIED
-    assert result.value == "hunt county"
-    assert result.territory is TerritoryEligibility.WITHIN_TERRITORY
-    assert result.method == "authoritative property-specific determination"
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+    assert result.value is None
+    assert result.territory is TerritoryEligibility.UNKNOWN
+    assert result.claims[0].authority == "authoritative"
+    assert result.claims[0].property_match == "same street address on parcel record"
+
+
+def test_fabricated_match_and_parcel_cannot_verify() -> None:
+    result = evaluate_county_evidence(
+        [
+            _claim(
+                "Hunt County",
+                "dallascounty.example",
+                authority="authoritative",
+                property_match="parcel R-12345-678, 100 Main St",
+                excerpt="Parcel R-12345-678 places 100 Main St in Hunt County",
+            )
+        ]
+    )
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+    assert result.value is None
+    assert result.territory is TerritoryEligibility.UNKNOWN
+
+
+def test_government_looking_host_cannot_verify() -> None:
+    result = evaluate_county_evidence(
+        [_claim("Hunt County", "huntcounty.gov.example")]
+    )
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+    assert result.value is None
 
 
 def test_authority_requires_property_match() -> None:
@@ -132,16 +158,17 @@ def test_authoritative_conflict_preserved_without_winner() -> None:
     assert result.value is None
 
 
-def test_authoritative_verification_keeps_dissent_visible() -> None:
+def test_labeled_claim_conflict_preserved_without_winner() -> None:
     result = evaluate_county_evidence(
         [
             _claim("Hunt County", "a.example", authority="authoritative", property_match="parcel record"),
             _claim("Rockwall County", "b.example"),
         ]
     )
-    assert result.evidence_status is CountyEvidenceStatus.VERIFIED
-    assert result.value == "hunt county"
-    assert result.conflicting_values == ["rockwall county"]
+    assert result.evidence_status is CountyEvidenceStatus.CONTRADICTORY
+    assert result.value is None
+    assert result.conflicting_values == ["hunt county", "rockwall county"]
+    assert len(result.claims) == 2
 
 
 def test_city_name_alone_never_establishes_county() -> None:
@@ -161,8 +188,8 @@ def test_search_county_never_becomes_value() -> None:
     assert observed.search_county == "Hunt County"
 
 
-def test_verified_out_of_territory_stays_verified() -> None:
-    result = evaluate_county_evidence(
+def test_out_of_territory_evidence_preserved_without_verification() -> None:
+    single = evaluate_county_evidence(
         [
             _claim(
                 "Harris County",
@@ -172,9 +199,19 @@ def test_verified_out_of_territory_stays_verified() -> None:
             )
         ]
     )
-    assert result.evidence_status is CountyEvidenceStatus.VERIFIED
-    assert result.value == "harris county"
-    assert result.territory is TerritoryEligibility.OUTSIDE_TERRITORY
+    assert single.evidence_status is CountyEvidenceStatus.OBSERVED
+    assert single.value is None
+    assert single.territory is TerritoryEligibility.UNKNOWN
+    assert single.claims[0].original == "Harris County"
+    corroborated = evaluate_county_evidence(
+        [
+            _claim("Harris County", "a.example"),
+            _claim("Harris County", "b.example"),
+        ]
+    )
+    assert corroborated.evidence_status is CountyEvidenceStatus.CORROBORATED
+    assert corroborated.value is None
+    assert corroborated.territory is TerritoryEligibility.UNKNOWN
 
 
 def test_evaluation_is_order_independent() -> None:
@@ -375,3 +412,133 @@ def test_attribution_details_representation_round_trips() -> None:
     restored_category = CategoryAttribution.model_validate(json.loads(json.dumps(details))["category_attribution"])
     assert restored_county == county
     assert restored_category == category
+
+
+def test_constructor_builds_non_authoritative_claim() -> None:
+    from app.agents.gabriel.claims import build_county_claim
+
+    claim = build_county_claim(
+        mention="Hunt County",
+        source_url="https://News.Example.COM:443/listing?id=7",
+        excerpt="Hunt County treasure",
+        observed_at="2026-10-27T12:00:00+00:00",
+        round_no=2,
+    )
+    assert claim.original == "Hunt County"
+    assert claim.normalized == "hunt county"
+    assert claim.source_url == "https://News.Example.COM:443/listing?id=7"
+    assert claim.source_domain == "news.example.com"
+    assert claim.excerpt == "Hunt County treasure"
+    assert claim.observed_at == "2026-10-27T12:00:00+00:00"
+    assert claim.round_no == 2
+    assert claim.authority == "listing"
+    assert claim.property_match == ""
+    assert claim.syndication_id is None
+
+
+def test_constructor_preserves_malformed_mentions() -> None:
+    from app.agents.gabriel.claims import build_county_claim
+
+    claim = build_county_claim(mention="Frisco", source_url="https://example.com/x")
+    assert claim.original == "Frisco"
+    assert claim.normalized is None
+    result = evaluate_county_evidence([claim])
+    assert result.evidence_status is CountyEvidenceStatus.UNRESOLVED
+
+
+def test_repeated_canonical_urls_form_one_voice() -> None:
+    from app.agents.gabriel.claims import build_county_claim
+
+    first = build_county_claim(
+        mention="Hunt County", source_url="https://example.com/listing"
+    )
+    second = build_county_claim(
+        mention="Hunt County", source_url="https://EXAMPLE.com:443/listing"
+    )
+    result = evaluate_county_evidence([first, second])
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+    assert result.value is None
+
+
+def test_same_host_pages_form_one_voice() -> None:
+    from app.agents.gabriel.claims import build_county_claim
+
+    result = evaluate_county_evidence(
+        [
+            build_county_claim(
+                mention="Hunt County", source_url="https://example.com/a"
+            ),
+            build_county_claim(
+                mention="Hunt County", source_url="https://example.com/b"
+            ),
+        ]
+    )
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+
+
+def test_caller_labels_cannot_split_one_host() -> None:
+    first = _claim("Hunt County", "a.example", syndication_id="voice-1")
+    second = CountyClaim.model_validate(
+        {**first.model_dump(), "syndication_id": "voice-2"}
+    )
+    result = evaluate_county_evidence([first, second])
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+
+
+def test_url_identity_overrides_contradictory_domain_metadata() -> None:
+    first = _claim("Hunt County", "voice-a.example")
+    first = CountyClaim.model_validate(
+        {**first.model_dump(), "source_url": "https://shared.example/a"}
+    )
+    second = _claim("Hunt County", "voice-b.example")
+    second = CountyClaim.model_validate(
+        {**second.model_dump(), "source_url": "https://shared.example/b"}
+    )
+    result = evaluate_county_evidence([first, second])
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+
+
+def test_two_independent_hosts_corroborate_without_verifying() -> None:
+    from app.agents.gabriel.claims import build_county_claim
+
+    result = evaluate_county_evidence(
+        [
+            build_county_claim(
+                mention="Hunt County", source_url="https://a.example/x"
+            ),
+            build_county_claim(
+                mention="Hunt County", source_url="https://b.example/y"
+            ),
+        ]
+    )
+    assert result.evidence_status is CountyEvidenceStatus.CORROBORATED
+    assert result.value is None
+    assert result.territory is TerritoryEligibility.UNKNOWN
+
+
+def test_unhosted_claims_form_no_voice() -> None:
+    result = evaluate_county_evidence(
+        [
+            CountyClaim(original="Hunt County", normalized="hunt county"),
+            CountyClaim(original="Hunt County", normalized="hunt county"),
+        ]
+    )
+    assert result.evidence_status is CountyEvidenceStatus.OBSERVED
+
+
+# Future official-record adapter verification obligations (2A.2a has no
+# trusted producer, so these scenarios are documented, not executed):
+#
+# 1. A genuinely authenticated official parcel record establishes the
+#    county of the matching property (VERIFIED + correct territory).
+# 2. A validated geographic boundary determination establishes the
+#    property's county (VERIFIED + correct territory).
+# 3. Verified evidence outside the twelve-county pilot territory
+#    remains preserved and classified outside_territory.
+# 4. Conflicting authoritative determinations remain visible
+#    (CONTRADICTORY, both preserved, no winner selected).
+# 5. Fabricated records cannot independently authorize verification
+#    (wrong host, address mismatch, county mismatch, or stale record
+#    each independently prevent verification).
+#
+# No production bypass may be added merely to make these executable.
