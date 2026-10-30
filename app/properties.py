@@ -39,7 +39,7 @@ class PropertyCategory(str, Enum):
     the data model but remains outside Gabriel's initial discovery scope."""
 
     HIGH_RISE = "high_rise"
-    DOWNTOWN_COMMERCIAL = "downtown_commercial"
+    COMMERCIAL_PROPERTY = "commercial_property"
     WAREHOUSE_INDUSTRIAL = "warehouse_industrial"
     EMPTY_LOT = "empty_lot"
     OTHER = "other"
@@ -93,6 +93,9 @@ _CATEGORY_ALIASES = {
     "highrise": PropertyCategory.HIGH_RISE,
     "warehouse": PropertyCategory.WAREHOUSE_INDUSTRIAL,
     "industrial": PropertyCategory.WAREHOUSE_INDUSTRIAL,
+    # Retired canonical category (B5-2A.2b-0): historical input only.
+    # Never emitted by canonical search plans or new persistence.
+    "downtown_commercial": PropertyCategory.COMMERCIAL_PROPERTY,
 }
 
 MIN_PROVENANCE_LENGTH = 20
@@ -343,3 +346,9 @@ class Property(PropertyBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+    # Downtown priority attribute (B5-2A.2b-0): False means downtown
+    # priority is NOT established (non-downtown or uncertain). True
+    # requires credible property-specific evidence explicitly locating
+    # the property downtown. Read-model only: callers cannot set it via
+    # PropertyCreate, and positive determination is a deferred step.
+    is_downtown: bool = False

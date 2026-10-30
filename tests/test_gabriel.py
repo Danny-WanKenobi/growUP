@@ -67,7 +67,7 @@ def _listing(**overrides) -> RawListing:
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75202",
-        "category_hint": "downtown_commercial",
+        "category_hint": "commercial_property",
         "latitude": 32.780,
         "longitude": -96.797,
         "retrieved_at": _EVIDENCE_AT,
@@ -100,12 +100,12 @@ def test_build_query_is_bounded() -> None:
     [
         ({"building": "warehouse"}, "warehouse_industrial"),
         ({"building": "industrial"}, "warehouse_industrial"),
-        ({"building": "commercial"}, "downtown_commercial"),
-        ({"building": "retail"}, "downtown_commercial"),
-        ({"building": "office"}, "downtown_commercial"),
+        ({"building": "commercial"}, "commercial_property"),
+        ({"building": "retail"}, "commercial_property"),
+        ({"building": "office"}, "commercial_property"),
         ({"building": "skyscraper"}, "high_rise"),
         ({"building": "apartments", "building:levels": "12"}, "high_rise"),
-        ({"building": "office", "building:levels": "3"}, "downtown_commercial"),
+        ({"building": "office", "building:levels": "3"}, "commercial_property"),
         ({"building": "yes", "height": "30 m"}, "high_rise"),
         ({"building": "residential", "building:levels": "2"}, "other"),
         ({"building": "church"}, "other"),
@@ -141,7 +141,7 @@ def test_parse_elements_assembles_address_and_links() -> None:
     first = listings[0]
     assert first.street_address == "500 Commerce St"
     assert first.city == "Dallas"
-    assert first.category_hint == "downtown_commercial"
+    assert first.category_hint == "commercial_property"
     assert first.element_url == "https://www.openstreetmap.org/way/1001"
     assert first.retrieved_at == _EVIDENCE_AT
     assert listings[1].street_address is None
@@ -179,21 +179,21 @@ def test_search_filters_categories_and_limits(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "post", _post)
     source = OverpassSource()
     # Equal priority: provider order preserved across categories.
-    found = source.search(_BBOX, ["high_rise", "downtown_commercial", "warehouse_industrial"], 10, 15.0)
+    found = source.search(_BBOX, ["high_rise", "commercial_property", "warehouse_industrial"], 10, 15.0)
     assert [item.external_id for item in found] == ["way/1", "way/2", "way/3"]
     assert seen["url"] == "https://overpass-api.de/api/interpreter"
     assert seen["timeout"] == 15.0
     assert "GrowUp" in seen["agent"]
     filtered = source.search(_BBOX, ["warehouse_industrial"], 10, 15.0)
     assert [item.external_id for item in filtered] == ["way/1"]
-    limited = source.search(_BBOX, ["high_rise", "downtown_commercial", "warehouse_industrial"], 2, 15.0)
+    limited = source.search(_BBOX, ["high_rise", "commercial_property", "warehouse_industrial"], 2, 15.0)
     assert len(limited) == 2
 
 
 def test_search_maps_failures_without_fabrication(monkeypatch) -> None:
     httpx = pytest.importorskip("httpx")
     source = OverpassSource()
-    cats = ["downtown_commercial"]
+    cats = ["commercial_property"]
 
     def _timeout(*args, **kwargs):
         raise httpx.TimeoutException("slow")
@@ -228,7 +228,7 @@ def test_normalize_builds_sourced_unknown_record() -> None:
     assert payload is not None
     assert payload["name"] == "Test Commerce Building"
     assert payload["street_address"] == "500 Commerce St"
-    assert payload["category"] == "downtown_commercial"
+    assert payload["category"] == "commercial_property"
     assert "overpass" in payload["provenance"]
     assert "openstreetmap.org/way/1001" in payload["provenance"]
     assert _EVIDENCE_AT in payload["provenance"]
@@ -624,7 +624,7 @@ def test_start_run_returns_result(monkeypatch) -> None:
     expected = DiscoveryRunResult(
         source="overpass",
         retrieved_at=_EVIDENCE_AT,
-        categories=["downtown_commercial"],
+        categories=["commercial_property"],
         limit=3,
         counts=DiscoveryRunCounts(returned=1, created=1),
         created_ids=["id-1"],

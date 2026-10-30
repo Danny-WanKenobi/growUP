@@ -248,7 +248,7 @@ def _listing(
         "city": city,
         "state": "TX",
         "zip_code": "75202",
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "source_name": "Harborline Brokerage Records",
         "listing_url": url,
         "observed_at": "2026-10-20T12:00:00+00:00",

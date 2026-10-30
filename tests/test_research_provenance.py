@@ -831,7 +831,7 @@ def _assigned_listing(price, *, assignment_id, url, query="test query Dallas Cou
     )
 
 
-def _executed(assignment_id, query="test query Dallas County", category="downtown_commercial",
+def _executed(assignment_id, query="test query Dallas County", category="commercial_property",
               county="Dallas County", strategy="listing_search"):
     from app.agents.gabriel.research import ExecutedAssignment
 
@@ -861,9 +861,9 @@ def test_assignment_context_preserved() -> None:
     _assert_verdict_shape(verdict)
     records = verdict.details["associated_assignments"]
     assert records == [
-        {"id": "gsp-aaaa", "query": "query alpha", "category": "downtown_commercial",
+        {"id": "gsp-aaaa", "query": "query alpha", "category": "commercial_property",
          "county": "Dallas County", "strategy": "listing_search"},
-        {"id": "gsp-bbbb", "query": "query beta", "category": "downtown_commercial",
+        {"id": "gsp-bbbb", "query": "query beta", "category": "commercial_property",
          "county": "Dallas County", "strategy": "listing_search"},
     ]
 

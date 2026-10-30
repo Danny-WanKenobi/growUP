@@ -74,7 +74,7 @@ def _intake_body(**overrides):  # type: ignore[no-untyped-def]
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75202",
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "source_name": "Harborline Brokerage Records",
         "listing_url": "https://example.com/listings/review-b",
         "observed_at": "2026-10-20T12:00:00+00:00",
@@ -991,7 +991,7 @@ def _discovery_run_context(run_id: str):  # type: ignore[no-untyped-def]
         result=DiscoveryRunResult(
             source="osm_api",
             retrieved_at="2026-10-20T12:00:00+00:00",
-            categories=["downtown_commercial"],
+            categories=["commercial_property"],
             limit=10,
             run_id=run_id,
         ),

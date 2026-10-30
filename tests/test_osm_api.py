@@ -23,7 +23,7 @@ client = TestClient(app, raise_server_exceptions=False)
 _SMALL_BBOX = BoundingBox(south=32.780, west=-96.797, north=32.781, east=-96.796)
 _SMALL_BBOX_INPUT = {"south": 32.780, "west": -96.797, "north": 32.781, "east": -96.796}
 _EVIDENCE_AT = "2026-10-27T00:00:00+00:00"
-_ALL_CATS = ["high_rise", "downtown_commercial", "warehouse_industrial", "other"]
+_ALL_CATS = ["high_rise", "commercial_property", "warehouse_industrial", "other"]
 
 TEST_INTAKE_KEY = "unit-test-intake-key-only"
 
@@ -108,7 +108,7 @@ def test_parse_reuses_canonical_categories() -> None:
     assert [item.category_hint for item in listings] == [
         "other",  # plain building=yes node
         "warehouse_industrial",
-        "downtown_commercial",
+        "commercial_property",
     ]
 
 
@@ -258,7 +258,7 @@ def test_osm_api_run_through_existing_pipeline(monkeypatch) -> None:
     response = client.post(
         "/discovery/runs",
         json={"source": "osm_api", "bbox": _SMALL_BBOX_INPUT,
-              "categories": ["high_rise", "downtown_commercial", "warehouse_industrial", "other"],
+              "categories": ["high_rise", "commercial_property", "warehouse_industrial", "other"],
               "limit": 10, "timeout_seconds": 10.0},
         headers=_headers(),
     )
@@ -305,7 +305,7 @@ def test_osm_api_run_skips_stored_duplicates(monkeypatch) -> None:
     response = client.post(
         "/discovery/runs",
         json={"source": "osm_api", "bbox": _SMALL_BBOX_INPUT,
-              "categories": ["high_rise", "downtown_commercial", "warehouse_industrial", "other"],
+              "categories": ["high_rise", "commercial_property", "warehouse_industrial", "other"],
               "limit": 10, "timeout_seconds": 10.0},
         headers=_headers(),
     )

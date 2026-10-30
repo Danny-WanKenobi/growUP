@@ -40,7 +40,7 @@ _CATEGORY_VERIFY_ORIGINS = frozenset({"osm_tags", "listing_text", "provider"})
 _KNOWN_CATEGORIES = frozenset(
     {
         "high_rise",
-        "downtown_commercial",
+        "commercial_property",
         "warehouse_industrial",
         "other",
     }
@@ -191,6 +191,11 @@ def normalize_category_value(text: str) -> str | None:
         return None
     cleaned = _WS_RE.sub(" ", text).strip().lower().replace("-", "_").replace("/", "_").replace(" ", "_")
     cleaned = re.sub(r"_+", "_", cleaned)
+    if cleaned == "downtown_commercial":
+        # Retired canonical category (B5-2A.2b-0): map historical
+        # evidence to the replacement for current use. Stored records
+        # keep their original value.
+        cleaned = "commercial_property"
     if cleaned in _KNOWN_CATEGORIES:
         return cleaned
     return None

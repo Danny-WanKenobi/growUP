@@ -246,7 +246,7 @@ def _listing(**overrides) -> RawListing:
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75202",
-        "category_hint": "downtown_commercial",
+        "category_hint": "commercial_property",
         "latitude": 32.780,
         "longitude": -96.797,
         "retrieved_at": _EVIDENCE_AT,
@@ -731,7 +731,7 @@ def test_live_recorded_conflicting_address_requires_review() -> None:
                 "city": "Dallas",
                 "state": "TX",
                 "zip_code": "75202",
-                "category": "downtown_commercial",
+                "category": "commercial_property",
                 "provenance": "synthetic live observation-conflict seed record QA",
             }
         )
@@ -770,7 +770,7 @@ def test_live_recorded_ambiguous_address_requires_review() -> None:
                     "city": "Dallas",
                     "state": "TX",
                     "zip_code": "75202",
-                    "category": "downtown_commercial",
+                    "category": "commercial_property",
                     "provenance": "synthetic live observation-ambiguity seed record QA",
                 }
             )
@@ -806,7 +806,7 @@ def test_live_recorded_address_gain_does_not_modify() -> None:
                 "city": "Dallas",
                 "state": "TX",
                 "zip_code": "75202",
-                "category": "downtown_commercial",
+                "category": "commercial_property",
                 "provenance": "synthetic live observation-gain seed record QA",
             }
         )
@@ -843,7 +843,7 @@ def test_live_address_match_records_no_link() -> None:
                 "city": "Dallas",
                 "state": "TX",
                 "zip_code": "75202",
-                "category": "downtown_commercial",
+                "category": "commercial_property",
                 "provenance": "synthetic live no-link-on-match seed record QA",
             }
         )

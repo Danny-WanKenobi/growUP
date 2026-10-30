@@ -39,7 +39,7 @@ from app.agents.gabriel.geography import (
 )
 from app.properties import PropertyCategory
 
-PLANNER_VERSION = "004B-2.0"
+PLANNER_VERSION = "004B-2.1"
 
 # Absolute budget caps (configurations outside these are rejected).
 MAX_TOTAL_QUERIES = 54  # bounded well within the 12 x 3 x 9 query space
@@ -55,13 +55,13 @@ DEFAULT_MAX_DEPTH = 2
 
 PLANNED_CATEGORIES = (
     PropertyCategory.HIGH_RISE,
-    PropertyCategory.DOWNTOWN_COMMERCIAL,
+    PropertyCategory.COMMERCIAL_PROPERTY,
     PropertyCategory.WAREHOUSE_INDUSTRIAL,
 )
 
 _CATEGORY_PHRASES = {
     PropertyCategory.HIGH_RISE: "high-rise office building",
-    PropertyCategory.DOWNTOWN_COMMERCIAL: "commercial office building",
+    PropertyCategory.COMMERCIAL_PROPERTY: "commercial office building",
     PropertyCategory.WAREHOUSE_INDUSTRIAL: "industrial warehouse property",
 }
 

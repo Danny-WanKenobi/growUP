@@ -87,7 +87,7 @@ def _discovery_result():
     return DiscoveryRunResult(
         source="overpass",
         retrieved_at="2026-10-27T00:00:00+00:00",
-        categories=["downtown_commercial"],
+        categories=["commercial_property"],
         limit=3,
         counts=DiscoveryRunCounts(returned=1, created=1),
         created_ids=["id-1"],

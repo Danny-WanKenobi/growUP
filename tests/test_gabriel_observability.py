@@ -426,7 +426,7 @@ def _intake_body(**overrides):
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75201",
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "source_name": "unit-test listing source QA-009",
         "listing_url": "https://example.com/listing/1",
         "observed_at": "2026-10-20T00:00:00+00:00",

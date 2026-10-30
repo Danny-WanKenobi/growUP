@@ -13,7 +13,7 @@ MAX_BBOX_SPAN_DEGREES = 0.5
 
 DISCOVERY_CATEGORIES = (
     PropertyCategory.HIGH_RISE.value,
-    PropertyCategory.DOWNTOWN_COMMERCIAL.value,
+    PropertyCategory.COMMERCIAL_PROPERTY.value,
     PropertyCategory.WAREHOUSE_INDUSTRIAL.value,
 )
 

@@ -97,7 +97,7 @@ def test_multi_county_municipalities_keep_county_context() -> None:
 def test_planned_categories_unchanged() -> None:
     assert PLANNED_CATEGORIES == (
         PropertyCategory.HIGH_RISE,
-        PropertyCategory.DOWNTOWN_COMMERCIAL,
+        PropertyCategory.COMMERCIAL_PROPERTY,
         PropertyCategory.WAREHOUSE_INDUSTRIAL,
     )
 
@@ -154,7 +154,7 @@ def test_rotation_bounds_cover_twelve_counties() -> None:
         assert {a.county for a in selected} == {ordered_county_names()[rotation]}
         covered.append(selected[0].county)
     assert covered == list(ordered_county_names())
-    assert PLANNER_VERSION == "004B-2.0"
+    assert PLANNER_VERSION == "004B-2.1"
 
 
 def test_request_model_accepts_36_assignment_baseline() -> None:

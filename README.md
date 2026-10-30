@@ -170,13 +170,13 @@ Example (sourced estimate):
 curl -X POST http://127.0.0.1:8001/properties \
   -H 'Content-Type: application/json' \
   -d '{"name":"Example Tower","city":"Dallas","state":"TX",
-       "category":"downtown_commercial",
+       "category":"commercial_property",
        "building_area_sqft_estimated":50000,
        "provenance":"Dallas Central Appraisal District record, account 00001234, retrieved 2026-10-26"}'
 ```
 
 Record fields: `name` (required), `street_address`, `city`, `state`,
-`zip_code`, `category` (required: `high_rise`, `downtown_commercial`,
+`zip_code`, `category` (required: `high_rise`, `commercial_property`,
 `warehouse_industrial`, `empty_lot`, or `other`), `occupancy`, `owner`,
 `provenance`, `field_evidence` (JSON object mapping field names to evidence
 references), `data_status` (server-derived), and `notes`, plus these nullable
@@ -204,6 +204,34 @@ building or space has been vacant. They are separate measurements and are
 never treated as equivalent. A property being listed for sale, being vacant,
 and being financially distressed are three distinct conditions -- one does
 not imply the others, and distress requires supporting evidence.
+
+### Canonical categories and the downtown attribute
+
+The three canonical pilot categories are `high_rise`, `commercial_property`,
+and `warehouse_industrial`. The former `downtown_commercial` category is
+retired: historical records keep their stored value and remain readable, and
+legacy input spelling `downtown_commercial` normalizes to
+`commercial_property` on intake, but new canonical search plans and newly
+persisted records always use `commercial_property`.
+
+Downtown location is a separate property attribute, `is_downtown`
+(default `false`), independent of category. `false` means downtown priority
+is *not established* -- the property may be non-downtown or its downtown
+status may simply be uncertain. `true` requires credible,
+property-specific evidence explicitly locating the property downtown
+(e.g. "located in Downtown Dallas"); "near downtown", "minutes from
+downtown", downtown views, search-query terms, and bare keyword matches are
+insufficient, as is a historical `downtown_commercial` label. Positive
+determination is currently deferred: all records carry `false` until an
+evidence-based determination step lands.
+
+Discovery prioritization follows the Big Game Hunter hierarchy -- high-rise
+first, then downtown commercial property, then (tied) non-downtown
+commercial and warehouse/industrial property, with asset value breaking the
+tie. Hunting priority only orders where Gabriel looks first: it never
+excludes properties, overrides qualification, or starves lower-priority
+pilot cells. The full priority scheduler is deferred; current ranking
+behavior is unchanged.
 
 Note: `empty_lot` is accepted by the data model but remains outside Gabriel's
 initial discovery scope, alongside food forests.
@@ -266,7 +294,7 @@ means "this building exists at this location according to OpenStreetMap,"
 not "this property is listed, vacant, or distressed." Suitability and
 verification belong to Raphael and Onesimus in later milestones.
 
-High-rise, downtown-commercial, and warehouse/industrial candidates are
+High-rise, commercial-property, and warehouse/industrial candidates are
 queried together with no ranking boost, preserving equal priority. OpenStreetMap
 provides no listing prices, vacancy figures, or ownership data, so Gabriel's
 records carry `unknown` status with unknowns as null and a notes entry
@@ -525,7 +553,7 @@ than 3 Brave calls and no automatic recursion.
   {"query": "high-rise office building for sale in Dallas County, TX",
    "category": "high_rise", "strategy": "for_sale", "priority": 1},
   {"query": "commercial office building for sale in Dallas County, TX",
-   "category": "downtown_commercial", "strategy": "for_sale", "priority": 2},
+   "category": "commercial_property", "strategy": "for_sale", "priority": 2},
   {"query": "industrial warehouse property for sale in Dallas County, TX",
    "category": "warehouse_industrial", "strategy": "for_sale", "priority": 3},
   {"query": "high-rise office building for sale in Tarrant County, TX",

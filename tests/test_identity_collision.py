@@ -295,7 +295,7 @@ def _listing(
         "city": city,
         "state": "TX",
         "zip_code": zip_code,
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "source_name": "Harborline Brokerage Records",
         "listing_url": url,
         "observed_at": "2026-10-20T12:00:00+00:00",
@@ -435,7 +435,7 @@ def _seed_legacy_pair() -> tuple[dict[str, Any], dict[str, Any]]:
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75202",
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "provenance": "synthetic legacy seed record for multi-match tests",
     }
     row_a = create_property(
@@ -553,7 +553,7 @@ def test_addressless_url_multiple_properties_needs_review(
         "city": "Dallas",
         "state": "TX",
         "zip_code": "75202",
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "provenance": "synthetic legacy seed record for URL multi-match tests",
     }
     row_a = create_property({**base, "name": "URL Hall A", "street_address": None})
@@ -1156,7 +1156,7 @@ def test_live_multiple_matches_require_review() -> None:
             "city": "Dallas",
             "state": "TX",
             "zip_code": "75202",
-            "category": "downtown_commercial",
+            "category": "commercial_property",
             "provenance": "synthetic live multi-match seed record QA",
         }
         row_a = create_property(

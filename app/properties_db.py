@@ -32,6 +32,7 @@ _PROPERTY_COLUMNS = (
     "state",
     "zip_code",
     "category",
+    "is_downtown",
     "building_area_sqft_estimated",
     "building_area_sqft_verified",
     "vacant_area_sqft_estimated",
@@ -88,6 +89,9 @@ def _property_insert_params(data: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("hypothetical values are not permitted in operational records")
     params = {c: data.get(c) for c in _INSERT_COLUMNS}
     params["id"] = str(uuid4())
+    # Downtown priority is never caller-asserted: no evidence-based
+    # determination producer exists yet, so every insert pins False.
+    params["is_downtown"] = False
     params["data_status"] = derive_data_status(params).value  # server-derived, never trusted
     # Store enum values as plain text.
     category = params.get("category")

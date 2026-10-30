@@ -42,7 +42,7 @@ def test_default_plan_is_sequential_twelve_county() -> None:
         assert {a.county for a in triple} == {triple[0].county}
         assert [a.category for a in triple] == [
             PropertyCategory.HIGH_RISE,
-            PropertyCategory.DOWNTOWN_COMMERCIAL,
+            PropertyCategory.COMMERCIAL_PROPERTY,
             PropertyCategory.WAREHOUSE_INDUSTRIAL,
         ]
     assert all(a.strategy is SearchStrategy.FOR_SALE for a in plan)
@@ -51,7 +51,7 @@ def test_default_plan_is_sequential_twelve_county() -> None:
     assert all(a.county in a.market for a in plan)
     assert all(a.market in a.query for a in plan)
     assert all(a.planner_version == PLANNER_VERSION for a in plan)
-    assert PLANNER_VERSION == "004B-2.0"
+    assert PLANNER_VERSION == "004B-2.1"
     assert [a.priority for a in plan] == list(range(1, 37))
 
 
@@ -133,7 +133,7 @@ def test_configurable_limits_respected() -> None:
         sum(1 for a in plan if a.category is category)
         for category in (
             PropertyCategory.HIGH_RISE,
-            PropertyCategory.DOWNTOWN_COMMERCIAL,
+            PropertyCategory.COMMERCIAL_PROPERTY,
             PropertyCategory.WAREHOUSE_INDUSTRIAL,
         )
     ]
@@ -275,7 +275,7 @@ def test_dallas_first_tarrant_second_in_priority_order() -> None:
     ]
     for category in (
         PropertyCategory.HIGH_RISE,
-        PropertyCategory.DOWNTOWN_COMMERCIAL,
+        PropertyCategory.COMMERCIAL_PROPERTY,
         PropertyCategory.WAREHOUSE_INDUSTRIAL,
     ):
         dallas = [

@@ -116,7 +116,7 @@ def _live_listing(name, url, area=None, street="500 Live Atomic Way", city="Dall
         "city": city,
         "state": "TX",
         "zip_code": zip_code,
-        "category": "downtown_commercial",
+        "category": "commercial_property",
         "source_name": "Harborline Brokerage Records",
         "listing_url": url,
         "observed_at": "2026-10-20T12:00:00+00:00",

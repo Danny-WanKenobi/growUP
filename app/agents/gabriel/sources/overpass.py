@@ -81,7 +81,7 @@ def map_category(tags: dict) -> str:
     ) or (height is not None and height >= _HIGH_RISE_HEIGHT_M):
         return "high_rise"
     if building in _COMMERCIAL_TAGS:
-        return "downtown_commercial"
+        return "commercial_property"
     return "other"
 
 

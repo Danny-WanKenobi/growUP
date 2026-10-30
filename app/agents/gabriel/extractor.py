@@ -343,7 +343,7 @@ def _extract_designator(text: str) -> str | None:
 _CATEGORY_KEYWORDS: tuple[tuple[PropertyCategory, tuple[str, ...]], ...] = (
     (PropertyCategory.HIGH_RISE, ("high-rise", "high rise", "skyscraper", "tower", "stories")),
     (PropertyCategory.WAREHOUSE_INDUSTRIAL, ("warehouse", "industrial", "distribution", "logistics")),
-    (PropertyCategory.DOWNTOWN_COMMERCIAL, ("office", "downtown", "commercial")),
+    (PropertyCategory.COMMERCIAL_PROPERTY, ("office", "commercial")),
 )
 
 

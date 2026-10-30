@@ -141,7 +141,7 @@ def select_assignments(
 
     County-batch contract: the submitted plan must decompose, in
     priority order, into complete triples -- one county and exactly
-    the three planned categories (high-rise, downtown commercial,
+    the three planned categories (high-rise, commercial property,
     warehouse/industrial, in planner order) per triple -- with
     sequential 1..N priorities, unique ids, and the current planner
     version throughout. The whole baseline is validated before
