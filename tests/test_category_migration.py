@@ -258,32 +258,36 @@ def test_live_check_permits_canonical_and_legacy_with_false_default() -> None:
 
     canonical_id = uuid4()
     legacy_id = uuid4()
+    # Rollback isolation: nothing committed, so no cleanup DELETE is needed.
+    # The connection is managed manually because exiting a Psycopg connection
+    # context with an open transaction would commit it.
+    conn = get_connection()
     try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO properties (id, name, category, data_status) "
-                    "VALUES (%(id)s, 'Catmig Canonical', 'commercial_property', 'unknown')",
-                    {"id": canonical_id},
-                )
-                cur.execute(
-                    "INSERT INTO properties (id, name, category, data_status) "
-                    "VALUES (%(id)s, 'Catmig Legacy', 'downtown_commercial', 'unknown')",
-                    {"id": legacy_id},
-                )
-                cur.execute(
-                    "SELECT category, is_downtown FROM properties WHERE id = %(id)s",
-                    {"id": canonical_id},
-                )
-                row = cur.fetchone()
-                assert row["category"] == "commercial_property"
-                assert row["is_downtown"] is False
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO properties (id, name, category, data_status) "
+                "VALUES (%(id)s, 'Catmig Canonical', 'commercial_property', 'unknown')",
+                {"id": canonical_id},
+            )
+            cur.execute(
+                "INSERT INTO properties (id, name, category, data_status) "
+                "VALUES (%(id)s, 'Catmig Legacy', 'downtown_commercial', 'unknown')",
+                {"id": legacy_id},
+            )
+            cur.execute(
+                "SELECT category, is_downtown FROM properties WHERE id = %(id)s",
+                {"id": canonical_id},
+            )
+            row = cur.fetchone()
+            assert row["category"] == "commercial_property"
+            assert row["is_downtown"] is False
+            cur.execute(
+                "SELECT category, is_downtown FROM properties WHERE id = %(id)s",
+                {"id": legacy_id},
+            )
+            legacy = cur.fetchone()
+            assert legacy["category"] == "downtown_commercial"
+            assert legacy["is_downtown"] is False
     finally:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM properties WHERE id IN (%(a)s, %(b)s)",
-                    {"a": canonical_id, "b": legacy_id},
-                )
-            conn.commit()
+        conn.rollback()
+        conn.close()
