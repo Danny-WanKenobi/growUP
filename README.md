@@ -351,19 +351,24 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_raphael.py`), and the full coordinator chain
 (`tests/test_funnel_acceptance.py`), and the inference budget
 reserve/reconcile round trip (`tests/test_inference_assist.py`).
-Confirmed deployed checkpoint `4d9fd72` (migrations 001–016 on
-both databases): targeted PostgreSQL validation reached **20
-passed, zero failures/skips**; full regression reached **2,084
-passed, zero failures/skips** (17 deprecation warnings);
-operational health checks passed for both databases, application
-health/readiness, PostgreSQL availability, and the service.
-Earlier runs had surfaced (and corrected) five custody-ordering
-failures, two test-contract mismatches, and two route-test
-ambient-database assumptions. The throttle-profile work in this
-tree is newer than that checkpoint: it needs migration 017
-applied, a targeted rerun (including the extended 016/017
-round-trip test), full regression, health checks, and the bounded
-live inference smoke test — all **pending owner execution**.
+Confirmed deployed checkpoint `5e704b1` (migrations 001–017 on
+both databases): full regression reached **2,096 passed, zero
+failures/skips** (17 deprecation warnings); operational health
+checks passed for both databases, application health/readiness,
+PostgreSQL availability, and the service. Earlier runs had
+surfaced (and corrected) five custody-ordering failures, two
+test-contract mismatches, two route-test ambient-database
+assumptions, and the throttle-profile review gaps. The cockpit
+template fix in this tree is newer than that checkpoint: the
+`GET /wondrue` page previously served unrendered doubled
+CSS/JavaScript braces (backend tests stayed green because they
+never parsed the page); the static template now serves single
+braces with syntax-validated script. It needs a targeted rerun,
+full regression, and health checks — all **pending owner
+execution** — plus owner browser verification, which backend
+tests cannot establish. HTTPS routing setup also remains
+pending: an attempted Nginx change was rolled back, and no
+Nginx change is part of this fix.
 
 ### Synthetic demo fixture
 
@@ -2275,16 +2280,16 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the confirmed `4d9fd72` checkpoint passed
-targeted validation (20 passed), full regression (2,084 passed,
-zero failures/skips), migration 016 on both databases, and
-operational health checks with the shared-inference work
-deployed. The throttle-profile work in this tree (local suite
-green: 1,963 passed, 133 skipped — 131 PG-gated, 2 POSIX-only —
-17 warnings, mocked providers only) needs a fresh validation
-cycle (migration 017, targeted rerun including the extended
-016/017 round trip and the originals race check, full regression,
-health checks, live smoke test) — **pending owner execution**.
+updated) resolve them; the confirmed `5e704b1` checkpoint passed
+full regression (2,096 passed, zero failures/skips),
+migrations 001–017 on both databases, and operational health
+checks with the throttle-profile work deployed. The cockpit
+template fix in this tree (local suite green: 1,964 passed, 133
+skipped — 131 PG-gated, 2 POSIX-only — 17 warnings, mocked
+providers only; served script syntax-validated with Node, not
+visually accepted) needs a fresh validation cycle (targeted
+rerun, full regression, health checks, owner browser
+verification, live smoke test) — **pending owner execution**.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2497,18 +2502,18 @@ reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
-its own owner approval): migration 017 plus the targeted rerun
-(including the extended 016/017 round trip and the originals
-race check), full regression, and final database health checks
-for the throttle-profile work in this tree (local suite:
-1,963 passed, 133 skips — 131 PG-gated, 2 POSIX-only —
-17 warnings, mocked providers; checkpoint `4d9fd72` was
-fully green: 20 targeted,
-2,084 full with zero failures/skips, health checks passed);
+its own owner approval): a targeted rerun, full regression, and
+final database health checks for the cockpit template fix in
+this tree (local suite: 1,964 passed, 133 skips — 131 PG-gated,
+2 POSIX-only — 17 warnings, mocked providers; checkpoint
+`5e704b1` was fully green: 2,096 full with zero
+failures/skips, health checks passed); owner browser
+verification of the cockpit (backend tests cannot establish it);
 a bounded live smoke test proving meaningful Meta runtime
 inference (see Demonstration); and real
 discovery runs (the two-hour timed preset is defined but not
-launched).
+launched). HTTPS routing setup remains pending (the attempted
+Nginx change was rolled back).
 
 ## 🎥 Demonstration
 
@@ -2619,9 +2624,10 @@ inference flows are exercised by the acceptance suites
 `tests/test_mvp_flow.py`, `tests/test_funnel_acceptance.py`,
 `tests/test_inference_assist.py`); live-PostgreSQL variants run only
 where `GROWUP_PG_INTEGRATION=1` and migrations 001–017 are applied
-to a disposable database (never the operational records). Migration
-017 application, the inference rerun, the bounded live smoke test,
-and real discovery launches remain unexecuted owner-approval gates.
+to a disposable database (never the operational records). The
+cockpit template rerun, owner browser verification, the bounded
+live smoke test, and real discovery launches remain unexecuted
+owner-approval gates.
 
 ---
 

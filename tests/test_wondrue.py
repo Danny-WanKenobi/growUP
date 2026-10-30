@@ -720,3 +720,23 @@ def test_route_page_marks_modes() -> None:
     assert DEMO_LABEL in text
     assert "REAL-PROPERTY EVALUATION" in text
     assert "model: live" in text or "modelBadge" in text
+
+
+def test_route_page_serves_valid_template() -> None:
+    import re
+
+    resp = client.get("/wondrue")
+    assert resp.status_code == 200
+    text = resp.text
+    # No unrendered doubled braces: the page is static, not formatted.
+    assert "{{" not in text
+    assert "}}" not in text
+    assert "__DEMO_LABEL__" not in text
+    script = re.search(r"<script>(.*?)</script>", text, re.S).group(1)
+    assert script.count("{") == script.count("}")
+    assert script.count("(") == script.count(")")
+    style = re.search(r"<style>(.*?)</style>", text, re.S).group(1)
+    assert style.count("{") == style.count("}")
+    assert 'id="profile"' in text
+    assert 'value="medium" selected' in text
+    assert "extra_high" in text

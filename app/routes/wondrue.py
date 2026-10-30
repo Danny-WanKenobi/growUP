@@ -320,20 +320,20 @@ _PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Wondrue &mdash; Grow Up MVP</title>
 <style>
-body {{ font-family: sans-serif; max-width: 72em; margin: 1em auto; padding: 0 1em; }}
-.banner {{ padding: 0.6em 1em; border-radius: 6px; font-weight: bold; margin-bottom: 1em; }}
-.banner.real {{ background: #fde8e8; color: #7a1f1f; border: 2px solid #7a1f1f; }}
-.banner.demo {{ background: #efe6fb; color: #3d2470; border: 2px solid #3d2470; }}
-.row {{ margin: 0.6em 0; }}
-#output {{ white-space: pre-wrap; background: #f4f4f4; padding: 1em; border-radius: 6px;
-  min-height: 12em; font-family: monospace; font-size: 0.9em; }}
-.badge {{ display: inline-block; padding: 0.1em 0.6em; border-radius: 4px; font-size: 0.85em;
-  font-weight: bold; margin-left: 0.5em; }}
-.badge.live {{ background: #16700f; color: #fff; }}
-.badge.replay {{ background: #8a6d00; color: #fff; }}
-.badge.none {{ background: #666; color: #fff; }}
-button {{ margin-right: 0.5em; }}
-input[type=text] {{ width: 70%; }}
+body { font-family: sans-serif; max-width: 72em; margin: 1em auto; padding: 0 1em; }
+.banner { padding: 0.6em 1em; border-radius: 6px; font-weight: bold; margin-bottom: 1em; }
+.banner.real { background: #fde8e8; color: #7a1f1f; border: 2px solid #7a1f1f; }
+.banner.demo { background: #efe6fb; color: #3d2470; border: 2px solid #3d2470; }
+.row { margin: 0.6em 0; }
+#output { white-space: pre-wrap; background: #f4f4f4; padding: 1em; border-radius: 6px;
+  min-height: 12em; font-family: monospace; font-size: 0.9em; }
+.badge { display: inline-block; padding: 0.1em 0.6em; border-radius: 4px; font-size: 0.85em;
+  font-weight: bold; margin-left: 0.5em; }
+.badge.live { background: #16700f; color: #fff; }
+.badge.replay { background: #8a6d00; color: #fff; }
+.badge.none { background: #666; color: #fff; }
+button { margin-right: 0.5em; }
+input[type=text] { width: 70%; }
 </style>
 </head>
 <body>
@@ -376,67 +376,67 @@ const badge = document.getElementById("modelBadge");
 const banner = document.getElementById("modeBanner");
 const approvalBox = document.getElementById("approvalBox");
 let pendingToken = null;
-function show(obj) {{ out.textContent = JSON.stringify(obj, null, 2); }}
-function setBadge(modeName) {{
+function show(obj) { out.textContent = JSON.stringify(obj, null, 2); }
+function setBadge(modeName) {
   badge.textContent = "model: " + modeName;
   badge.className = "badge " + (modeName === "live" ? "live" : modeName === "replay" ? "replay" : "none");
-}}
-function refreshBanner() {{
+}
+function refreshBanner() {
   const target = document.getElementById("target").value;
-  if (target === "real") {{
+  if (target === "real") {
     banner.className = "banner real";
     banner.textContent = "REAL-PROPERTY EVALUATION \\u2014 genuine records only";
-  }} else {{
+  } else {
     banner.className = "banner demo";
     banner.textContent = "__DEMO_LABEL__";
-  }}
-}}
+  }
+}
 document.getElementById("target").addEventListener("change", refreshBanner);
-async function send(approvalToken) {{
+async function send(approvalToken) {
   const profile = document.getElementById("profile").value;
-  try {{ localStorage.setItem("wondrue-profile", profile); }} catch (e) {{}}
-  const body = {{
+  try { localStorage.setItem("wondrue-profile", profile); } catch (e) {}
+  const body = {
     mode: document.getElementById("mode").value,
     text: document.getElementById("command").value,
     target: document.getElementById("target").value,
     use_live: document.getElementById("useLive").checked,
     approval_token: approvalToken || null,
     profile: profile,
-  }};
+  };
   const key = document.getElementById("apiKey").value;
-  const resp = await fetch("/wondrue/command", {{
+  const resp = await fetch("/wondrue/command", {
     method: "POST",
-    headers: {{"Content-Type": "application/json", "X-Wondrue-Key": key}},
+    headers: {"Content-Type": "application/json", "X-Wondrue-Key": key},
     body: JSON.stringify(body),
-  }});
+  });
   const data = await resp.json();
   setBadge((data.model && data.model.mode) || "none");
-  if (data.outcome === "preview") {{
+  if (data.outcome === "preview") {
     pendingToken = data.approval_token;
     approvalBox.innerHTML = "";
     const btn = document.createElement("button");
     btn.textContent = "Approve and execute";
     btn.addEventListener("click", () => send(pendingToken));
     approvalBox.appendChild(btn);
-  }} else {{
+  } else {
     pendingToken = null;
     approvalBox.innerHTML = "";
-  }}
+  }
   show(data);
-}}
+}
 document.getElementById("send").addEventListener("click", () => send(null));
-document.getElementById("resetDemo").addEventListener("click", async () => {{
+document.getElementById("resetDemo").addEventListener("click", async () => {
   const key = document.getElementById("apiKey").value;
-  const resp = await fetch("/wondrue/demo/reset", {{
-    method: "POST", headers: {{"X-Wondrue-Key": key}},
-  }});
+  const resp = await fetch("/wondrue/demo/reset", {
+    method: "POST", headers: {"X-Wondrue-Key": key},
+  });
   show(await resp.json());
-}});
+});
 refreshBanner();
-try {{
+try {
   const saved = localStorage.getItem("wondrue-profile");
-  if (saved) {{ document.getElementById("profile").value = saved; }}
-}} catch (e) {{}}
+  if (saved) { document.getElementById("profile").value = saved; }
+} catch (e) {}
 </script>
 </body>
 </html>
