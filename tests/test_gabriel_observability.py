@@ -32,6 +32,7 @@ from app.observability import (
 
 _RETRIEVED = "2026-10-27T12:00:00+00:00"
 _RANK = 0
+_TEST_RESEARCH_KEY = "unit-test-observability-key-only"
 
 
 def _tap(monkeypatch, module, *names):
@@ -363,9 +364,11 @@ def test_dossier_route_emits_ready_not_sent(monkeypatch, tmp_path) -> None:
         "Meridian Tower at 500 Commerce St, Dallas, TX is listed for sale.",
         url="https://example.com/meridian",
     ))
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
     response = client.post(
         "/discovery/dossiers",
         json={"rounds": [intel.model_dump(mode="json")]},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
     )
     assert response.status_code == 200
     types = [c["event_type"] for c in calls]
@@ -396,7 +399,12 @@ def test_dossier_exclusion_is_permanent_decision(monkeypatch, tmp_path) -> None:
         "The Dallas County site is cleared.",
         url="https://example.com/mill",
     ))
-    response = client.post("/discovery/dossiers", json={"rounds": [intel.model_dump(mode="json")]})
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
+    response = client.post(
+        "/discovery/dossiers",
+        json={"rounds": [intel.model_dump(mode="json")]},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
+    )
     assert response.status_code == 200
     assert not [c for c in calls if c["event_type"] == "gabriel.dossier.excluded"]
     verdicts = [r for r in rows if r["event_type"] == "gabriel.dossier.verdict"]

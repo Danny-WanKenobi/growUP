@@ -22,6 +22,7 @@ from app.agents.gabriel.sources.brave import BraveSearchResult
 
 _RETRIEVED = "2026-10-27T12:00:00+00:00"
 _RANK = 0
+_TEST_RESEARCH_KEY = "unit-test-dossier-key-only"
 
 
 def _result(title, snippet, url="https://example.com/story", published_at=None, retrieved_at=None):
@@ -429,11 +430,13 @@ def test_dossiers_endpoint_returns_dossiers(monkeypatch, tmp_path) -> None:
         raise DatabaseUnavailableError("pg unavailable")
 
     monkeypatch.setattr(_event_store, "get_connection", _pg_down)
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
     client = TestClient(app, raise_server_exceptions=False)
     intel = _intel(_listing())
     response = client.post(
         "/discovery/dossiers",
         json={"rounds": [intel.model_dump(mode="json")]},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
     )
     assert response.status_code == 200
     body = response.json()
@@ -442,13 +445,97 @@ def test_dossiers_endpoint_returns_dossiers(monkeypatch, tmp_path) -> None:
     assert body["ranking"]["ranking_version"] == RANKING_VERSION
 
 
-def test_dossiers_endpoint_rejects_empty_rounds() -> None:
+def test_dossiers_endpoint_rejects_empty_rounds(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
     client = TestClient(app, raise_server_exceptions=False)
-    assert client.post("/discovery/dossiers", json={"rounds": []}).status_code == 422
+    response = client.post(
+        "/discovery/dossiers",
+        json={"rounds": []},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
+    )
+    assert response.status_code == 422
+
+
+def _arm_persistence_bombs(monkeypatch) -> None:
+    import app.routes.discovery as discovery_routes
+
+    def _bomb(*args, **kwargs):
+        raise AssertionError("unreachable behind authentication")
+
+    monkeypatch.setattr(discovery_routes, "build_dossiers", _bomb)
+    monkeypatch.setattr(discovery_routes, "build_dossier_verdicts", _bomb)
+    monkeypatch.setattr(discovery_routes, "persist_verdicts", _bomb)
+
+
+def test_dossiers_endpoint_rejects_missing_key(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
+    _arm_persistence_bombs(monkeypatch)
+    client = TestClient(app, raise_server_exceptions=False)
+    intel = _intel(_listing())
+    response = client.post(
+        "/discovery/dossiers",
+        json={"rounds": [intel.model_dump(mode="json")]},
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "unauthorized"}
+    assert _TEST_RESEARCH_KEY not in response.text
+
+
+def test_dossiers_endpoint_rejects_wrong_key(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
+    _arm_persistence_bombs(monkeypatch)
+    client = TestClient(app, raise_server_exceptions=False)
+    intel = _intel(_listing())
+    response = client.post(
+        "/discovery/dossiers",
+        json={"rounds": [intel.model_dump(mode="json")]},
+        headers={"X-Research-Key": "wrong-key"},
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "unauthorized"}
+    assert "wrong-key" not in response.text
+
+
+def test_dossiers_auth_precedes_body_validation(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setenv("RESEARCH_API_KEY", _TEST_RESEARCH_KEY)
+    _arm_persistence_bombs(monkeypatch)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/discovery/dossiers", json={"rounds": []})
+    assert response.status_code == 401
+
+
+def test_dossiers_endpoint_key_unconfigured(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.delenv("RESEARCH_API_KEY", raising=False)
+    _arm_persistence_bombs(monkeypatch)
+    client = TestClient(app, raise_server_exceptions=False)
+    intel = _intel(_listing())
+    response = client.post(
+        "/discovery/dossiers",
+        json={"rounds": [intel.model_dump(mode="json")]},
+        headers={"X-Research-Key": _TEST_RESEARCH_KEY},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "research_not_configured"}
 
 
 def test_dossier_deterministic() -> None:

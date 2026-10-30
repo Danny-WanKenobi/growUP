@@ -270,7 +270,10 @@ def start_investigation(
 
 
 @router.post("/discovery/dossiers", response_model=DossierSet)
-def create_dossiers(body: DossierRequest) -> DossierSet:
+def create_dossiers(
+    body: DossierRequest,
+    _: None = Depends(require_research_key),
+) -> DossierSet:
     """Consolidate multi-round intelligence into property dossiers.
 
     Ranking reassessment reuses the existing ranking engine. Each
