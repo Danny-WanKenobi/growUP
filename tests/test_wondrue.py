@@ -436,13 +436,21 @@ def test_route_demo_reset() -> None:
 
 
 def test_route_real_start_without_database_is_503(monkeypatch) -> None:
+    import app.routes.wondrue as wondrue_routes
     from app.db import DatabaseUnavailableError
 
     monkeypatch.setenv("MVP_WORKFLOW_ENABLED", "1")
 
+    def _unavailable() -> Any:
+        raise DatabaseUnavailableError("database_unavailable")
+
     def _boom(**kwargs: Any) -> Any:
         raise DatabaseUnavailableError("database_unavailable")
 
+    # Simulate database unavailability at the route's own connection
+    # boundary: without this, ambient PG configuration hands the
+    # command a real connection and a different execution path.
+    monkeypatch.setattr(wondrue_routes, "get_connection", _unavailable)
     monkeypatch.setattr(
         "app.observability.transactions.run_consequential_transaction", _boom
     )
@@ -458,6 +466,7 @@ def test_route_real_start_without_database_is_503(monkeypatch) -> None:
         },
     )
     assert resp.status_code == 503
+    assert resp.json()["detail"] == "database_unavailable"
 
 
 class _RouteConn:

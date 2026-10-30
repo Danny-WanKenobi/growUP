@@ -330,19 +330,24 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_workflow_store.py`), pilot round-trip
 (`tests/test_pilot.py`), Raphael authorize idempotency
 (`tests/test_raphael.py`), and the full coordinator chain
-(`tests/test_funnel_acceptance.py`). The first owner-run execution
-against disposable PostgreSQL 16 database `growup_mvp_gate`
-(migrations 001–015 applied) produced 11 passed and 5 failed — all
-five custody-ordering failures described under "Shared dossier
-custody". The corrected-code rerun (17 live tests, including the
-new concurrent-issuance check) produced 15 passed and 2 failed:
-custody passed, but two test-contract mismatches surfaced — a
-simulation-counts assertion missing the `response_pct`/`customer_pct`
-fields, and a Wondrue `preview_simulation` call passing a native
-list instead of the required JSON-encoded `package_entries` string.
-Both test contracts are corrected locally; the rerun is **pending
-owner execution**. Full PostgreSQL regression and final database
-health checks have not run.
+(`tests/test_funnel_acceptance.py`). Owner-run execution against
+disposable PostgreSQL 16 database `growup_mvp_gate` (migrations
+001–015 applied) progressed across three runs: the first produced
+11 passed and 5 failed — all five custody-ordering failures
+described under "Shared dossier custody"; the corrected-code rerun
+(17 live tests, including the new concurrent-issuance check)
+produced 15 passed and 2 failed on two test-contract mismatches
+(a simulation-counts assertion missing the
+`response_pct`/`customer_pct` fields, and a Wondrue
+`preview_simulation` call passing a native list instead of the
+required JSON-encoded `package_entries` string); the second
+corrected-code rerun reached **17 passed, zero failures/skips**
+on targeted validation. Full PostgreSQL regression then produced
+2,037 passed and 2 failed (17 warnings): two Wondrue route tests
+assumed no ambient database configuration and diverged once a real
+connection was available. Both route tests are corrected locally
+to isolate the route's connection boundary; the rerun is **pending
+owner execution**. Final database health checks have not run.
 
 ### Synthetic demo fixture
 
@@ -2034,10 +2039,11 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the owner-run rerun passed the custody
-checks, including the new concurrent-issuance test. That rerun
-reached 15 passed with 2 failed on two unrelated test-contract
-mismatches (corrected locally); the rerun is pending owner
+updated) resolve them; subsequent owner runs confirmed the
+custody fixes, including the new concurrent-issuance test, and
+targeted validation reached 17 passed. The remaining failures
+moved to two Wondrue route tests with ambient-database
+assumptions (corrected locally); the rerun is pending owner
 execution.
 
 Snapshots older than 90 days move to the archive table via
@@ -2251,14 +2257,15 @@ reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
-its own owner approval): the corrected-code rerun of the 17 live
-PostgreSQL checks against `growup_mvp_gate` (the first run passed 11
-and failed 5 on custody ordering; the second run passed 15 and
-failed 2 on two corrected test-contract mismatches; DDL↔SQL schema,
-backlog checkpoint,
+its own owner approval): the corrected-code rerun of full
+PostgreSQL regression against `growup_mvp_gate` (targeted checks
+reached 17 passed; the full run produced 2,037 passed and 2 failed
+with 17 warnings on two Wondrue route tests with ambient-database
+assumptions, corrected locally; DDL↔SQL schema, backlog checkpoint,
 `identity_review` record, crash recovery, ceiling drain, worker
 exclusion, simulation idempotency/concurrency, archival retrieval,
-concurrent issuance, and the full coordinator chain), a live Meta call
+concurrent issuance, and the full coordinator chain), final database
+health checks (not yet executed), a live Meta call
 proving meaningful runtime inference, and real discovery runs
 (the two-hour timed preset is defined but not launched).
 

@@ -302,10 +302,39 @@ def test_new_intents_are_operational_only() -> None:
             )
 
 
+class _RouteConn:
+    """Route-owned connection double supporting commit/close lifecycle."""
+
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+        self.closes = 0
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+    def close(self) -> None:
+        self.closes += 1
+
+
 def test_route_reader_can_inspect_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.routes.wondrue as wondrue_routes
+
+    seen: dict[str, Any] = {}
+    conn = _RouteConn()
+
+    def _list_packages(package_conn: Any, limit: int = 50) -> list[dict[str, Any]]:
+        seen["conn"] = package_conn
+        seen["limit"] = limit
+        return []
+
     monkeypatch.setattr(
-        uriel_module, "list_packages_in_transaction", lambda conn, limit=50: []
+        uriel_module, "list_packages_in_transaction", _list_packages
     )
+    monkeypatch.setattr(wondrue_routes, "get_connection", lambda: conn)
     resp = client.post(
         "/wondrue/command",
         headers=_READER_HEADERS,
@@ -314,9 +343,12 @@ def test_route_reader_can_inspect_packages(monkeypatch: pytest.MonkeyPatch) -> N
             "intent": {"intent": "inspect_packages", "args": {}},
         },
     )
-    # No database configured locally: the read reports unavailability
-    # rather than executing, which still proves grant/mode gating passed.
-    assert resp.status_code == 503
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["outcome"] == "result"
+    assert body["data"] == {"packages": []}
+    assert seen["conn"] is conn
+    assert (conn.commits, conn.rollbacks, conn.closes) == (1, 0, 1)
 
 def test_start_discovery_acquire_operator_full_approved(
     monkeypatch: pytest.MonkeyPatch,
