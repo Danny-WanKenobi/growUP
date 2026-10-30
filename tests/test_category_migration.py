@@ -256,8 +256,8 @@ def test_migration_011_is_additive_and_non_rewriting() -> None:
 def test_live_check_permits_canonical_and_legacy_with_false_default() -> None:
     from app.properties_db import get_connection
 
-    canonical_id = f"catmig-{uuid4().hex}"
-    legacy_id = f"catmig-{uuid4().hex}"
+    canonical_id = uuid4()
+    legacy_id = uuid4()
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
