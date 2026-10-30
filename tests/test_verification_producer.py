@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
+from uuid import uuid4
+
+import pytest
+
 from app.agents.gabriel.extractor import (
     ResearchIntelligence,
     extract_research_intelligence,
@@ -312,3 +318,196 @@ def test_research_run_annotates_compatibly(monkeypatch) -> None:
     ]
     # Response serialization round-trips with the additive annotation.
     assert "category_verification" in result.model_dump_json()
+
+
+# --- Phase 2B: verification persistence in research verdicts ---
+
+_LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
+needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
+
+
+def _annotated():
+    from app.agents.gabriel.producers import build_candidate_verifications
+
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}."),
+        _result("https://broker-b.example/y", "Meridian Center",
+               f"Office building for sale at {_ADDR}.", rank=2),
+    )
+    annotations = build_candidate_verifications(ranking, intel)
+    for candidate in ranking.candidates:
+        candidate.category_verification = annotations[candidate.key]
+    return intel, ranking
+
+
+def test_verdict_carries_not_verified() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _annotated()
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    stored = verdict.details["category_verification"]
+    assert stored["outcome"] == "not_verified"
+    assert stored["pathway"] is None
+    assert isinstance(stored["reasons"], list) and stored["reasons"]
+    assert stored["rationale"]
+    assert isinstance(stored["limitations"], list)
+    assert [v["url"] for v in stored["voices"]] == [
+        "https://broker-a.example/x", "https://broker-b.example/y"]
+    assert [v["host"] for v in stored["voices"]] == [
+        "broker-a.example", "broker-b.example"]
+
+
+def test_verdict_details_deterministic_json() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _annotated()
+    first = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    second = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    assert json.dumps(first[0].details, sort_keys=True) == json.dumps(
+        second[0].details, sort_keys=True)
+
+
+def test_missing_annotation_preserves_details() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}.")
+    )
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    assert "category_verification" not in verdict.details
+    for key in ("decision", "reason_codes", "candidate_ref", "observed",
+                "inferred", "result", "mutation_status"):
+        assert key in verdict.details
+
+
+def test_screened_verdicts_carry_no_verification() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Unrelated story",
+               "Downtown tower for sale.")
+    )
+    assert ranking.candidates == [] and len(ranking.screened_leads) == 1
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    assert verdict.details["decision"] == "SCREENED"
+    assert "category_verification" not in verdict.details
+
+
+def test_dossier_verdicts_carry_no_verification() -> None:
+    from app.agents.gabriel.dossier import DossierRequest, build_dossiers
+    from app.agents.gabriel.provenance import build_dossier_verdicts
+
+    intel, _ = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}.")
+    )
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    items = [item for intel_round in [intel] for item in intel_round.results]
+    verdicts = build_dossier_verdicts(
+        run_id="run-2b", correlation_id="", dossier_set=dossier_set, items=items)
+    assert verdicts
+    assert all("category_verification" not in v.details for v in verdicts)
+
+
+def test_ranking_unchanged_by_verdict_build() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _annotated()
+    before = ranking.model_dump(mode="json")
+    build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    assert ranking.model_dump(mode="json") == before
+
+
+def test_persisted_details_show_empty_registry() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _annotated()
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    stored = verdict.details["category_verification"]
+    assert stored["outcome"] == "not_verified"
+    assert "registry_unconfigured" in stored["reasons"]
+    assert "identity_unresolved" in stored["reasons"]
+
+
+def test_persisted_details_show_contradiction() -> None:
+    from app.agents.gabriel.producers import build_candidate_verifications
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Tower",
+               f"Twelve-story office tower for sale at {_ADDR}."),
+        _result("https://broker-b.example/y", "Meridian Warehouse",
+               f"Warehouse for sale at {_ADDR}.", rank=2),
+    )
+    annotations = build_candidate_verifications(ranking, intel)
+    for candidate in ranking.candidates:
+        candidate.category_verification = annotations[candidate.key]
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    assert "material_contradiction" in verdict.details["category_verification"]["reasons"]
+
+
+def test_persisted_details_contain_no_fabricated_facts() -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+
+    intel, ranking = _annotated()
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    for voice in verdict.details["category_verification"]["voices"]:
+        assert voice["publisher"] is None
+        assert voice["originating_id"] is None
+        assert voice["source_class"] == "unvetted"
+
+
+def test_outbox_round_trip_preserves_verification(tmp_path) -> None:
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.observability.outbox import Outbox
+
+    intel, ranking = _annotated()
+    (verdict,) = build_research_verdicts(
+        run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
+    box = Outbox(tmp_path / "outbox.sqlite3")
+    box.initialize()
+    box.accept_all([verdict])
+    stored = box.get(verdict.event_id)
+    assert stored is not None
+    assert stored.details["category_verification"]["outcome"] == "not_verified"
+    assert stored.details["category_verification"]["rationale"] == (
+        verdict.details["category_verification"]["rationale"])
+
+
+@needs_live_pg
+def test_live_verdict_persists_category_verification() -> None:
+    import app.properties_db as pdb
+    from app.agents.gabriel.provenance import build_research_verdicts
+    from app.observability.store import insert_event, query_events
+
+    intel, ranking = _annotated()
+    run_id = f"live-verify-2b-{uuid4().hex}"
+    verdicts = build_research_verdicts(
+        run_id=run_id, correlation_id="", ranking=ranking, intel=intel)
+    assert len(verdicts) == 1
+    try:
+        insert_event(verdicts[0])
+        events = query_events(
+            run_id=run_id, event_type="gabriel.research.candidate_decision")
+        assert len(events) == 1
+        stored = events[0].details["category_verification"]
+        assert stored["outcome"] == "not_verified"
+        assert "registry_unconfigured" in stored["reasons"]
+        assert stored["rationale"]
+    finally:
+        with pdb.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM agent_events WHERE run_id = %(run_id)s",
+                            {"run_id": run_id})
+            conn.commit()

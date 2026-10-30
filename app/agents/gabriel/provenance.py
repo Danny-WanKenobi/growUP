@@ -26,6 +26,7 @@ from app.agents.gabriel.extractor import (
     identity_disputes,
 )
 from app.agents.gabriel.ranking import PropertyRanking, RankedCandidate
+from app.agents.gabriel.verification import CategoryVerification
 from app.observability import (
     BatchEmitOutcome,
     DurabilityError,
@@ -213,6 +214,7 @@ def _build_event(
     started: float | None,
     exclusions: list | None = None,
     associated_assignments: list[dict] | None = None,
+    verification: CategoryVerification | None = None,
 ) -> AgentEvent:
     kept = unresolved[:_MAX_UNRESOLVED]
     details: dict = {
@@ -233,6 +235,11 @@ def _build_event(
         "ranking_context": ranking_context,
         "mutation_status": MUTATION_NOT_ATTEMPTED,
     }
+    if verification is not None:
+        # Additive Phase 2B annotation: the candidate's category
+        # verification verdict as evaluated (deterministic JSON).
+        # Absent annotations leave existing details untouched.
+        details["category_verification"] = verification.model_dump(mode="json")
     if started is not None:
         details["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
     _require_details_within_limit(details, event_type)
@@ -334,6 +341,7 @@ def build_research_verdicts(
             started=started,
             exclusions=list(candidate.exclusions),
             associated_assignments=_associated_assignments(members, items, executed),
+            verification=candidate.category_verification,
         ))
     screened_base = len(ranking.candidates)
     for offset, lead in enumerate(ranking.screened_leads):
