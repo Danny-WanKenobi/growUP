@@ -377,7 +377,7 @@ def test_n_repeated_source_single_candidate() -> None:
     distress_factor = next(f for f in candidate.opportunity.factors if f.factor == "distress")
     assert distress_factor.score == 1.0  # signal counted once
     evidence_factor = next(f for f in candidate.opportunity.factors if f.factor == "evidence")
-    assert "no independent corroboration" in evidence_factor.explanation
+    assert "no multi-host corroboration" in evidence_factor.explanation
 
 
 def test_n_distinct_domains_corroborate() -> None:

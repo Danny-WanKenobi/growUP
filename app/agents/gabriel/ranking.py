@@ -17,7 +17,7 @@ Pipeline: planner assignments -> Brave results -> extractor intelligence
 Quality control screens out only obviously invalid leads (demolished,
 unsuitable structure, incompatible use, unidentifiable results) with
 auditable rules. Everything uncertain stays eligible as RESEARCH_REQUIRED
-with explicit next steps for Raphael, Onesimus, and Priscilla -- whose
+with explicit next steps for Raphael, Onesimus, and Michael -- whose
 conclusions Gabriel never fabricates.
 
 Geography (twelve-county expansion): the operating area is Dallas County
@@ -494,7 +494,7 @@ def _next_steps(candidate: RankedCandidate, evidence: _CandidateEvidence) -> lis
     if "proposed" in evidence.structure:
         steps.append("Raphael: confirm the structure is constructed, not merely proposed")
     steps.append("Onesimus: assess Kratky conversion suitability once identity is confirmed")
-    steps.append("Priscilla: evaluate acquisition economics once pricing evidence exists")
+    steps.append("Michael: evaluate financial feasibility once pricing evidence exists")
     return steps
 
 
@@ -644,7 +644,7 @@ def _score_evidence(evidence: _CandidateEvidence) -> FactorAssessment:
         total += 0.4
         parts.append(f"{len(evidence.domains)} distinct source domains (repeat appearances are not corroboration)")
     else:
-        parts.append("single source domain; no independent corroboration")
+        parts.append("single source domain; no multi-host corroboration")
     total += 0.2
     parts.append("no contradictions detected")
     assessment.score = round(min(1.0, total), 3)

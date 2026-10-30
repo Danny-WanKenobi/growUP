@@ -70,6 +70,7 @@ def test_independent_corroboration() -> None:
     )
     assert result.evidence_status is CountyEvidenceStatus.CORROBORATED
     assert result.value is None  # corroborated is not verified
+    assert result.method == "multi-host corroborating claims"
 
 
 def test_syndicated_duplicates_not_independent() -> None:

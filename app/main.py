@@ -17,6 +17,7 @@ from app.routes.health import router as health_router
 from app.routes.identity_reviews import router as identity_reviews_router
 from app.routes.properties import router as properties_router
 from app.routes.readiness import router as readiness_router
+from app.routes.wondrue import router as wondrue_router
 
 
 def create_app() -> FastAPI:
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     application.include_router(identity_reviews_router)
     application.include_router(readiness_router)
     application.include_router(properties_router)
+    application.include_router(wondrue_router)
     application.add_middleware(ReviewNoStoreMiddleware)
     return application
 

@@ -603,3 +603,119 @@ def test_registry_lookup_canonicalizes() -> None:
     assert registry.lookup("HTTPS://BROKER-A.EXAMPLE:443/x") is not None
     assert registry.lookup("https://broker-a.example./x") is not None
     assert registry.source_class_of("HTTPS://BROKER-A.EXAMPLE:443/x") is SourceClass.VETTED_COMMERCIAL
+
+
+def test_mixed_order_facts_keep_their_own_source_credibility() -> None:
+    # Input order is deliberately hostile to alphabetical host sorting:
+    # the two unvetted listings carry facts, the alphabetically-first
+    # vetted listings carry none. Facts must not slide onto vetted
+    # records and manufacture two qualifying voices (false VERIFIED).
+    result = verify_category(
+        _request(
+            "commercial_property",
+            [
+                _voice(
+                    "https://mango.example/a",
+                    facts=dict(USE_FACTS),
+                    publisher="Mango Listings",
+                    originating_id="ad-1",
+                ),
+                _voice(
+                    "https://zebra.example/b",
+                    facts=dict(USE_FACTS),
+                    publisher="Zebra Listings",
+                    originating_id="ad-2",
+                ),
+                _voice(
+                    "https://broker-a.example/c",
+                    facts={},
+                    publisher="Broker A",
+                    originating_id="ad-3",
+                ),
+                _voice(
+                    "https://broker-b.example/d",
+                    facts={},
+                    publisher="Broker B",
+                    originating_id="ad-4",
+                ),
+            ],
+        )
+    )
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert result.pathway is None
+    assert R.MISSING_DEFINING_FACTS in result.reasons
+
+
+def test_office_use_cannot_verify_warehouse_claim() -> None:
+    result = verify_category(
+        _request(
+            "warehouse_industrial",
+            [
+                _voice(
+                    "https://broker-a.example/x",
+                    facts={"use": "office"},
+                    publisher="Broker A",
+                    originating_id="ad-1",
+                ),
+                _voice(
+                    "https://broker-b.example/y",
+                    facts={"use": "office"},
+                    publisher="Broker B",
+                    originating_id="ad-2",
+                ),
+            ],
+        )
+    )
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in result.reasons
+    assert result.pathway is None
+
+
+def test_warehouse_use_cannot_verify_commercial_claim() -> None:
+    result = verify_category(
+        _request(
+            "commercial_property",
+            [
+                _voice(
+                    "https://broker-a.example/x",
+                    facts={"use": "warehouse"},
+                    publisher="Broker A",
+                    originating_id="ad-1",
+                ),
+                _voice(
+                    "https://broker-b.example/y",
+                    facts={"use": "warehouse"},
+                    publisher="Broker B",
+                    originating_id="ad-2",
+                ),
+            ],
+        )
+    )
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in result.reasons
+    assert result.pathway is None
+
+
+def test_unrecognized_use_fails_closed() -> None:
+    result = verify_category(
+        _request(
+            "commercial_property",
+            [
+                _voice(
+                    "https://broker-a.example/x",
+                    facts={"use": "residential"},
+                    publisher="Broker A",
+                    originating_id="ad-1",
+                ),
+                _voice(
+                    "https://broker-b.example/y",
+                    facts={"use": "residential"},
+                    publisher="Broker B",
+                    originating_id="ad-2",
+                ),
+            ],
+        )
+    )
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in result.reasons
+    assert result.pathway is None

@@ -21,6 +21,7 @@ from app.agents.gabriel.sources.brave import (
     get_brave_api_key,
     parse_results,
 )
+from app.agents.gabriel.research import ResearchError
 from app.main import app
 from app.research_budget_db import (
     BudgetConfigError,
@@ -1057,3 +1058,21 @@ def test_migration_003_adds_budget_table() -> None:
     assert "research_month TEXT PRIMARY KEY" in sql
     assert "ALTER TABLE properties" not in sql
     assert "CREATE TABLE IF NOT EXISTS properties" not in sql
+
+
+def test_ranking_without_intelligence_fails_before_spending(monkeypatch) -> None:
+    _env(monkeypatch)
+
+    def _must_not_reserve(n):
+        raise AssertionError("no budget reservation for invalid options")
+
+    def _must_not_call(query, assignment_id, timeout):
+        raise AssertionError("no provider call for invalid options")
+
+    monkeypatch.setattr(research, "reserve_requests", _must_not_reserve)
+    monkeypatch.setattr(research, "execute_query", _must_not_call)
+    request = research.ResearchRunRequest.model_validate(
+        {"assignments": _plan_assignments(), "include_ranking": True, "include_intelligence": False}
+    )
+    with pytest.raises(ResearchError, match="ranking requires include_intelligence"):
+        research.run_research(request)

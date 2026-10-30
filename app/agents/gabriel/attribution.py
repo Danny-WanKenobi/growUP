@@ -201,8 +201,8 @@ def normalize_category_value(text: str) -> str | None:
     return None
 
 
-def _independent_groups(claims: list[CountyClaim]) -> list[list[CountyClaim]]:
-    """Partition claims into independent corroboration voices.
+def _distinct_host_groups(claims: list[CountyClaim]) -> list[list[CountyClaim]]:
+    """Partition claims into distinct-host corroboration voices.
 
     Grouping is host-primary: every claim from one canonical source
     host forms one voice, and no caller-supplied label can split it.
@@ -273,9 +273,9 @@ def evaluate_county_evidence(
         base.method = "conflicting county claims preserved"
         return base
     sole = [claim for claim in usable if claim.normalized == distinct[0]]
-    if len(_independent_groups(sole)) >= 2:
+    if len(_distinct_host_groups(sole)) >= 2:
         base.evidence_status = CountyEvidenceStatus.CORROBORATED
-        base.method = "independent corroborating claims"
+        base.method = "multi-host corroborating claims"
         return base
     base.evidence_status = CountyEvidenceStatus.OBSERVED
     base.method = "single uncorroborated claim"

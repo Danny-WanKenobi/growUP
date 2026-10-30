@@ -565,7 +565,7 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
     if not get_database_config().is_configured:
         # Fail fast before spending an external call.
         raise DatabaseNotConfiguredError("database_not_configured")
-    run_id = new_run_id()
+    run_id = request.run_id or new_run_id()
     started = time.perf_counter()
     ctx = _RunContext(run_id=run_id, started=started)
     categories = list(request.categories) if request.categories else list(DISCOVERY_CATEGORIES)

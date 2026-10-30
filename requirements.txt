@@ -7,3 +7,6 @@ uvicorn[standard]>=0.30,<1
 psycopg[binary]>=3.1,<4
 httpx>=0.27,<1
 pytest>=8.0,<9
+# tzdata: IANA database for zoneinfo America/Chicago Sabbath evaluation
+# (app/discovery_runner.py) on hosts without system tzdata (e.g. Windows).
+tzdata>=2024.1

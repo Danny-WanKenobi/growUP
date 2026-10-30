@@ -134,6 +134,13 @@ class CategoryVerification(BaseModel):
         return self
 
 
+# Reported uses that can support each use-based claim. Office evidence
+# must never satisfy a warehouse/industrial claim (and vice versa):
+# use facts are category-specific. Unknown use strings fail closed.
+_COMMERCIAL_USES = frozenset({"office", "commercial", "retail"})
+_WAREHOUSE_USES = frozenset({"warehouse", "distribution", "industrial"})
+
+
 def _facts_support(claim: str, facts: dict[str, str]) -> tuple[bool, bool]:
     """Whether supplied facts establish the claim; second flag marks unknown use-status.
 
@@ -159,9 +166,12 @@ def _facts_support(claim: str, facts: dict[str, str]) -> tuple[bool, bool]:
         )
         return supported, False
     if claim in ("commercial_property", "warehouse_industrial"):
-        use = str(facts.get("use", "")).strip()
-        if not use:
-            return False, False  # zoning or bare assertions alone are insufficient
+        use = str(facts.get("use", "")).strip().lower()
+        allowed = _COMMERCIAL_USES if claim == "commercial_property" else _WAREHOUSE_USES
+        if use not in allowed:
+            # Missing, foreign-category, or unrecognized use: zoning, bare
+            # assertions, and other-category evidence are all insufficient.
+            return False, False
         status = str(facts.get("use_status", "")).strip().lower()
         if status == "proposed":
             return False, False
@@ -170,6 +180,13 @@ def _facts_support(claim: str, facts: dict[str, str]) -> tuple[bool, bool]:
 
 
 def _resolve_voices(request: VerificationRequest) -> list[VerificationVoice]:
+    """Resolve each voice against its own source metadata, in input order.
+
+    Never sorted here: callers zip these records back against the input
+    voices, so reordering would attach one source's host and credibility
+    to another source's facts and provenance. Sorting happens on complete
+    pairs only (see verify_category).
+    """
     resolved = []
     for voice in request.voices:
         host = canonical_hostname(voice.url) if voice.url else ""
@@ -183,7 +200,6 @@ def _resolve_voices(request: VerificationRequest) -> list[VerificationVoice]:
                 originating_id=voice.originating_id,
             )
         )
-    resolved.sort(key=lambda v: (v.host, v.url, v.publisher or ""))
     return resolved
 
 

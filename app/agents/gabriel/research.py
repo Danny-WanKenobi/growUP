@@ -279,6 +279,10 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
     )
     if not get_database_config().is_configured:
         raise DatabaseNotConfiguredError("database_not_configured")
+    # Validate the option combination before reserving budget or calling the
+    # provider: ranking without intelligence must fail before spending.
+    if request.include_ranking and not request.include_intelligence:
+        raise ResearchError("ranking requires include_intelligence")
     try:
         selected = select_assignments(request.assignments, request.rotation)
     except ResearchError:
@@ -435,8 +439,7 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
             correlation_id=correlation_id,
         )
     if request.include_ranking:
-        if result.intelligence is None:
-            raise ResearchError("ranking requires include_intelligence")
+        assert result.intelligence is not None  # validated before spending
         result.ranking = rank_intelligence(result.intelligence)
         # Trusted-producer annotation (Phase 2A): parallel verification
         # evaluations over adapter-collected results. Scores, order, and

@@ -57,6 +57,18 @@ class DiscoveryRunRequest(BaseModel):
     categories: list[str] | None = Field(default=None, max_length=10)
     limit: int = Field(default=10, ge=1, le=MAX_RUN_LIMIT)
     timeout_seconds: float = Field(default=15.0, ge=MIN_TIMEOUT_SECONDS, le=MAX_TIMEOUT_SECONDS)
+    run_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Optional caller-supplied run attribution. When present it "
+            "becomes the run_id carried by every persisted candidate "
+            "decision event, so an orchestrator (e.g. the bounded "
+            "discovery runner) can reconcile exactly which candidates "
+            "a pass committed. When omitted a random id is generated."
+        ),
+    )
 
     @field_validator("categories")
     @classmethod

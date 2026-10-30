@@ -125,7 +125,7 @@ class ResearchQuestion(BaseModel):
     question: str
     why_material: str
     sought: str
-    owner: str = "Gabriel"  # Gabriel, Raphael, Onesimus, or Priscilla
+    owner: str = "Gabriel"  # Gabriel, Raphael, Onesimus, or Michael
 
 
 class PlannedQuery(BaseModel):
@@ -311,7 +311,7 @@ def _build_questions(
         ask(
             QuestionTopic.TRANSACTION, "asking-price",
             "What is the documented asking price, if the property is for sale?",
-            "Asking price drives the value ranking and Priscilla's acquisition analysis.",
+            "Asking price drives the value ranking and Michael's financial analysis.",
             "Current advertised asking price with source URL and date.",
             "Gabriel",
         )

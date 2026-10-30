@@ -233,6 +233,8 @@ def test_independent_corroboration_supported() -> None:
     claim = next(c for c in dossier.supported_facts if c.topic == "asking_price")
     assert claim.status is ClaimStatus.SUPPORTED
     assert "2 distinct domains" in claim.corroboration_note
+    assert "multi-host agreement" in dossier.summary
+    assert "independent sources" not in dossier.summary
 
 
 def test_identical_republication_not_corroboration() -> None:
@@ -379,7 +381,7 @@ def test_handoffs_route_to_correct_agents() -> None:
     )
     dossier = dossier_set.dossiers[0]
     agents = {handoff.agent for handoff in dossier.handoffs}
-    assert agents <= {"Gabriel", "Raphael", "Onesimus", "Priscilla"}
+    assert agents <= {"Gabriel", "Raphael", "Onesimus", "Michael"}
     assert "Raphael" in agents  # county and occupancy verification
     assert dossier.remaining_questions
 

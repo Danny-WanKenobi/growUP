@@ -677,3 +677,43 @@ def test_start_run_maps_failures(monkeypatch) -> None:
 def test_start_run_rejects_unbounded_input(monkeypatch, body) -> None:
     monkeypatch.setenv("INTAKE_API_KEY", TEST_INTAKE_KEY)
     assert client.post("/discovery/runs", json=body, headers=_headers()).status_code == 422
+
+
+def test_run_request_run_id_attribution(monkeypatch) -> None:
+    """A caller-supplied run_id rides the result and decision events."""
+    _configured_env(monkeypatch)
+    stub = _StubSource(
+        listings=[_listing(external_id="way/9", street_address="900 Main St")]
+    )
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    events: list = []
+
+    def _fake_create(payload, canonical, external_id, **kwargs):
+        # Mirror the real creator: build the audit event from the row.
+        audit = kwargs.get("make_audit")
+        row = {"id": "prop-9"}
+        if audit is not None:
+            events.append(audit(row, {"id": "link-9"}))
+        return row
+
+    monkeypatch.setattr(gabriel_service, "_create_with_observation", _fake_create)
+    monkeypatch.setattr(gabriel_service, "find_observation", lambda s, e: None)
+    monkeypatch.setattr(
+        gabriel_service, "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.NONE),
+    )
+    result = gabriel_service.run_discovery(_run_request(run_id="runner:test:pass-3"))
+    assert result.run_id == "runner:test:pass-3"
+    assert result.created_ids == ["prop-9"]
+    decisions = [e for e in events if e.event_type == "gabriel.discovery.decision"]
+    assert decisions
+    assert {e.run_id for e in decisions} == {"runner:test:pass-3"}
+
+
+def test_run_request_run_id_defaults_generated(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: _StubSource())
+    first = gabriel_service.run_discovery(_run_request())
+    second = gabriel_service.run_discovery(_run_request())
+    assert first.run_id and second.run_id
+    assert first.run_id != second.run_id

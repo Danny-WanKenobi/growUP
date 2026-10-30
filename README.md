@@ -49,12 +49,14 @@ Grow Up is designed around seven coordinated AI agents working through a shared 
 | Property Discovery | **Gabriel** | Identifies and prioritizes commercial properties with conversion potential. |
 | Property Inspection | **Raphael** | Evaluates building characteristics, occupancy, and potential conversion constraints. |
 | Agricultural Engineering | **Onesimus** | Designs hypothetical indoor agricultural systems and evaluates production scenarios. |
-| Financial Feasibility | **Priscilla** | Calculates projected costs, revenues, and financial viability. |
-| Opportunity & Outreach | **Michael** | Develops opportunity assessments and prepares stakeholder outreach. |
-| Conversion Tracker | **Uriel** | Tracks opportunities, engagement, and conversion progress. |
-| Dashboard | **Wondrue** | Provides the central conversational interface for coordinating and monitoring the system. |
+| Conversational cockpit | **Wondrue** | Sole end-user interface: presents findings, takes commands/corrections, and invokes permitted operations through backend-enforced controls. |
+| Financial Feasibility | **Michael** | Owns deterministic financial calculations and feasibility assessments. |
+| Opportunity & Outreach | **Uriel** | Prepares opportunity and outreach campaign packages; executes outreach only when implemented and explicitly authorized. |
+| Conversion Tracker | **Priscilla** | Tracks delivery, engagement, responses, and lead conversion, distinguishing actual from simulated events. |
 
-The agents share a common property record and coordinated workflow rather than operating as seven independent applications.
+The agents share a common property record and coordinated workflow rather than operating as seven independent applications. Processing order is Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla, with Wondrue coordinating throughout (not a duplicate pipeline).
+
+**MVP scope:** the coordinated MVP implements the full six-stage pipeline plus the Wondrue cockpit. Gabriel assembles evidence-backed dossiers; Raphael performs deterministic authorization over persisted dossier versions (preliminary simulation scoping only); Onesimus evaluates two passive-Kratky engineering configurations; Michael owns all financial arithmetic and feasibility verdicts; Uriel prepares genuine campaign packages (no sender exists); Priscilla tracks conversion events with simulated and actual evidence strictly separated. Wondrue enforces read-only / ask / full access modes server-side. Dossiers move between agents under shared operational custody (append-only versions, immutable snapshots, authenticated receipts); a resumable 36-cell pilot ledger tracks the 144-dossier target. No outreach execution exists.
 
 ---
 
@@ -86,7 +88,7 @@ Grow Up is being developed using:
 | Programming language | Python |
 | Backend framework | FastAPI |
 | Database | PostgreSQL |
-| Artificial intelligence | Meta AI models |
+| Artificial intelligence | Meta AI models (runtime adapter: live + labeled replay) |
 | AI-assisted development | Meta Muse Code |
 | Version control | Git |
 | Source repository | GitHub |
@@ -95,6 +97,8 @@ Grow Up is being developed using:
 The architecture emphasizes modularity, deterministic financial calculations, shared data, and responsible AI integration.
 
 AI models assist with language understanding, analysis, explanations, and opportunity development. Financial arithmetic remains in inspectable Python code.
+
+At runtime, Meta inference works through a small adapter (`app/model_adapter.py`): it interprets Wondrue commands and proposes configuration comparisons from an approved parameter catalog. Structured output is validated before use; deterministic Python performs all calculations and authorization checks. Live calls require explicit spending approval (`META_SPEND_APPROVED=1`) and are recorded with provider, model, usage, and digests; labeled replays cover rehearsal and read-only mode.
 
 ---
 
@@ -112,15 +116,26 @@ The initial development goal is a functioning demonstration that:
 
 The MVP will distinguish verified information, estimates, assumptions, and synthetic demonstration data.
 
-**Project status:** Early development — October 2026.
+**Project status:** Coordinated MVP implemented with two demonstration paths — real-property evaluation (fail-closed; a candidate may legitimately stop at `needs_evidence`) and an isolated synthetic demonstration that runs the full software workflow on fictional fixtures. Deferred: autonomous 144-dossier execution, exhaustive city searches, OAuth/admin systems, outreach, additional agents, advanced underwriting, and detailed permitting.
 
 ---
 
 ## 🔧 Installation and Development
 
-Installation instructions, environment configuration, and local execution commands will be documented as the application foundation is implemented.
+Prerequisites: Python 3.12+ and PostgreSQL (for the real-property path; the synthetic demonstration needs no database).
 
-The project will use a Python virtual environment (`.venv`) and environment-based configuration for external services.
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows (PowerShell)
+pip install -r requirements.txt
+copy .env.example .env          # then fill in local values; .env is git-ignored
+python -m app.migrate           # apply SQL migrations in filename order
+uvicorn app.main:app --port 8001
+```
+
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` / `META_API_KEY` / `META_MODEL` / `META_SPEND_APPROVED` / `META_MAX_TOKENS` for Meta inference (live calls refused unless spending is approved), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
+
+Run the local suite with `python -m pytest -q tests` (PostgreSQL-gated tests skip without `GROWUP_PG_INTEGRATION=1`).
 
 API credentials and other secrets must never be committed to the public repository.
 
@@ -248,6 +263,80 @@ The runner is repeatable: applied files are recorded in a `schema_migrations`
 table and skipped on later runs. It only touches the configured database and
 never creates, drops, or alters other databases.
 
+Migration `012_workflow_runs.sql` adds the `workflow_runs` table (JSONB run
+payloads plus versioned workflow records) backing Gabriel → Raphael →
+Onesimus run persistence. It is additive: rolling back the application never
+requires schema reversal. Apply with `python -m app.migrate` (never against
+production/real data without explicit approval) and validate with
+`python -m pytest -q tests/test_workflow_store.py`. The synthetic harness never
+touches this table; demo state lives only in memory.
+
+Migration `013_dossier_custody.sql` adds the shared custody, intake, and
+pilot tables: `dossier_versions` (one deterministic dossier identity per
+operational property, append-only), `custody_snapshots` plus
+`custody_snapshots_archive` (immutable pre-handoff freezes), `custody_receipts`
+(HMAC-authenticated forward/return/review handoffs), `michael_intake`
+(pre-canonical intake queue, renamed by migration 014), and `pilot_state`
+/ `pilot_cells` / `pilot_events` (the 36-cell ledger). Database triggers
+reject updates and deletes on the permanent tables; hot snapshots
+additionally allow archival moves. Validate with
+`python -m pytest -q tests/test_custody.py tests/test_pilot.py
+tests/test_michael.py`.
+
+Migration `014_canonical_roles.sql` renames `michael_intake` to
+`uriel_packages` (pre-canonical rows keep `role_schema`
+`mvp1-michael-intake`; new rows use `canonical1-uriel`), adds
+`package_state` / `execution_state`, versions custody receipts
+(`mvp-1` history vs `canonical-1` new rows), widens `pilot_cells` with
+the engineering/financial/package/tracked stage counters, and adds the
+append-only `conversion_events` table for Priscilla. It never rewrites
+existing rows. Validate with `python -m pytest -q tests/test_uriel.py
+tests/test_priscilla.py`.
+
+Migration `015_simulation_discovery_pilot.sql` adds the append-only
+`priscilla_simulations` run table, a nullable `simulation_id` on
+`conversion_events` plus a partial unique index over
+(simulation, package, kind) so repeated execution cannot duplicate
+events, provenance columns on `pilot_events` (`run_id`, `record_key`,
+`identity_kind`) with an index over canonical qualified rows, and the
+`discovery_runs` worker table with a partial unique index enforcing one
+active worker per scope. It is additive: no existing table is altered
+beyond `ADD COLUMN` with safe defaults, and no rows are rewritten.
+
+### Migrations & rollback
+
+`python -m app.migrate` applies pending files in filename order inside
+one transaction and records them in `schema_migrations`; a failed run
+leaves the schema unchanged and is safe to retry. There are no
+down-migrations: application rollback never reverts schema changes, so
+every migration must stay readable by the previously deployed code —
+except migration 014, whose `michael_intake` → `uriel_packages` table
+rename is **not** rollback-transparent: older application code that
+queries `michael_intake` will fail after 014 is applied. Rolling back
+past 014 therefore requires either keeping code that reads the new
+table name or a reviewed forward migration restoring a compatible view.
+Migrations 012, 013, and 015 are additive-only and need no schema
+reversal on application rollback. Local coverage is transaction-faithful
+fakes plus the focused suites (`tests/test_priscilla_sim.py`,
+`tests/test_pilot.py`, `tests/test_discovery_runner.py`,
+`tests/test_funnel_acceptance.py`).
+`GROWUP_PG_INTEGRATION`-gated live tests exist for the migration-created
+schema — runner SQL replay, backlog round-trip, crash recovery fold,
+ceiling drain, two-connection exclusion (`tests/test_discovery_runner.py`),
+simulation idempotency/conflict/separation and concurrent winner
+(`tests/test_priscilla_sim.py`), custody round-trip, concurrent issuance
+serialization, append-only triggers, archival (`tests/test_custody.py`),
+run lifecycle, atomic audit, and the `identity_review` record
+(`tests/test_workflow_store.py`), pilot round-trip
+(`tests/test_pilot.py`), Raphael authorize idempotency
+(`tests/test_raphael.py`), and the full coordinator chain
+(`tests/test_funnel_acceptance.py`). The first owner-run execution
+against disposable PostgreSQL 16 database `growup_mvp_gate`
+(migrations 001–015 applied) produced 11 passed and 5 failed — all
+five custody-ordering failures described under "Shared dossier
+custody" — and the corrected-code rerun (17 live tests, including the
+new concurrent-issuance check) is **pending owner execution**.
+
 ### Synthetic demo fixture
 
 `fixtures/synthetic_dallas_property.json` is a clearly labeled **SYNTHETIC**
@@ -262,6 +351,31 @@ python scripts/load_synthetic_fixture.py   # exits 1: refused by policy
 The fixture remains available for isolated automated testing only (tests read
 the JSON without inserting it anywhere).
 
+The coordinated MVP adds a fuller synthetic harness (`app/demo.py`): an
+in-memory demo store running the complete Gabriel → Raphael → Onesimus
+software workflow on fictional fixtures. Demo identifiers use the `demo-`
+prefix and are rejected by every production mutation/authorization interface;
+fictional sources (`*.fiction.example`) are never fetched; every artifact,
+decision, scenario, export, and UI response carries the synthetic-origin
+marker and the label **SYNTHETIC DEMONSTRATION — NOT A REAL PROPERTY;
+VERIFICATION AND AUTHORIZATION ARE SIMULATED**. There is no
+demo-to-production promotion path, and resetting the demo store
+(`POST /wondrue/demo/reset`) cannot affect real records. The harness needs no
+production database credentials and writes no operational properties,
+evidence, dossiers, decisions, registry entries, quotas, or audit business
+records.
+
+The harness is a separately selected diagnostic fallback
+(`POST /wondrue/command` with `target: "demo"`), independent of
+`DEMO_MODE`: Gabriel, Raphael, and Onesimus use genuine evidence and
+unchanged verification rules in both modes, and simulated upstream
+outcomes can never enter operational custody, pilot counts, Uriel
+packages, or Priscilla actual metrics (`demo-` identifiers are rejected
+at each boundary). After the first evidenced 144-dossier pilot,
+ordinary operational selection of the harness is refused; tests keep
+working and emergency diagnostic use needs `EMERGENCY_DIAGNOSTIC_DEMO=1`
+plus explicit owner authorization.
+
 ---
 
 ## 🔍 Gabriel — Property Discovery Agent (MVP-003)
@@ -269,7 +383,7 @@ the JSON without inserting it anywhere).
 Gabriel researches **real** commercial properties and records them as
 preliminary operational records through the existing MVP-002 validation gate.
 He discovers possible opportunities; he never verifies claims. Verification
-belongs to Raphael (future milestone).
+belongs to Raphael (see [Coordinated MVP Workflow](#-coordinated-mvp-workflow-gabriel--raphael--onesimus--michael--uriel--priscilla)).
 
 ### Discovery source
 
@@ -579,12 +693,16 @@ follow-up caps bound growth, and known queries are never repeated.
   planner ranks nothing because it has seen no listings.
 - Geographic scope is the twelve-county operating area, with no grids,
   radius expansion, or boundary processing.
+- Category treatment is equal across the three primary categories; no
+  category receives an automatic scoring or scheduling advantage.
 
 ### Remaining MVP-004B phases
 
-Later phases will cover provider execution adapters, listing-result
-ingestion through the intake contract, and property ranking in
-MVP-004B-4.
+Provider execution, intake ingestion, ranking, investigation, and dossier
+building have since landed (see below). Still unfinished: per-city search
+ordering across the five priority cities per county (baseline queries stay
+countywide), batch/city scheduling, autonomous stop-at-144 execution, and
+quota allocation.
 
 ---
 
@@ -616,7 +734,15 @@ logs, errors, or responses.
    sweeping all ten counties across explicitly requested runs.
 
 Only planner-issued assignments (matching planner version) are accepted;
-arbitrary caller queries are rejected.
+arbitrary caller queries are rejected. Dependent research options are
+validated before budget reservation or provider calls, so a request for
+ranking without intelligence fails before spending anything.
+
+The coordinated MVP additionally persists each run's acquired evidence as
+research artifacts (provider, assignment/query, source URLs, dates, actual
+collection provenance, digest) in the workflow store, and records ambiguous
+provider attempts explicitly instead of silently repeating potentially
+charged calls after a crash.
 
 ### Request limits and monthly budget
 
@@ -628,6 +754,10 @@ arbitrary caller queries are rejected.
   assignments consume nothing, and the run stops immediately with a
   `budget_exhausted` error entry when the month is spent.
 - Rate limits (429) and auth failures (401/403) abort the rest of the run.
+- The MVP workflow enforces a task/run bound (default 9 Brave attempts;
+  up to 18 only with explicit reacquisition approval) across month changes,
+  alongside the monthly ceiling. These are ceilings, not spending
+  authorization: live calls need explicit owner approval.
 
 ### Security considerations
 
@@ -659,6 +789,10 @@ curl -X POST http://127.0.0.1:8001/discovery/research-runs \
 
 # 2. Confirm budget accounting decreased by the reported request_count.
 # 3. Confirm no new rows in properties, listing_evidence, or distress_observations.
+
+The live commands above were not executed during the coordinated-MVP task
+(no external-spend authorization); research behavior is covered by mocked
+provider tests plus the persisted-artifact and budget tests.
 
 ---
 
@@ -766,8 +900,9 @@ rather than ranked.
 Price, occupancy, distress, and county facts attach to a property only
 from single-property results; multi-property observations stay
 unresolved and force further research. Repeated sources never count as
-independent corroboration (distinct domains do). Historical evidence
-never establishes current status.
+corroboration; distinct hosts with nonidentical snippets establish
+multi-host agreement, not authenticated publisher independence.
+Historical evidence never establishes current status.
 
 ### API fields
 
@@ -796,6 +931,14 @@ backstop. A client-provided "verified" label or evidence reference does not
 independently establish truth: the gate cannot confirm cited facts against
 external sources. A human review workflow, trusted-source registry, and
 separate hypothetical-scenario storage are deferred to future milestones.
+
+Three related but distinct gates now exist: **research qualification** (a
+deterministic Gabriel-side eligibility screen over a persisted dossier),
+**verification** (the shared category-evidence policy — paired voices,
+category-specific defining facts, multi-host agreement), and **Raphael
+authorization** (which additionally requires reviewed registry curation,
+explicit identity alignment, and a persisted dossier version/digest).
+Failing any gate stops the real-property path fail-closed.
 
 ---
 
@@ -848,13 +991,21 @@ recursion, no property writes.
 `app/agents/gabriel/dossier.py` (`build_dossiers`) merges
 initial + follow-up rounds into one dossier per conservatively
 identified property: supported vs. historical facts, distress/underuse
-findings, independent-vs-repeated corroboration, temporal-aware
-contradictions (same-period conflicts flagged; cross-year changes
-noted, not flagged), missing information, actions performed, remaining
-questions, Raphael/Onesimus/Priscilla handoffs, and a deterministic
-summary built only from supported evidence. Reassessment reuses the
-existing ranking engine; optional prior-ranking comparison explains
-score changes without inventing priors.
+findings, multi-host-agreement vs. repeated-source corroboration,
+temporal-aware contradictions (same-period conflicts flagged;
+cross-year changes noted, not flagged), missing information, actions
+performed, remaining questions, Raphael/Onesimus/Priscilla handoffs,
+and a deterministic summary built only from supported evidence.
+Reassessment reuses the existing ranking engine; optional
+prior-ranking comparison explains score changes without inventing
+priors.
+
+The coordinated MVP persists complete dossier versions (input artifact
+references, claims, conflicts, missing information, builder version,
+digest, resolved property UUID) in the workflow store. Raphael loads
+these server-owned versions — never caller-supplied dossiers — and
+authorizes an exact version/digest; revised evidence invalidates reuse
+of an old authorization.
 
 ### API endpoints
 
@@ -863,9 +1014,9 @@ score changes without inventing priors.
 - `POST /discovery/investigations` — authenticated (`X-Research-Key`),
   budgeted follow-up execution. Body: `{intelligence, config?,
   query_ids?, timeout_seconds?}`; unknown query IDs are rejected.
-- `POST /discovery/dossiers` — pure consolidation (no auth; spends
-  nothing). Body: `{rounds[1..10], prior_ranking?, executed_queries?}`
-  (≤200 results).
+- `POST /discovery/dossiers` — authenticated (`X-Research-Key`),
+  pure consolidation (spends nothing). Body:
+  `{rounds[1..10], prior_ranking?, executed_queries?}` (≤200 results).
 
 No database migration required. No live Brave calls during tests; all
 provider and budget interactions are mocked.
@@ -897,6 +1048,14 @@ file-only. Permanent PG failures raise `EventPersistenceError` after a
 best-effort file copy — never silent. Error paths never emit events
 (no recursion); PG writes use dedicated short-lived connections, never
 business transactions.
+
+The coordinated MVP adds two permanent workflow events —
+`wondrue.evaluation.completed` and `wondrue.evaluation.stopped` — emitted
+through the consequential coordinator
+(`app/observability/transactions.py`), so each business transition and its
+audit record commit atomically in one transaction. Outbox acceptance alone
+never authorizes engineering work. No new observability configuration or
+deployment steps are required.
 
 ### Retention
 
@@ -1669,9 +1828,482 @@ existing endpoints are re-verified in the same file.
 
 ---
 
+## 🤝 Coordinated MVP Workflow (Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla)
+
+One durable workflow connects six processing agents, with Wondrue as the
+sole cockpit and conversational interface. Two demonstration paths are
+supported: genuine real-property evaluation and an isolated synthetic
+demonstration (see [Demonstration](#-demonstration)).
+
+### Gabriel — evidence, dossiers, and identity association
+
+Gabriel (`app/agents/gabriel/`, orchestrated by `app/mvp.py`) acquires
+evidence within the run's Brave bound, persists research artifacts,
+dossier versions, and deterministic qualifications. A caller-supplied
+`property_id` is targeting context — a search target is not identity
+proof. A dossier is associated with the operational property only when
+its own normalized address uniquely supports the target: exactly one
+dossier in the set matches on street/city/state, and the target
+address is unambiguous in storage (checked with the existing
+`find_by_address`, which never selects among multiple matches).
+Unrelated dossiers are preserved without that association; genuine
+ambiguity (several dossiers matching, or several stored properties
+sharing the address) records a pending `identity_review` row with the
+reason and candidates instead of guessing, and custody prefers the
+associated dossier — or blocks honestly when none exists.
+Review artifacts stay visible through the established workflow: the
+custody-blocked stop names the pending `identity_review` row
+(`dossier-association`, with its reason), and the same persisted row is
+readable via the Wondrue `inspect_review` intent — no parallel queue.
+
+### Raphael — verification and authorization
+
+Raphael (`app/agents/raphael/`) loads persisted, server-owned dossier
+versions plus their supporting artifacts and applies the corrected shared
+deterministic policy. Outcomes: `authorized` (sufficient evidence for a
+narrowly scoped preliminary simulation), `needs_evidence` (explicit unmet
+requirements — a legitimate fail-closed result), or `rejected`
+(documented reason with supporting evidence). A category decision never
+establishes structural safety, zoning permission, tenant relocation
+rights, agricultural feasibility, or profitability.
+
+A narrowly scoped acquisition/replay path retains source artifacts,
+collection provenance, content digests, and explicit identity binding;
+actual acquisition requires authorization, and the per-run attempt bound
+(default 9, hard ceiling 18) applies. Trusted registry entries require
+reviewed curation — the production registry starts empty, so
+authorization fails closed until curation exists. Human-supplied or
+reviewed evidence keeps that provenance and is never relabeled
+`adapter_collected`.
+
+### Onesimus — preliminary engineering (no money)
+
+Onesimus (`app/agents/onesimus/`) evaluates one crop profile (butterhead
+lettuce) under two passive, non-circulating Kratky configurations:
+`bench` (single-level benches, individual containers) and `rack3`
+(three-tier stacked racks, shared reservoirs per tier). Every
+consequential input carries value, unit, provenance, and classification
+(verified, estimated, experimental, assumed, unknown).
+
+Inspectable Python computes usable growing area, planting sites,
+reservoir volume, root-zone air-space and structural-load estimates,
+lighting electricity, and water/nutrient quantities. Prices, capex,
+revenue, operating costs, and payback are Michael's — Onesimus outputs
+carry no money. Missing critical inputs return incomplete results —
+never silent zeros — and AI never supplies computed outputs.
+Real-property scenarios validate the persisted Raphael authorization
+against the exact dossier version/digest; demo-only or stale
+authorizations are rejected. Tenant consolidation (relocating tenants
+upward, converting from the lowest feasible level) starts enabled as an
+explicit hypothetical assumption; observed occupancy is preserved
+separately and consent, leases, access, and relocation costs are flagged
+as unresolved.
+
+### Michael — deterministic financial authority
+
+Michael (`app/michael.py`) is the single financial authority: he consumes
+Onesimus engineering outputs plus classified financial inputs and computes
+capex, opex (electricity, water, nutrients, labor, HVAC, other),
+revenue, operating result, sensitivities, and simple payback or
+break-even only where defined and supported. Every consequential input
+identifies value, unit, currency, period, source, observation date,
+classification, scenario, and uncertainty; unknown costs never silently
+become zero — incomplete bundles return an `insufficient_evidence`
+verdict naming the gaps. Verdicts are `favorable_under_assumptions`,
+`unfavorable_under_assumptions`, or `insufficient_evidence`: a completed
+calculation is not automatically favorable, and projected revenue is not
+actual revenue. Money uses Decimal cents with explicit rounding; model
+proposals may tune only cataloged financial parameters, and AI never
+supplies computed outputs or approves unsupported conclusions.
+
+### Meta inference adapter
+
+`app/model_adapter.py` fronts Meta behind a stable interface. Meta
+interprets Wondrue commands and proposes configuration comparisons from
+the approved `bench`/`rack3` catalog; structured output is validated, and
+deterministic Python performs all calculations and authorization checks.
+Live calls require `META_SPEND_APPROVED=1` (plus `META_API_URL`,
+`META_API_KEY`, `META_MODEL`; token ceiling `META_MAX_TOKENS`, default
+1024) and are recorded with provider, model, live/replay label, usage,
+and digests. Replays are always labeled and can never be mistaken for
+live calls. Credentials stay server-side.
+
+### Wondrue interface and access modes
+
+- `GET /wondrue` — compact results page; real and synthetic targets use
+  unmistakable banners, and live/replay model output gets distinct badges.
+- `POST /wondrue/command` — one JSON command
+  (`mode`, `text`, `target`, `approval_token`, `use_live`, `intent`).
+  Supported real-target intents: `inspect_candidate`,
+  `inspect_evidence`, `explain_decision`, `start_real_evaluation`,
+  `stop`, `compare_scenarios`, `inspect_packages`,
+  `preview_simulation`, `run_simulation`, `inspect_simulation`,
+  `inspect_discovery`, `start_discovery`, `resume_discovery`,
+  `stop_discovery`, `help`; plus `start_demo` for the synthetic target.
+- `POST /wondrue/demo/reset` — resets only the demo store; requires the
+  operator grant.
+
+Authentication is the `X-Wondrue-Key` header against two enrolled
+credentials: `WONDRUE_OPERATOR_KEY` grants the full mode range,
+`WONDRUE_READER_KEY` grants read-only. The grant is derived
+server-side from the credential, and the requested mode is capped by
+it: supplying `"mode": "full"` confers no authority by itself, and an
+unknown grant fails closed. Modes are enforced server-side:
+**read-only** inspects/explains with no business mutations, no live
+calls, and no external calls; **ask** returns a concrete preview
+(operations, inputs, effects, cost bounds) plus a single-use approval
+token before anything consequential executes; **full** executes
+permitted operations within explicit scopes and limits. Read-only
+intents (`inspect_*`, `preview_simulation`, `explain_decision`,
+`help`) never mutate records or issue metered calls; consequential
+intents (`start_*`, `resume_discovery`, `stop*`, `run_simulation`,
+`compare_scenarios`) need ask-with-token or full. Discovery bursts
+through Wondrue are request-safe (at most 5 passes / 900 seconds);
+longer campaigns use repeated bursts or the runner CLI. Bursts run
+free OSM discovery only unless `acquire: true` is passed: acquisition
+is disabled by default, permission derives server-side from the
+operator grant (requested-but-unauthorized bursts are refused, never
+silently downgraded), ask mode previews the operation with its Brave
+bound (passes × evaluations-per-pass × 9 per-evaluation attempts),
+and `max_evaluations` (0–5 per pass) configures the cap. Read-only
+and unapproved requests make no acquisition calls. Paid
+inference always needs spending approval. Outreach remains disabled.
+The command route owns its transaction: it commits only when the
+command succeeds, rolls back when the command fails (including a
+command that writes and then raises), and returns 503 when the commit
+itself fails — persistence failures are never swallowed, and read-only
+commands never open the write transaction at all.
+
+After the first evidenced 144-dossier pilot (36 cells, ≥144 persisted
+qualified dossiers), ordinary `start_demo` selection through Wondrue is
+refused: synthetic upstream workflows become a restricted diagnostic
+fallback. Automated tests keep working, and emergency diagnostic
+execution requires explicit owner authorization
+(`EMERGENCY_DIAGNOSTIC_DEMO=1`). Provider failure never substitutes
+synthetic results automatically.
+
+### Shared dossier custody
+
+`app/custody.py` + `app/custody_db.py` give every operational property one
+shared dossier identity (a deterministic UUID derived from the property
+UUID — no registry, no merges). Versions append monotonically and are
+never rewritten; corrections arrive as permission-checked amendments
+(enrolled `CUSTODY_AMENDERS` authorizer + reason, chain re-verified
+before writing) that supersede the latest version. Before any handoff,
+the version is frozen into an immutable snapshot; the handoff itself is
+an HMAC-authenticated receipt chained to its predecessor. Forward,
+return, and human-review handoffs share one contract with different
+routing rules (downstream, upstream, escalate-to-`human_review`); a
+forward naming a superseded version is refused as stale, while returns
+and reviews on older versions are flagged as not-latest. Tampered bytes
+fail verification loudly.
+
+The canonical pipeline order is Gabriel → Raphael → Onesimus → Michael
+→ Uriel → Priscilla (Wondrue coordinates; she holds no custody).
+Receipts carry a pipeline version (`mvp-1` for pre-canonical history,
+`canonical-1` for new handoffs) so old rows keep their original meaning;
+issuing requires the holder to match the sender principal, enforced
+server-side. The shared HMAC proves integrity within the trust boundary,
+not origin — sender identity and custody ownership are checked
+separately.
+
+Chain order is authoritative from **predecessor links only**: chain
+validation, latest-receipt/tip selection, current-holder derivation, and
+pending-review selection all walk `prev_receipt` from the chain root.
+Timestamps and receipt-UUID ordering are never consulted — within one
+PostgreSQL transaction every receipt shares `CURRENT_TIMESTAMP`, and
+random UUIDs order arbitrarily. Validation requires a unique root and a
+single connected chain; forks, cycles, missing predecessors, and
+cross-dossier prev-links are rejected as tampering. Receipt issuance is
+serialized per dossier with a transaction-scoped advisory lock
+(`pg_advisory_xact_lock` on `custody:{dossier_id}`) taken before the
+holder read and the append, so concurrent issuers cannot race the tip.
+No schema change was needed: existing rows already carry the
+predecessor links and MACs, and historical records were not rewritten.
+
+Owner-run validation against disposable PostgreSQL 16 database
+`growup_mvp_gate` initially surfaced five custody failures (11 passed):
+tied timestamps plus random UUIDs broke chain ordering, produced
+wrong-holder assertions downstream, and an archival fixture tried to
+`UPDATE` an immutable snapshot row. The ordering/serialization fixes
+above and an aged-snapshot test fixture (inserted historical, never
+updated) resolve them; the live rerun is pending owner execution.
+
+Snapshots older than 90 days move to the archive table via
+`archive_snapshots()`; retrieval checks the hot table first, then the
+archive, and archived snapshots stay verifiable. Versions, receipts,
+packages, and conversion events are permanent and are never moved or
+deleted — database triggers enforce this.
+
+### Pilot ledger
+
+`app/pilot.py` tracks the 12-county × 3-category pilot (four qualified
+dossiers per cell, 144 total). The ledger is wired to actual processing:
+Gabriel persistence records discovered/qualified, Raphael decisions
+record assessed plus authorized/rejected/incomplete, Onesimus scenarios
+record engineering_assessed, Michael assessments record
+financially_assessed, Uriel packages record package_prepared, and
+Priscilla events record tracked_actual/tracked_simulated — each under
+its own counter (`michael_ready` is a retained legacy counter). Each
+(dossier, transition) counts at most once, so replays and resumed runs
+cannot inflate counts; unknown-county dossiers stay researchable but earn
+no cell credit, and synthetic identifiers are never counted. Category
+weights start equal and only order tied cells. Planning never executes
+or spends: it orders open cells by truthful shortfall and annotates each
+candidate action with its estimated Brave cost and a monthly-budget
+verdict.
+
+Quota credit keys on the canonical operational dossier identity
+(`canonical_quota_id`, derived from `dossier_id_for_property`) — never
+on run-scoped derivations — and only rows marked `identity_kind =
+'canonical'` count. Pilot success requires **all 36 cells** to each
+hold at least four distinct canonical qualified operational dossiers;
+144 records concentrated in too few cells, or cross-run duplicates of
+the same property, do not satisfy it. Discovery, qualification,
+Raphael authorization, engineering, financial, package, and
+simulated/actual tracking stages stay separate: a completed discovery
+quota is not proof that 144 outreach packages qualify.
+
+```bash
+python -m app.pilot status          # totals, stages, shortfalls, budget
+python -m app.pilot plan --max 12   # ordered next actions (planning only)
+python -m app.pilot stop            # halt planning; history preserved
+python -m app.pilot resume          # continue exactly where it stopped
+```
+
+Recording completed outcomes is allowed while stopped; only planning is
+gated. The pilot ledger itself never launches work — the bounded
+discovery runner (below) executes bursts and reads the ledger for
+cell ordering and stop conditions, while the Gabriel/Raphael/Onesimus
+/… hooks record what actually happened.
+
+### Bounded continuous discovery
+
+`app/discovery_runner.py` runs repeated bounded discovery bursts
+through the existing OSM adapter, budget controls, and Gabriel
+persistence — one runner, two policies. **Pilot** serves unmet
+36-cell qualification requirements first and stops when the quota is
+satisfied or a limit is reached; **timed** keeps
+discovering/reassessing appropriate real candidates within an approved
+duration and budget even after the quota is met. Controls: one active
+worker per scope (partial unique index; a second claimer gets `busy`
+and does no work), durable per-pass checkpoints with idempotent
+resume, per-invocation pass/duration/created bounds, provider pacing
+with bounded backoff, abort on authentication failure or repeated
+provider failures, no blind retries of ambiguous charged attempts,
+ownership fencing (owner token + heartbeat; a stalled row is adopted
+only after its lease lapses, and stop requests keep the slot so no
+second worker overlaps an in-flight pass), checkpointed evaluations
+that are never re-driven once terminal, and a Sabbath guard that
+refuses/pauses inside an owner-configured blackout evaluated in
+`America/Chicago` (`SABBATH_BLACKOUT`, `SABBATH_START`, `SABBATH_END`;
+defaults Fri 18:00–Sat 20:00 Chicago). The window is a configured
+approximation, not an astronomical sundown calculation — adjust it for
+the season, and set `SABBATH_BLACKOUT=0` only with explicit operator
+authorization. Without `tzdata` the guard fails closed.
+
+Every created id is enqueued in a durable evaluation backlog
+(checkpoint `backlog`, saved before any per-pass cap applies), and
+the backlog head — never a later pass's rediscovery — is what resume
+drives through the existing coordinator (`evaluate_property` →
+`start_evaluation_audited` with a deterministic
+`runner:{scope}:{property_id}` assignment for the discovered property)
+when acquisition is approved and the workflow is enabled. Terminal
+outcomes (`evaluated`, `blocked`, `skipped`) leave the backlog;
+`error` stays queued for resume. Reports keep `created` (property
+rows) separate from `evaluated` and `qualified_dossiers`, and truthful
+`needs_evidence` results are the normal outcome, not a failure.
+Address-less, missing, or invalid properties are skipped with reasons;
+ambiguous prior attempts block rather than retry with the same
+assignment id. Each pass checkpoints the backlog before evaluating,
+so a failed checkpoint write recovers through the finish-path re-save
+instead of losing candidates; a process crash between discovery's own
+commit and that save is closed by durable pass attribution: every
+pass stamps a deterministic discovery run id and saves it as the
+checkpoint's `pending_pass` *before* discovery runs. On resume the
+runner folds that exact run's permanent decision events back into the
+backlog — `created` outcomes with a `COMMITTED` mutation and a valid
+property UUID only, event-store reads, no provider calls and no new
+property records — and records the folded run in `discovery_runs` so
+it is never folded twice. Discovery limits (creation ceiling, pilot
+quota) stop new discovery only: a pending backlog keeps draining in
+bounded rounds under the same duration, stop-request, and
+per-pass-evaluation limits, so a creation ceiling never strands queued
+work. If the event store is unreadable, recovery aborts rather than
+proceeding blind.
+
+```bash
+python -m app.discovery_runner run --scope pilot-dfw --policy pilot \
+    --cells cells.json --max-passes 3 --max-duration 1800 --max-created 100
+python -m app.discovery_runner status --scope pilot-dfw   # latest run + checkpoint
+python -m app.discovery_runner stop --scope pilot-dfw     # pause at next pass boundary
+```
+
+Cells are operator-supplied `(county, category, bbox, source)` JSON;
+placeholders are never silently expanded. The same bursts are
+available through Wondrue (`start_discovery` / `resume_discovery` /
+`stop_discovery` / `inspect_discovery`, request-safe caps). A proposed
+two-hour timed preset (`TIMED_TWO_HOUR_PRESET`: 7200 s, 48 passes,
+400 created) exists in code but is **not launched** — duration and
+any spending approval are separate from implementation approval, and
+launch additionally requires owner-verified cells. Coordinator
+evaluations need explicit acquisition approval: the
+`--acquire-approved` CLI flag, or a Wondrue burst with `acquire: true`
+from the operator grant (ask mode previews the bounds first; see
+below). Without it the runner creates property records and reports
+`evaluations_precondition` instead of driving them.
+
+### Uriel — preparation-only packages
+
+`app/uriel.py` prepares genuine opportunity/campaign packages: dossier
+lineage, evidence references, Raphael decisions, engineering comparisons,
+Michael economics, unknowns, blockers, and next actions. Preparing
+requires a custody receipt handing the exact dossier version to Uriel;
+each dossier version gets one append-only outcome row (`draft`,
+`reviewed`, or `prepared`, decided at insert). Packages are genuine in
+both demo modes and never labeled synthetic; execution state stays
+`not_attempted` because no sender exists. Inspect with
+`python -m app.uriel list [--state S]` /
+`python -m app.uriel show <entry_id>`. There is no outreach function to
+call: sending, scheduling, or approving external action is not built.
+
+### Priscilla — simulated vs actual tracking
+
+`app/priscilla.py` records delivery, engagement, response, and conversion
+events against Uriel packages. Simulated demonstration events are allowed
+only with `DEMO_MODE=yes`, must be labeled simulated, and may reference
+real package IDs without implying real recipients responded. Actual
+events require explicit evidence references and must not carry simulated
+labels. Metrics report simulated and actual counts in strictly separate
+buckets — no combined total is offered. Switching modes replays nothing
+and converts nothing: rows are append-only and keep their kind.
+
+Deterministic cohort simulation (`priscilla-sim-1`) freezes one cohort
+of eligible genuine prepared packages (custody, verification,
+engineering, and financial handoff rules satisfied; blocked, draft,
+synthetic, and duplicate records excluded with reasons), then derives
+outcomes by fixed decimal arithmetic: `responses = floor(N × 0.10)`,
+`customers = round_half_up(responses × 0.36)` capped at responses, with
+reproducible seeded selection (`seeded-sha256-prefix`) over the frozen
+package order — outcomes never reroll on refresh or retry. For N=144:
+144 simulated outreach events, 14 responses (≈9.72%), 5 customers
+(≈35.71%). Smaller cohorts simulate against their actual size and
+disclose the shortfall; a changed cohort or configuration needs a new
+run. Each run persists its simulation id, idempotency key, frozen
+cohort, assumptions, and status. Idempotency binds the key to the
+material inputs (cohort label, frozen package selection, seed,
+configuration): identical retries replay the stored run, conflicting
+reuse is rejected, and `ON CONFLICT DO NOTHING` keeps concurrent
+insertion safe under PostgreSQL semantics — the loser re-reads the
+winner's row and runs the same validation. The unique index over
+(simulation, package, kind) additionally makes event-row writes
+non-duplicating. A simulation never changes dossier facts, financial
+results, actual metrics, or Uriel execution state.
+
+The unique-lead funnel counts each lead once per stage no matter how
+many event rows it has: cohort packages → simulated outreach →
+simulated responses → simulated customers (conversions ⊆ responses ⊆
+cohort, verified by `subset_consistent`), alongside cohort-scoped
+actual leads and exclusions — actual and simulated stay separate.
+Preview with `preview_simulation` (read-only: cohort, assumptions,
+expected counts), execute with `run_simulation`, inspect with
+`inspect_simulation`; Wondrue also lists eligible packages via
+`inspect_packages`.
+
+### DEMO_MODE
+
+`DEMO_MODE=yes` (the default) means prepare and analyze using real data,
+but simulate downstream external execution: Gabriel, Raphael, Onesimus,
+and Michael stay genuine, Uriel prepares genuine packages without
+sending, and only Priscilla may record explicitly simulated events.
+`DEMO_MODE=no` additionally forbids simulated events; it still cannot
+send anything, because no sender is implemented. Unset or blank means
+`yes`; any other value is rejected loudly. The switch affects
+Michael-stage and later external behavior only — upstream agents behave
+identically in both modes (covered by acceptance tests), and the
+synthetic upstream harness remains a separately selected diagnostic
+fallback (restricted after the first evidenced pilot; see above).
+
+### MVP limitations
+
+No autonomous 144-dossier execution, exhaustive city searches, OAuth/admin
+systems, outreach execution, additional agents, advanced underwriting, or
+detailed permitting. Synthetic records never count toward the 144-dossier
+target. `michael_ready` pilot counter and pre-canonical `mvp-1` receipt
+rows are retained for history, not live use. Positive real-property
+authorization still needs reviewed registry curation plus aligned
+identity evidence. Known residual: pending-pass recovery depends on
+reading the interrupted run's permanent decision events from the
+event store; an unreadable store aborts the burst rather than
+proceeding blind (see bounded discovery above). Validation gates
+(each needs
+its own owner approval): the corrected-code rerun of the 17 live
+PostgreSQL checks against `growup_mvp_gate` (the first run passed 11
+and failed 5 on custody ordering; DDL↔SQL schema, backlog checkpoint,
+`identity_review` record, crash recovery, ceiling drain, worker
+exclusion, simulation idempotency/concurrency, archival retrieval,
+concurrent issuance, and the full coordinator chain), a live Meta call
+proving meaningful runtime inference, and real discovery runs
+(the two-hour timed preset is defined but not launched).
+
 ## 🎥 Demonstration
 
-A demonstration video and usage walkthrough will be added as the hackathon MVP reaches completion.
+Three-minute walkthrough: evidence → actual/simulated decision →
+configurations → deterministic economics and unknowns. Open
+`GET /wondrue` (ask mode, synthetic target) or drive
+`POST /wondrue/command` directly with structured `intent` payloads.
+
+**A. Synthetic demonstration (always available, no database needed).**
+Send `start_demo` (full mode, or ask mode with the approval token) to run
+the fictional Fiction Tower fixtures end to end: Gabriel stages evidence,
+Raphael records a simulated authorization, Onesimus evaluates `bench`
+vs `rack3` with invented parameters clearly marked, and economics come
+back computed with explicit unknowns. Every response and export carries
+**SYNTHETIC DEMONSTRATION — NOT A REAL PROPERTY; VERIFICATION AND
+AUTHORIZATION ARE SIMULATED.** Reset with `POST /wondrue/demo/reset`;
+real records are untouched.
+
+**B. Real-property evaluation (needs PostgreSQL + approvals).** With
+`MVP_WORKFLOW_ENABLED=1`, send `start_real_evaluation` with an
+`assignment_id` and planner-issued `query`. Gabriel acquires evidence
+within the run's Brave bound, persists artifacts/dossier/qualification,
+and Raphael applies the real policy: expect `needs_evidence` until
+reviewed registry curation and aligned identity evidence exist — that
+stop is the correct fail-closed outcome. Use `inspect_*` /
+`explain_decision` (read-only safe) to review persisted records, `stop`
+to halt a run. `compare_scenarios` is a hypothetical what-if comparison
+(model proposes catalog options, deterministic Python prices them);
+because it can issue a Meta call it is consequential (ask-with-token
+or full, never read-only). Persisted Onesimus scenarios are the
+artifacts that require a Raphael authorization covering the exact
+dossier version. Once genuine packages exist, `inspect_packages` →
+`preview_simulation` → `run_simulation` → `inspect_simulation` walks
+the deterministic cohort funnel (for N=144: 14 responses, 5 customers);
+simulation writes simulated rows only and changes no dossier, finance,
+actual-metric, or execution state.
+
+Model output is labeled `live` or `replay` in every response; read-only
+mode never issues live calls. Live Meta and Brave calls were not executed
+during implementation (pending explicit spending authorization).
+
+**Demonstration limitations.** The walkthroughs above show software
+behavior, not findings: the synthetic path uses fictional fixtures with
+simulated verification, and the real path is expected to stop at
+`needs_evidence` until reviewed registry curation exists. Neither path
+executes discovery autonomously, spends budget, performs outreach, or
+counts toward the 144-dossier target (only qualified operational
+dossiers recorded in the pilot ledger do that). Custody, pilot,
+Michael, Uriel, Priscilla, funnel, runner, and coordinator flows are
+exercised by the acceptance suites (`tests/test_custody.py`,
+`tests/test_pilot.py`, `tests/test_michael.py`, `tests/test_uriel.py`,
+`tests/test_priscilla.py`, `tests/test_priscilla_sim.py`,
+`tests/test_modes.py`, `tests/test_wondrue.py`,
+`tests/test_wondrue_ops.py`, `tests/test_discovery_runner.py`,
+`tests/test_mvp_flow.py`, `tests/test_funnel_acceptance.py`);
+live-PostgreSQL variants run only where `GROWUP_PG_INTEGRATION=1` and
+migrations 001–015 are applied to a disposable database (never the
+operational records). Migration 015, live Meta proof, and
+real discovery launches remain unexecuted owner-approval gates.
 
 ---
 
@@ -1685,6 +2317,16 @@ Beyond the initial hackathon, Grow Up may expand to support:
 - Advanced financing and redevelopment opportunities
 - Vacant-lot agricultural projects and food forests
 - Purpose-built agricultural buildings
+
+Planned (not implemented) agent capabilities: a Regulatory & Permitting
+researcher, an Underwriting evaluator, Simeon (deal coordination and
+owner-authorized closing steps only — no autonomous contracts, financing
+commitments, securities offerings, ownership transfers, or construction
+execution), a Construction coordinator, Gabriella (vacant-lot discovery
+reusing Gabriel's infrastructure), and outdoor food-forest configurations
+for Onesimus. Named robotics vendors, if any appear in planning notes,
+are prospective examples, not partners. Asset management, accounting/tax,
+insurance/liability, and legal-support agents stay deferred.
 
 These are longer-term goals, not claims about current functionality.
 

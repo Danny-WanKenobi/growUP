@@ -61,7 +61,7 @@ class DossierRequest(BaseModel):
 
 
 class ClaimStatus(str, Enum):
-    SUPPORTED = "supported"  # >=2 independent domains, non-identical reports
+    SUPPORTED = "supported"  # >=2 distinct domains, non-identical reports
     SINGLE_SOURCE = "single_source"
     HISTORICAL = "historical"
     CONTRADICTORY = "contradictory"
@@ -269,7 +269,7 @@ def _corroboration(
         if len(texts) == 1:
             return (
                 ClaimStatus.SINGLE_SOURCE,
-                "identical text repeated across domains: republication, not independent corroboration",
+                "identical text repeated across domains: republication, not multi-host corroboration",
             )
         return (
             ClaimStatus.SUPPORTED,
@@ -277,7 +277,7 @@ def _corroboration(
         )
     if len(refs) >= 2:
         return ClaimStatus.SINGLE_SOURCE, "repeated within one domain: repetition is not corroboration"
-    return ClaimStatus.SINGLE_SOURCE, "single source; independent corroboration needed"
+    return ClaimStatus.SINGLE_SOURCE, "single source; corroboration from another host needed"
 
 
 # ---------------------------------------------------------------------------
@@ -657,9 +657,12 @@ def _build_summary(
     else:
         sentences.append("Requires further research before a meaningful decision.")
     if corroborated:
-        sentences.append(f"{corroborated} claim(s) corroborated by independent sources.")
+        sentences.append(
+            f"{corroborated} claim(s) with multi-host agreement "
+            "(distinct hosts, not authenticated source independence)."
+        )
     else:
-        sentences.append("No independent corroboration yet; claims are single-source.")
+        sentences.append("No multi-host corroboration yet; claims are single-source.")
     if dossier.conflicts:
         sentences.append(f"{len(dossier.conflicts)} conflict(s) require reconciliation.")
     return " ".join(sentences)
