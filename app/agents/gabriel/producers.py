@@ -19,6 +19,9 @@ Phase 2A is deliberately fail-closed:
   types are fabricated. Missing fields stay missing.
 - Identity attestation stays unaligned: grouping organizes evidence
   but never proves one physical building.
+- Publisher claims are extracted attributions, never authenticated:
+  they populate the policy's claimed (unauthenticated) originator
+  tier and can satisfy no registry or independence gate by themselves.
 - The production registry is empty, so no host is vetted.
 
 Every evaluation therefore explains NOT_VERIFIED until later phases
@@ -113,6 +116,26 @@ def _voice_facts(item) -> tuple[dict[str, str], set[str]]:
     return facts, conflicts
 
 
+def _voice_attribution(item) -> str | None:
+    """Map one member's attribution claims to a claimed publisher.
+
+    Only single-property members contribute. Absent claims yield no
+    publisher; incompatible claims within one member are omitted
+    rather than resolved arbitrarily. Distinct spellings are never
+    merged: the returned string is an unauthenticated claim for the
+    policy's claimed-originator tier, not an identity.
+    """
+    if len(item.properties) != 1:
+        return None
+    claimed = {
+        (observation.publisher or "").strip()
+        for observation in item.source_attributions
+    } - {""}
+    if len(claimed) != 1:
+        return None
+    return next(iter(claimed))
+
+
 def build_candidate_verification(
     candidate: RankedCandidate,
     members: list[int],
@@ -124,9 +147,10 @@ def build_candidate_verification(
     """Evaluate one ranked candidate against the verification policy.
 
     Voices carry the member result URLs with adapter-collected
-    provenance plus eligible defining facts mapped from the member's
-    own extracted observations: no publishers, no listing ids, no
-    record types. The claim under test is the mechanically observed
+    provenance plus eligible defining facts and at most one claimed
+    publisher mapped from the member's own extracted observations: no
+    listing ids, no record types. The claim under test is the
+    mechanically observed
     category when the grouped evidence agrees on one; when it
     contradicts itself, the first conflicting value (deterministic) so
     the contradiction itself is evaluated rather than misreported as
@@ -149,6 +173,7 @@ def build_candidate_verification(
             VoiceInput(
                 url=items[index].result_url or "",
                 provenance="adapter_collected",
+                publisher=_voice_attribution(items[index]),
                 defining_facts=facts,
             )
         )

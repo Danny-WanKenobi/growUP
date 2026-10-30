@@ -115,6 +115,14 @@ class BuildingFactObservation(BaseModel):
     status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
 
 
+class AttributionObservation(BaseModel):
+    """One source-reported publisher attribution claim (unauthenticated)."""
+
+    publisher: str
+    evidence: str
+    status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
+
+
 class ExtractedProperty(BaseModel):
     """One conservatively identified property candidate (never merged)."""
 
@@ -152,6 +160,7 @@ class ResultIntelligence(BaseModel):
     underuse: list[SignalObservation] = []
     structure: list[SignalObservation] = []
     building_facts: list[BuildingFactObservation] = []
+    source_attributions: list[AttributionObservation] = []
     county_mentions: list[str] = []
     mentions_downtown: bool = False
     temporal: TemporalAssessment = TemporalAssessment()
@@ -733,6 +742,80 @@ def extract_building_facts(text: str) -> list[BuildingFactObservation]:
     return observations
 
 
+# ---------------------------------------------------------------------------
+# Publisher attribution claims (explicit phrasings only; never authenticated)
+# ---------------------------------------------------------------------------
+
+# Phrasing matches case-insensitively; the captured name stays
+# case-sensitive so only clearly bounded capitalized names qualify.
+# Dots are excluded from name words so a name cannot run across a
+# sentence boundary ("CBRE. Courtesy of ..." stays two phrases).
+_ATTRIBUTION_NAME = r"[A-Z][\w&'-]*(?:\s+(?:&\s+)?[A-Z][\w&'-]*){0,5}"
+_ATTRIBUTION_RES = (
+    re.compile(r"(?i:\blisted\s+by\s+)(?-i:(" + _ATTRIBUTION_NAME + r"))"),
+    re.compile(r"(?i:\bcourtesy\s+of\s+)(?-i:(" + _ATTRIBUTION_NAME + r"))"),
+    re.compile(r"(?i:\bpresented\s+by\s+)(?-i:(" + _ATTRIBUTION_NAME + r"))"),
+    re.compile(r"(?i:\blisting\s+provided\s+by\s+)(?-i:(" + _ATTRIBUTION_NAME + r"))"),
+)
+_ATTRIBUTION_HISTORICAL_RE = re.compile(r"\b(?:formerly|previously)\b", re.IGNORECASE)
+_ATTRIBUTION_WAS_RE = re.compile(r"\bwas\s+$", re.IGNORECASE)
+_ATTRIBUTION_STREET_RE = re.compile(
+    r"\b(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|parkway|pkwy|"
+    r"highway|hwy|way|court|ct|circle|cir|terrace|terr|suite|ste|unit|floor|fl)\b",
+    re.IGNORECASE,
+)
+_MAX_PUBLISHER_CHARS = 80
+
+
+def extract_attributions(text: str, exclude: set[str] | frozenset[str] = frozenset()) -> list[AttributionObservation]:
+    """Extract explicit publisher attribution claims (never authenticate).
+
+    Only narrow phrasings ("listed by", "courtesy of", "presented by",
+    "listing provided by") followed by a clearly bounded capitalized
+    name qualify. Bare broker mentions, negations, historical or
+    superseded attributions, nearby-property references, street
+    addresses, unit markers, names matching the result's own extracted
+    property names, and malformed names produce nothing. Claims keep
+    their supporting excerpt and stay REPORTED_UNVERIFIED: a claim that
+    a broker listed a property is not proof of publisher identity.
+    ``exclude`` holds lowercased normalized own-names. Deterministic.
+    """
+    found: list[tuple[int, str, str]] = []
+    for pattern in _ATTRIBUTION_RES:
+        for match in pattern.finditer(text):
+            start = match.start()
+            if not _guarded(text, start):
+                continue
+            window = text[max(0, start - 40) : start]
+            if _ATTRIBUTION_HISTORICAL_RE.search(window):
+                continue
+            if _ATTRIBUTION_WAS_RE.search(text[max(0, start - 12) : start]):
+                continue
+            publisher = match.group(1).strip().strip(".,;:")
+            if (
+                not publisher
+                or len(publisher) > _MAX_PUBLISHER_CHARS
+                or not re.search(r"[A-Za-z]", publisher)
+                or "://" in publisher
+                or "@" in publisher
+                or _ATTRIBUTION_STREET_RE.search(publisher)
+                or normalize_text(publisher).lower() in exclude
+            ):
+                continue
+            found.append((start, publisher, _excerpt(text, match.start(), match.end())))
+    found.sort(key=lambda entry: (entry[0], entry[1]))
+    observations: list[AttributionObservation] = []
+    seen: set[str] = set()
+    for _, publisher, evidence in found:
+        if publisher in seen:
+            continue  # exact repeats collapse; distinct spellings stay distinct
+        seen.add(publisher)
+        observations.append(
+            AttributionObservation(publisher=publisher, evidence=evidence)
+        )
+    return observations
+
+
 def extract_county_mentions(text: str) -> list[str]:
     """Collect '<Name> County' mentions (evidence, not a lookup)."""
     return [f"{match.group(1)} County" for match in _COUNTY_RE.finditer(text)]
@@ -1002,6 +1085,8 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
     distress = extract_distress(combined)
     structure = extract_structure(combined)
     building_facts = extract_building_facts(combined)
+    own_names = {normalize_text(prop.name).lower() for prop in properties if prop.name}
+    attributions = extract_attributions(combined, exclude=own_names)
     observed = bool(properties or money or occupancy or availability or distress or underuse)
     status = (
         ObservationStatus.REPORTED_UNVERIFIED
@@ -1025,6 +1110,7 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
         underuse=underuse,
         structure=structure,
         building_facts=building_facts,
+        source_attributions=attributions,
         county_mentions=extract_county_mentions(combined),
         mentions_downtown=mentions_downtown(combined),
         temporal=temporal,

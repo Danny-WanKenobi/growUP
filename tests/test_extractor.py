@@ -15,6 +15,7 @@ from app.agents.gabriel.extractor import (
     TemporalStatus,
     assess_temporal,
     classify_result,
+    extract_attributions,
     extract_availability,
     extract_building_facts,
     extract_distress,
@@ -500,3 +501,64 @@ def test_intelligence_carries_building_facts() -> None:
     assert ("levels", "12") in [(ob.fact, ob.value) for ob in intel.building_facts]
     assert ("use", "office") in [(ob.fact, ob.value) for ob in intel.building_facts]
     assert intel.properties and intel.properties[0].street_address
+
+
+# --- Phase 2D: claimed publisher attribution ---
+
+
+def _publishers(text: str) -> list[str]:
+    return [ob.publisher for ob in extract_attributions(text)]
+
+
+def test_attribution_phrases() -> None:
+    assert _publishers("Listed by Example Realty") == ["Example Realty"]
+    assert _publishers("listed by Example Realty") == ["Example Realty"]
+    assert _publishers("Courtesy of Example Brokerage") == ["Example Brokerage"]
+    assert _publishers("Presented by Example Commercial") == ["Example Commercial"]
+    assert _publishers("Listing provided by Example Properties") == ["Example Properties"]
+
+
+def test_attribution_boundaries_and_repeats() -> None:
+    assert _publishers("Listed by Smith & Jones Realty LLC") == ["Smith & Jones Realty LLC"]
+    assert _publishers("Listed by CBRE") == ["CBRE"]
+    # Exact repeats collapse; distinct spellings stay distinct.
+    assert _publishers("Listed by CBRE. Listed by CBRE.") == ["CBRE"]
+    assert _publishers("Listed by CBRE. Courtesy of CBRE Group.") == ["CBRE", "CBRE Group"]
+
+
+def test_attribution_evidence_and_status() -> None:
+    [observation] = extract_attributions("Office building. Listed by Example Realty.")
+    assert "Listed by Example Realty" in observation.evidence
+    assert observation.status is ObservationStatus.REPORTED_UNVERIFIED
+
+
+def test_attribution_rejections() -> None:
+    assert extract_attributions("Example Realty has a new listing") == []  # bare mention
+    assert extract_attributions("Not listed by Example Realty") == []  # negated
+    assert extract_attributions("Formerly listed by Example Realty") == []  # superseded
+    assert extract_attributions("Previously listed by Example Realty") == []
+    assert extract_attributions("The tower was listed by Example Realty") == []
+    assert extract_attributions("Next to a property listed by Example Realty") == []
+    assert extract_attributions("Listed by example realty") == []  # unclear boundary
+    assert extract_attributions("Listed by") == []
+    assert extract_attributions("Listed by ???") == []
+    assert extract_attributions("Listed by 123 Main Street") == []  # address, not publisher
+    assert extract_attributions("Listed by Suite 400 Realty") == []  # unit marker
+
+
+def test_attribution_excludes_own_property_name() -> None:
+    intel = extract_intelligence(
+        _result(title="Meridian Tower",
+               snippet="Meridian Tower for sale. Listed by Meridian Tower.")
+    )
+    assert intel.properties and intel.properties[0].name == "Meridian Tower"
+    assert intel.source_attributions == []
+
+
+def test_attribution_ignores_urls() -> None:
+    intel = extract_intelligence(
+        _result(title="Meridian Center",
+               snippet="Office building for sale.",
+               url="https://brokers-example.com/listings/12345")
+    )
+    assert intel.source_attributions == []

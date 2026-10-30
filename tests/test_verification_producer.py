@@ -23,8 +23,12 @@ from app.agents.gabriel.source_registry import (
 )
 from app.agents.gabriel.sources.brave import BraveSearchResult
 from app.agents.gabriel.verification import (
+    IdentityAttestation,
     VerificationFailureReason as R,
     VerificationOutcome,
+    VerificationRequest,
+    VoiceInput,
+    verify_category,
 )
 
 _ADDR = "1200 Main Street, Dallas, TX 75202"
@@ -534,6 +538,100 @@ def test_live_verdict_persists_category_verification() -> None:
             conn.commit()
 
 
+# --- Phase 2D trust gate: claimed publishers vs authenticated provenance ---
+#
+# These tests run against the unmodified verification policy. They prove
+# that caller-modeled publisher strings are evaluated as supplied,
+# unauthenticated evidence and can satisfy none of the authentication,
+# registry, or identity gates by themselves.
+
+
+def _nameless_vetted_registry(*hosts: str) -> SourceRegistry:
+    # Vetted standing without curated publisher names, so origin keys
+    # fall through to the claimed (unauthenticated) tier.
+    return SourceRegistry(entries={
+        host: RegistryEntry(hostname=host, source_class=SourceClass.VETTED_COMMERCIAL)
+        for host in hosts
+    })
+
+
+def _policy_request(publishers, *, registry=None, aligned=False, facts=None):
+    hosts = ["broker-a.example", "broker-b.example"]
+    return VerificationRequest(
+        claim="commercial_property",
+        voices=[
+            VoiceInput(
+                url=f"https://{host}/listing",
+                provenance="adapter_collected",
+                publisher=publisher,
+                defining_facts=dict({"use": "office"} if facts is None else facts),
+            )
+            for host, publisher in zip(hosts, publishers)
+        ],
+        identity=IdentityAttestation(group_key="addr:test", aligned=aligned),
+        registry=registry or PRODUCTION_REGISTRY,
+    )
+
+
+def test_gate_claimed_publisher_is_not_authenticated() -> None:
+    # Distinct claimed publishers, empty production registry: the claim
+    # strings cannot create vetted standing.
+    result = verify_category(_policy_request(["Broker A", "Broker B"]))
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.UNVETTED_SOURCES_ONLY in result.reasons
+    assert R.REGISTRY_UNCONFIGURED in result.reasons
+
+
+def test_gate_claimed_publishers_do_not_bypass_identity() -> None:
+    # Even with a vetted registry and defining facts, distinct claimed
+    # publishers cannot compensate for unaligned identity.
+    result = verify_category(_policy_request(
+        ["Broker A", "Broker B"],
+        registry=_nameless_vetted_registry("broker-a.example", "broker-b.example"),
+        aligned=False,
+    ))
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.IDENTITY_UNRESOLVED in result.reasons
+
+
+def test_gate_claimed_publishers_need_facts_like_any_voice() -> None:
+    result = verify_category(_policy_request(
+        ["Broker A", "Broker B"],
+        registry=_nameless_vetted_registry("broker-a.example", "broker-b.example"),
+        aligned=True,
+        facts={},
+    ))
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in result.reasons
+
+
+def test_gate_same_claimed_publisher_is_one_voice() -> None:
+    # Identical claims collapse even when every other gate is open.
+    result = verify_category(_policy_request(
+        ["Broker A", "Broker A"],
+        registry=_nameless_vetted_registry("broker-a.example", "broker-b.example"),
+        aligned=True,
+    ))
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.SINGLE_VOICE_ONLY in result.reasons
+
+
+def test_gate_registry_publisher_overrides_claim() -> None:
+    # A registry publisher wins over any claimed string for the same
+    # host; disagreement fails closed rather than verifying.
+    registry = SourceRegistry(entries={
+        "broker-a.example": RegistryEntry(
+            hostname="broker-a.example",
+            source_class=SourceClass.VETTED_COMMERCIAL,
+            publisher="Curated Publisher",
+        ),
+    })
+    result = verify_category(_policy_request(
+        ["Someone Else", None], registry=registry, aligned=True))
+    assert result.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.INDEPENDENCE_UNCERTAIN in result.reasons
+
+
 # --- Phase 2C: fact mapping safeguards ---
 
 
@@ -657,3 +755,117 @@ def test_facts_do_not_change_ranking_or_response(monkeypatch) -> None:
         assert candidate.category_verification is not None
         assert candidate.category_verification.outcome is VerificationOutcome.NOT_VERIFIED
     assert "building_facts" in result.model_dump_json()
+
+
+# --- Phase 2D: claimed publisher mapping ---
+
+
+def test_claimed_publisher_mapped_for_single_property() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}. Listed by Example Realty.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(ranking, intel)[candidate.key]
+    assert [v.publisher for v in verdict.voices] == ["Example Realty"]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+
+
+def test_absent_attribution_maps_to_no_publisher() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(ranking, intel)[candidate.key]
+    assert [v.publisher for v in verdict.voices] == [None]
+
+
+def test_conflicting_claims_within_member_omitted() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}. Listed by Example Realty. "
+               "Courtesy of Other Brokerage.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(ranking, intel)[candidate.key]
+    assert [v.publisher for v in verdict.voices] == [None]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+
+
+def test_multi_property_attribution_excluded() -> None:
+    from app.agents.gabriel.producers import _voice_attribution
+
+    intel, _ = _ranked(
+        _result("https://broker-a.example/x", "Two properties",
+               "Meridian Center at 1200 Main Street and Meridian Plaza at "
+               "1300 Main Street, Dallas, TX 75202. Listed by Example Realty.")
+    )
+    assert len(intel.results[0].properties) > 1
+    assert intel.results[0].source_attributions
+    assert _voice_attribution(intel.results[0]) is None
+
+
+def test_distinct_claimed_publishers_stay_unauthenticated() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}. Listed by Example Realty."),
+        _result("https://broker-b.example/y", "Meridian Center",
+               f"Office building for sale at {_ADDR}. Listed by Other Brokerage.",
+               rank=2),
+    )
+    candidate = _only_candidate(intel, ranking)
+    # Even vetted with facts, distinct claims cannot satisfy identity.
+    verdict = build_candidate_verifications(
+        ranking, intel,
+        _nameless_vetted_registry("broker-a.example", "broker-b.example"))[candidate.key]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.IDENTITY_UNRESOLVED in verdict.reasons
+    assert R.SINGLE_VOICE_ONLY not in verdict.reasons
+
+
+def test_no_listing_ids_mapped() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building for sale at {_ADDR}. Listed by Example Realty.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(ranking, intel)[candidate.key]
+    assert all(v.originating_id is None for v in verdict.voices)
+
+
+def test_attribution_bearing_run_stays_not_verified(monkeypatch) -> None:
+    import app.agents.gabriel.research as research
+    from app.agents.gabriel.planner import plan_initial_searches
+    from app.observability.emitter import BatchEmitOutcome
+
+    for var, value in (("BRAVE_SEARCH_API_KEY", "unit-test-brave-key-only"),
+                       ("BRAVE_MONTHLY_CEILING", "100"),
+                       ("DATABASE_HOST", "localhost"), ("DATABASE_PORT", "5432"),
+                       ("DATABASE_NAME", "db"), ("DATABASE_USER", "u"),
+                       ("DATABASE_PASSWORD", "pw")):
+        monkeypatch.setenv(var, value)
+
+    def _execute(query, assignment_id, timeout):
+        return [_result("https://broker-a.example/x", "Meridian Center",
+                        f"Office building for sale at {_ADDR}. "
+                        "Listed by Example Realty.")]
+
+    monkeypatch.setattr(research, "execute_query", _execute)
+    monkeypatch.setattr(research, "reserve_requests",
+                        lambda n: {"used": n, "ceiling": 100,
+                                   "remaining": 100 - n, "month": "2026-10"})
+    monkeypatch.setattr(
+        research, "persist_verdicts", lambda verdicts: BatchEmitOutcome(pending=False))
+    request = research.ResearchRunRequest.model_validate(
+        {"assignments": [a.model_dump() for a in plan_initial_searches()],
+         "include_ranking": True}
+    )
+    result = research.run_research(request)
+    direct = rank_intelligence(result.intelligence)
+    assert result.ranking.value_order == direct.value_order
+    assert result.ranking.opportunity_order == direct.opportunity_order
+    for candidate in result.ranking.candidates:
+        assert candidate.category_verification is not None
+        assert candidate.category_verification.outcome is VerificationOutcome.NOT_VERIFIED
+    assert "source_attributions" in result.model_dump_json()
