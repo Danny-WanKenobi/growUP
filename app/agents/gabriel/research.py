@@ -33,6 +33,7 @@ from app.agents.gabriel.planner import (
     SearchAssignment,
     plan_initial_searches,
 )
+from app.agents.gabriel.producers import build_candidate_verifications
 from app.agents.gabriel.provenance import build_research_verdicts, persist_verdicts
 from app.agents.gabriel.sources.brave import (
     BraveError,
@@ -437,6 +438,13 @@ def run_research(request: ResearchRunRequest) -> ResearchRunResult:
         if result.intelligence is None:
             raise ResearchError("ranking requires include_intelligence")
         result.ranking = rank_intelligence(result.intelligence)
+        # Trusted-producer annotation (Phase 2A): parallel verification
+        # evaluations over adapter-collected results. Scores, order, and
+        # verdicts are untouched; every evaluation explains NOT_VERIFIED
+        # until genuine facts, attribution, and registry curation exist.
+        annotations = build_candidate_verifications(result.ranking, result.intelligence)
+        for candidate in result.ranking.candidates:
+            candidate.category_verification = annotations.get(candidate.key)
         note_activity(
             run_id, "gabriel.ranking.completed",
             "research ranking completed (heuristic prioritization, not investment advice)",
