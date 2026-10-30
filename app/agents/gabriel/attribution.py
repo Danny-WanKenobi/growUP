@@ -77,6 +77,7 @@ class CategoryEvidenceStatus(str, Enum):
 
     UNKNOWN = "unknown"
     OBSERVED = "observed"
+    CORROBORATED = "corroborated"
     VERIFIED = "verified"
     CONTRADICTORY = "contradictory"
 
@@ -289,8 +290,12 @@ def evaluate_category_evidence(
     """Evaluate supplied category observations deterministically (pure).
 
     The search-target category is recorded as context only. Matching
-    observations cap at OBSERVED: no combination of caller-controlled
-    values, origins, or source URLs can produce VERIFIED.
+    observations cap at CORROBORATED: no combination of caller-controlled
+    values, origins, or source URLs can produce VERIFIED. CORROBORATED
+    means multi-host agreement among the supplied observations -- at
+    least two distinct canonical evidence hosts -- without authoritative
+    verification or authenticated provenance. Distinct hosts do not
+    prove independent publishers.
     """
     parsed = [
         observation if isinstance(observation, CategoryObservation) else CategoryObservation.model_validate(observation)
@@ -315,5 +320,24 @@ def evaluate_category_evidence(
     # observations can never promote a category to VERIFIED here.
     # Future VERIFIED promotion requires a separately authorized
     # trusted-evidence path; it does not exist yet.
-    result.status = CategoryEvidenceStatus.OBSERVED
+    #
+    # Corroboration is host-primary: each distinct canonical evidence
+    # host forms one voice. Duplicate hosts count once; hostless or
+    # invalid URLs form no voice; search/intake-labeled observations
+    # are preserved but contribute no voice. Origin labels are not
+    # authentication, and distinct hosts do not prove independent
+    # publishers -- CORROBORATED is multi-host agreement only.
+    hosts = set()
+    for item in ordered:
+        if normalize_category_value(item.value) != value:
+            continue
+        if item.origin in ("search", "intake"):
+            continue
+        host = evidence_host(None, item.source_url)
+        if host:
+            hosts.add(host)
+    if len(hosts) >= 2:
+        result.status = CategoryEvidenceStatus.CORROBORATED
+    else:
+        result.status = CategoryEvidenceStatus.OBSERVED
     return result
