@@ -106,6 +106,15 @@ class SignalObservation(BaseModel):
     status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
 
 
+class BuildingFactObservation(BaseModel):
+    """One source-reported building fact with its supporting excerpt."""
+
+    fact: str  # levels|height_m|building|designation|use|use_status
+    value: str
+    evidence: str
+    status: ObservationStatus = ObservationStatus.REPORTED_UNVERIFIED
+
+
 class ExtractedProperty(BaseModel):
     """One conservatively identified property candidate (never merged)."""
 
@@ -142,6 +151,7 @@ class ResultIntelligence(BaseModel):
     distress: list[SignalObservation] = []
     underuse: list[SignalObservation] = []
     structure: list[SignalObservation] = []
+    building_facts: list[BuildingFactObservation] = []
     county_mentions: list[str] = []
     mentions_downtown: bool = False
     temporal: TemporalAssessment = TemporalAssessment()
@@ -611,6 +621,118 @@ def extract_structure(text: str) -> list[SignalObservation]:
     return _extract_signals(text, _STRUCTURE_PATTERNS)
 
 
+# ---------------------------------------------------------------------------
+# Building facts (explicit statements only; never keyword inference)
+# ---------------------------------------------------------------------------
+
+_BUILDING_FACT_KEYS = ("levels", "height_m", "building", "designation", "use", "use_status")
+
+_LEVELS_PATTERNS = (
+    re.compile(r"\b(\d{1,3})\s*-\s*stor(?:y|ies)\b", re.IGNORECASE),
+    re.compile(r"\b(\d{1,3})\s+stor(?:y|ies)\b", re.IGNORECASE),
+    re.compile(r"\b(\d{1,3})\s*-\s*floors?\s+(?=tall\b|building\b|tower\b|commercial\b|office\b)", re.IGNORECASE),
+    re.compile(r"\b(\d{1,3})\s+floors?\s+tall\b", re.IGNORECASE),
+)
+_HEIGHT_FT_PATTERNS = (
+    re.compile(r"\b(\d+(?:\.\d+)?)\s*-\s*foot\s*-\s*tall\b", re.IGNORECASE),
+    re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:feet|foot|ft\.?)\s+tall\b", re.IGNORECASE),
+    re.compile(r"\b(\d+(?:\.\d+)?)\s*-\s*(?:feet|foot)\b", re.IGNORECASE),
+)
+_HEIGHT_M_PATTERNS = (
+    re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:meters?|metres?|m\.?)\s+tall\b", re.IGNORECASE),
+    re.compile(r"\b(\d+(?:\.\d+)?)\s*-\s*meters?\b", re.IGNORECASE),
+)
+_SKYSCRAPER_RE = re.compile(r"\bskyscraper\b", re.IGNORECASE)
+_HIGH_RISE_RE = re.compile(r"\bhigh[-\s]rises?\b", re.IGNORECASE)
+_USE_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"\boffice\s+(?:building|tower)\b", re.IGNORECASE), "office"),
+    (re.compile(r"\bcommercial\s+(?:building|tower)\b", re.IGNORECASE), "commercial"),
+    (re.compile(r"\bwarehouse\b", re.IGNORECASE), "warehouse"),
+    (re.compile(r"\bdistribution\s+cent(?:er|re)\b", re.IGNORECASE), "distribution"),
+    (re.compile(r"\bindustrial\s+(?:building|facility|property|warehouse)\b", re.IGNORECASE), "industrial"),
+    (re.compile(r"\bretail\s+building\b", re.IGNORECASE), "retail"),
+)
+_STATUS_PROPOSED_RE = re.compile(r"\b(?:proposed|planned|under\s+construction)\b", re.IGNORECASE)
+_STATUS_CURRENT_RE = re.compile(r"\b(?:existing|operating|currently|in\s+operation)\b", re.IGNORECASE)
+_NEGATION_RE = re.compile(r"\b(?:no|not|never|neither|nor|without)\b|n['\u2019]t\b", re.IGNORECASE)
+_NEARBY_RE = re.compile(
+    r"\b(?:nearby|neighboring|neighbouring|adjacent|next\s+to|across\s+from)\b", re.IGNORECASE
+)
+_ZONING_RE = re.compile(r"\bzon(?:e|ed|ing)\b", re.IGNORECASE)
+_DATA_PREFIX_RE = re.compile(r"\bdata\s+$", re.IGNORECASE)
+
+_MAX_LEVELS = 300
+_MAX_HEIGHT_M = 1000.0
+_FT_TO_M = 0.3048
+
+
+def _guarded(text: str, start: int, *, zoning: bool = False) -> bool:
+    """Whether a match survives the negation/proximity guards."""
+    if _NEGATION_RE.search(text[max(0, start - 40) : start]):
+        return False
+    if _NEARBY_RE.search(text[max(0, start - 60) : start]):
+        return False
+    if zoning and _ZONING_RE.search(text[max(0, start - 30) : start]):
+        return False
+    return True
+
+
+def extract_building_facts(text: str) -> list[BuildingFactObservation]:
+    """Extract explicit building-level facts (never infer, never guess).
+
+    Only narrow building assertions qualify: story/floor counts in
+    height constructions, heights with units, explicit skyscraper or
+    high-rise designations, genuine use descriptions, and construction
+    status markers. Ordinals ("12th floor"), tenancy ("occupies 12
+    floors"), zoning, nearby-building statements, negations, and bare
+    keywords produce nothing. Every observation keeps its supporting
+    excerpt and stays REPORTED_UNVERIFIED. Deterministic.
+    """
+    found: list[tuple[int, str, str, str]] = []
+
+    def _add(match: re.Match, fact: str, value: str, *, zoning: bool = False) -> None:
+        if _guarded(text, match.start(), zoning=zoning):
+            found.append((match.start(), fact, value, _excerpt(text, match.start(), match.end())))
+
+    for pattern in _LEVELS_PATTERNS:
+        for match in pattern.finditer(text):
+            levels = int(match.group(1))
+            if 1 <= levels <= _MAX_LEVELS:
+                _add(match, "levels", str(levels))
+    for pattern in _HEIGHT_FT_PATTERNS:
+        for match in pattern.finditer(text):
+            meters = round(float(match.group(1)) * _FT_TO_M, 2)
+            if 0 < meters <= _MAX_HEIGHT_M:
+                _add(match, "height_m", "%g" % meters)
+    for pattern in _HEIGHT_M_PATTERNS:
+        for match in pattern.finditer(text):
+            meters = round(float(match.group(1)), 2)
+            if 0 < meters <= _MAX_HEIGHT_M:
+                _add(match, "height_m", "%g" % meters)
+    for match in _SKYSCRAPER_RE.finditer(text):
+        _add(match, "building", "skyscraper")
+    for match in _HIGH_RISE_RE.finditer(text):
+        _add(match, "designation", "high_rise")
+    for pattern, use in _USE_PATTERNS:
+        for match in pattern.finditer(text):
+            if use == "warehouse" and _DATA_PREFIX_RE.search(text[max(0, match.start() - 30) : match.start()]):
+                continue  # "data warehouse" is software, not a building
+            _add(match, "use", use, zoning=True)
+    for match in _STATUS_PROPOSED_RE.finditer(text):
+        _add(match, "use_status", "proposed")
+    for match in _STATUS_CURRENT_RE.finditer(text):
+        _add(match, "use_status", "current")
+    found.sort(key=lambda entry: (entry[0], entry[1], entry[2]))
+    observations: list[BuildingFactObservation] = []
+    seen: set[tuple[str, str]] = set()
+    for _, fact, value, evidence in found:
+        if (fact, value) in seen:
+            continue  # identical repeats collapse; distinct values stay for conflict handling
+        seen.add((fact, value))
+        observations.append(BuildingFactObservation(fact=fact, value=value, evidence=evidence))
+    return observations
+
+
 def extract_county_mentions(text: str) -> list[str]:
     """Collect '<Name> County' mentions (evidence, not a lookup)."""
     return [f"{match.group(1)} County" for match in _COUNTY_RE.finditer(text)]
@@ -879,6 +1001,7 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
     availability = extract_availability(combined)
     distress = extract_distress(combined)
     structure = extract_structure(combined)
+    building_facts = extract_building_facts(combined)
     observed = bool(properties or money or occupancy or availability or distress or underuse)
     status = (
         ObservationStatus.REPORTED_UNVERIFIED
@@ -901,6 +1024,7 @@ def extract_intelligence(result: BraveSearchResult) -> ResultIntelligence:
         distress=distress,
         underuse=underuse,
         structure=structure,
+        building_facts=building_facts,
         county_mentions=extract_county_mentions(combined),
         mentions_downtown=mentions_downtown(combined),
         temporal=temporal,

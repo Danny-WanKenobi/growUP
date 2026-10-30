@@ -16,6 +16,7 @@ from app.agents.gabriel.extractor import (
     assess_temporal,
     classify_result,
     extract_availability,
+    extract_building_facts,
     extract_distress,
     extract_intelligence,
     extract_money,
@@ -387,3 +388,115 @@ def test_intelligence_endpoint_backward_compatible(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["intelligence"] is None
     assert "results" in response.json() and "errors" in response.json()
+
+
+# --- Phase 2C: structured building facts ---
+
+
+def _facts(text: str) -> list[tuple[str, str]]:
+    return [(ob.fact, ob.value) for ob in extract_building_facts(text)]
+
+
+def test_levels_variants() -> None:
+    assert ("levels", "12") in _facts("12-story office building")
+    assert ("levels", "12") in _facts("A 12 stories tower for sale")
+    assert ("levels", "12") in _facts("12-floor commercial tower")
+    assert ("levels", "12") in _facts("Rising 12 floors tall over downtown")
+
+
+def test_height_variants_and_conversion() -> None:
+    assert ("height_m", "91.44") in _facts("300-foot-tall building")
+    assert ("height_m", "91.44") in _facts("300 feet tall office tower")
+    assert ("height_m", "91.44") in _facts("A 300-foot tower for sale")
+    assert ("height_m", "90") in _facts("90 m tall office building")
+    assert ("height_m", "90") in _facts("90-meter commercial tower")
+
+
+def test_designation_facts() -> None:
+    assert ("building", "skyscraper") in _facts("Existing skyscraper for sale")
+    assert ("designation", "high_rise") in _facts("A downtown high-rise with tenants")
+    assert ("designation", "high_rise") in _facts("High rise office property")
+
+
+def test_use_facts() -> None:
+    assert ("use", "office") in _facts("Office building for sale")
+    assert ("use", "commercial") in _facts("Commercial building on Main Street")
+    assert ("use", "warehouse") in _facts("Warehouse with rail access")
+    assert ("use", "distribution") in _facts("Operating distribution center")
+    assert ("use", "industrial") in _facts("Industrial facility for lease")
+    assert ("use", "retail") in _facts("Retail building with parking")
+
+
+def test_use_status_markers() -> None:
+    assert ("use_status", "proposed") in _facts("Proposed 20-story tower")
+    assert ("use_status", "proposed") in _facts("Planned warehouse development")
+    assert ("use_status", "proposed") in _facts("Tower under construction")
+    assert ("use_status", "current") in _facts("Existing skyscraper for sale")
+    assert ("use_status", "current") in _facts("Operating distribution center")
+
+
+def test_ordinals_rejected() -> None:
+    assert _facts("Suite on the 12th floor") == []
+    assert _facts("Available space on floor 12") == []
+
+
+def test_tenancy_rejected() -> None:
+    assert _facts("Tenant occupies 12 floors") == []
+    assert ("levels", "12") not in _facts("Firm leases 12 floors downtown")
+
+
+def test_zoning_and_district_rejected() -> None:
+    assert _facts("Zoned for commercial use") == []
+    assert _facts("Parcel zoned warehouse industrial") == []
+    assert _facts("In the commercial district") == []
+
+
+def test_negation_rejected() -> None:
+    assert _facts("Not a high-rise property") == []
+    assert _facts("No longer a warehouse") == []
+    assert _facts("Never operated as an office building") == []
+
+
+def test_nearby_buildings_rejected() -> None:
+    assert _facts("Next to a 12-story tower") == []
+    assert _facts("Across from the neighboring warehouse") == []
+
+
+def test_data_warehouse_rejected() -> None:
+    assert _facts("New data warehouse platform") == []
+
+
+def test_bare_keywords_produce_no_facts() -> None:
+    assert _facts("Commercial opportunity downtown") == []
+    assert _facts("Tower site with great views") == []
+
+
+def test_proposed_specs_preserved_as_observations() -> None:
+    # "Proposed 20-story tower" keeps both observations at extraction;
+    # the producer excludes specs from current-building verification.
+    facts = _facts("Proposed 20-story tower")
+    assert ("levels", "20") in facts
+    assert ("use_status", "proposed") in facts
+
+
+def test_fact_observations_carry_evidence() -> None:
+    [observation] = [ob for ob in extract_building_facts("12-story office building")
+                     if ob.fact == "levels"]
+    assert observation.value == "12"
+    assert "12-story" in observation.evidence
+    assert observation.status is ObservationStatus.REPORTED_UNVERIFIED
+
+
+def test_absurd_values_rejected() -> None:
+    assert _facts("A 9999-story tower") == []
+    assert _facts("5000 feet tall antenna") == []
+
+
+def test_intelligence_carries_building_facts() -> None:
+    intel = extract_intelligence(
+        _result(title="Meridian Center",
+               snippet="12-story office building at 1200 Main Street, Dallas, TX 75202.")
+    )
+    assert ("levels", "12") in [(ob.fact, ob.value) for ob in intel.building_facts]
+    assert ("use", "office") in [(ob.fact, ob.value) for ob in intel.building_facts]
+    assert intel.properties and intel.properties[0].street_address

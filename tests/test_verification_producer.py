@@ -90,22 +90,43 @@ def test_missing_listing_ids_stay_unknown() -> None:
     assert all(v.originating_id is None for v in verdict.voices)
 
 
+def _vetted_registry(*hosts: str) -> SourceRegistry:
+    return SourceRegistry(entries={
+        host: RegistryEntry(
+            hostname=host,
+            source_class=SourceClass.VETTED_COMMERCIAL,
+            publisher=f"Publisher {host}",
+        )
+        for host in hosts
+    })
+
+
 def test_missing_facts_fail_closed_with_vetted_registry() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office property for sale at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in verdict.reasons
+
+
+def test_extracted_facts_flow_into_eligibility() -> None:
+    # A use fact makes the voice eligible, advancing past
+    # MISSING_DEFINING_FACTS -- while staying NOT_VERIFIED overall.
     intel, ranking = _ranked(
         _result("https://broker-a.example/x", "Meridian Center",
                f"Office building for sale at {_ADDR}.")
     )
     candidate = _only_candidate(intel, ranking)
-    registry = SourceRegistry(entries={
-        "broker-a.example": RegistryEntry(
-            hostname="broker-a.example",
-            source_class=SourceClass.VETTED_COMMERCIAL,
-            publisher="Broker A",
-        ),
-    })
-    verdict = build_candidate_verifications(ranking, intel, registry)[candidate.key]
+    verdict = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
     assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
-    assert R.MISSING_DEFINING_FACTS in verdict.reasons
+    assert R.MISSING_DEFINING_FACTS not in verdict.reasons
+    assert R.SINGLE_VOICE_ONLY in verdict.reasons
+    assert R.IDENTITY_UNRESOLVED in verdict.reasons
 
 
 def test_distinct_hosts_do_not_verify() -> None:
@@ -511,3 +532,128 @@ def test_live_verdict_persists_category_verification() -> None:
                 cur.execute("DELETE FROM agent_events WHERE run_id = %(run_id)s",
                             {"run_id": run_id})
             conn.commit()
+
+
+# --- Phase 2C: fact mapping safeguards ---
+
+
+def test_proposed_specs_excluded_from_high_rise_facts() -> None:
+    # "Proposed 20-story tower": specs stay observations but must not
+    # become positive current-building verification facts.
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Tower",
+               f"Proposed 20-story tower at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    assert any(ob.fact == "levels" for item in intel.results for ob in item.building_facts)
+    verdict = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS in verdict.reasons
+
+
+def test_planned_and_under_construction_excluded() -> None:
+    for snippet in ("Planned 90-meter tower at %s." % _ADDR,
+                    "Tower under construction, 25 stories, at %s." % _ADDR):
+        intel, ranking = _ranked(
+            _result("https://broker-a.example/x", "Meridian Tower", snippet)
+        )
+        candidate = _only_candidate(intel, ranking)
+        verdict = build_candidate_verifications(
+            ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+        assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+        assert R.MISSING_DEFINING_FACTS in verdict.reasons
+
+
+def test_existing_high_rise_facts_flow_but_do_not_verify() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Tower",
+               f"Existing 20-story office tower at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    # Empty production registry: facts alone never verify.
+    verdict = build_candidate_verifications(ranking, intel)[candidate.key]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.REGISTRY_UNCONFIGURED in verdict.reasons
+    # Even vetted, a single unaligned voice cannot verify.
+    vetted = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+    assert vetted.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MISSING_DEFINING_FACTS not in vetted.reasons
+    assert R.SINGLE_VOICE_ONLY in vetted.reasons
+
+
+def test_within_voice_conflict_drops_key_and_marks_contradiction() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Center",
+               f"Office building and warehouse complex at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.MATERIAL_CONTRADICTION in verdict.reasons
+
+
+def test_ambiguous_status_fails_closed_to_proposed() -> None:
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Meridian Tower",
+               f"Existing tower, proposed 30-story expansion at {_ADDR}.")
+    )
+    candidate = _only_candidate(intel, ranking)
+    verdict = build_candidate_verifications(
+        ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]
+    # Proposed wins: high-rise specs excluded, no current-building facts.
+    assert R.MISSING_DEFINING_FACTS in verdict.reasons
+
+
+def test_multi_property_facts_not_attributed() -> None:
+    from app.agents.gabriel.producers import _voice_facts
+
+    intel, ranking = _ranked(
+        _result("https://broker-a.example/x", "Two properties",
+               "Meridian Center at 1200 Main Street and Meridian Plaza at "
+               "1300 Main Street, Dallas, TX 75202. 12-story office building.")
+    )
+    assert len(intel.results[0].properties) > 1
+    facts, _ = _voice_facts(intel.results[0])
+    assert facts == {}
+
+
+def test_facts_do_not_change_ranking_or_response(monkeypatch) -> None:
+    import app.agents.gabriel.research as research
+    from app.agents.gabriel.planner import plan_initial_searches
+    from app.observability.emitter import BatchEmitOutcome
+
+    for var, value in (("BRAVE_SEARCH_API_KEY", "unit-test-brave-key-only"),
+                       ("BRAVE_MONTHLY_CEILING", "100"),
+                       ("DATABASE_HOST", "localhost"), ("DATABASE_PORT", "5432"),
+                       ("DATABASE_NAME", "db"), ("DATABASE_USER", "u"),
+                       ("DATABASE_PASSWORD", "pw")):
+        monkeypatch.setenv(var, value)
+
+    def _execute(query, assignment_id, timeout):
+        return [_result("https://broker-a.example/x", "Meridian Tower",
+                        f"Existing 20-story office tower at {_ADDR}.")]
+
+    monkeypatch.setattr(research, "execute_query", _execute)
+    monkeypatch.setattr(research, "reserve_requests",
+                        lambda n: {"used": n, "ceiling": 100,
+                                   "remaining": 100 - n, "month": "2026-10"})
+    monkeypatch.setattr(
+        research, "persist_verdicts", lambda verdicts: BatchEmitOutcome(pending=False))
+    request = research.ResearchRunRequest.model_validate(
+        {"assignments": [a.model_dump() for a in plan_initial_searches()],
+         "include_ranking": True}
+    )
+    result = research.run_research(request)
+    direct = rank_intelligence(result.intelligence)
+    assert result.ranking.value_order == direct.value_order
+    assert result.ranking.opportunity_order == direct.opportunity_order
+    assert [c.opportunity.score for c in result.ranking.candidates] == [
+        c.opportunity.score for c in direct.candidates
+    ]
+    for candidate in result.ranking.candidates:
+        assert candidate.category_verification is not None
+        assert candidate.category_verification.outcome is VerificationOutcome.NOT_VERIFIED
+    assert "building_facts" in result.model_dump_json()

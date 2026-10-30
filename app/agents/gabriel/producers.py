@@ -49,6 +49,18 @@ from app.agents.gabriel.verification import (
 # identically, and labels never authenticate provenance.
 _EXTRACTION_ORIGIN = "extracted"
 
+# Fact keys the verification policy reads per claim. Within-voice
+# conflicts on any other key are still dropped, but only relevant keys
+# can mark the evaluated claim materially contradictory.
+_CLAIM_FACT_KEYS = {
+    "high_rise": frozenset(("levels", "height_m", "building", "designation")),
+    "commercial_property": frozenset(("use",)),
+    "warehouse_industrial": frozenset(("use",)),
+}
+
+# Proposed design specifications are never current-building facts.
+_PROPOSED_BLOCKED_FACTS = ("levels", "height_m", "building", "designation")
+
 
 def _member_observations(
     members: list[int], items: list,
@@ -70,6 +82,37 @@ def _member_observations(
     return observations
 
 
+def _voice_facts(item) -> tuple[dict[str, str], set[str]]:
+    """Map one member's fact observations to defining facts.
+
+    Only single-property members contribute: facts from multi-property
+    or property-less results cannot be attributed to this candidate.
+    Conflicting values for one key are dropped (never a favorable
+    pick); ambiguous use-status fails closed to proposed. Proposed
+    construction excludes all current-building facts.
+    """
+    if len(item.properties) != 1:
+        return {}, set()
+    values: dict[str, set[str]] = {}
+    for observation in item.building_facts:
+        values.setdefault(observation.fact, set()).add(observation.value)
+    facts: dict[str, str] = {}
+    conflicts: set[str] = set()
+    for key in sorted(values):
+        options = values[key]
+        if len(options) > 1:
+            if key == "use_status":
+                facts[key] = "proposed"
+                continue
+            conflicts.add(key)
+            continue
+        facts[key] = next(iter(options))
+    if facts.get("use_status") == "proposed":
+        for key in _PROPOSED_BLOCKED_FACTS:
+            facts.pop(key, None)
+    return facts, conflicts
+
+
 def build_candidate_verification(
     candidate: RankedCandidate,
     members: list[int],
@@ -81,23 +124,34 @@ def build_candidate_verification(
     """Evaluate one ranked candidate against the verification policy.
 
     Voices carry the member result URLs with adapter-collected
-    provenance and nothing else: no publishers, no listing ids, no
-    defining facts, no record types. The claim under test is the
-    mechanically observed category when the grouped evidence agrees on
-    one; when it contradicts itself, the first conflicting value
-    (deterministic) so the contradiction itself is evaluated rather
-    than misreported as absent evidence; else empty (no recognized
-    claim). Identity stays unaligned.
+    provenance plus eligible defining facts mapped from the member's
+    own extracted observations: no publishers, no listing ids, no
+    record types. The claim under test is the mechanically observed
+    category when the grouped evidence agrees on one; when it
+    contradicts itself, the first conflicting value (deterministic) so
+    the contradiction itself is evaluated rather than misreported as
+    absent evidence; else empty (no recognized claim). Identity stays
+    unaligned.
     """
     active = PRODUCTION_REGISTRY if registry is None else registry
-    voices = [
-        VoiceInput(url=items[index].result_url or "", provenance="adapter_collected")
-        for index in members
-    ]
     mechanical = evaluate_category_evidence(_member_observations(members, items))
     claim = mechanical.observed or ""
     if not claim and mechanical.status is CategoryEvidenceStatus.CONTRADICTORY:
         claim = mechanical.conflicting_values[0]
+    relevant = _CLAIM_FACT_KEYS.get(claim, frozenset())
+    voices = []
+    fact_conflict = False
+    for index in members:
+        facts, conflicts = _voice_facts(items[index])
+        if conflicts & relevant:
+            fact_conflict = True
+        voices.append(
+            VoiceInput(
+                url=items[index].result_url or "",
+                provenance="adapter_collected",
+                defining_facts=facts,
+            )
+        )
     disputes = len(candidate.identity_disputes)
     note = (
         "Phase 2A conservative rule: grouping basis "
@@ -108,7 +162,9 @@ def build_candidate_verification(
         claim=claim,
         voices=voices,
         identity=IdentityAttestation(group_key=candidate.key, aligned=False, note=note),
-        material_contradiction=mechanical.status is CategoryEvidenceStatus.CONTRADICTORY,
+        material_contradiction=(
+            mechanical.status is CategoryEvidenceStatus.CONTRADICTORY or fact_conflict
+        ),
         registry=active,
     )
     return verify_category(request)
