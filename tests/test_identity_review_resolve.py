@@ -477,12 +477,24 @@ class _FakeCursor:
             raise AssertionError(f"resolution must not write business rows: {sql[:80]}")
         if lowered.startswith(("insert into", "update ", "delete from")):
             self._conn._dirty = True
+        if lowered.startswith("select * from identity_reviews where review_id") and (
+            "for update" in lowered
+        ):
+            # Acquire the row lock BEFORE touching the shared guard,
+            # then read under guard: waiting for a per-review lock
+            # while holding guard deadlocks the holder, which needs
+            # guard to finish (ABBA inversion). Reading after the
+            # lock also matches FOR UPDATE semantics (the latest
+            # committed version, never a pre-lock stale copy).
+            rid = str(params["review_id"])
+            self._conn._acquire(rid)
+            with self._db.guard:
+                self._row = copy.deepcopy(self._db.reviews.get(rid))
+            return
         with self._db.guard:
             if lowered.startswith("select * from identity_reviews where review_id"):
                 rid = str(params["review_id"])
                 self._row = copy.deepcopy(self._db.reviews.get(rid))
-                if "for update" in lowered:
-                    self._conn._acquire(rid)
                 return
             if lowered.startswith("select * from identity_review_decisions where review_id"):
                 self._row = copy.deepcopy(self._db.decisions.get(str(params["review_id"])))
@@ -799,6 +811,17 @@ def test_no_private_key_material_in_stored_rows(
     assert reviewer_enrollment not in blob
 
 
+def _outcome_labels(outcomes: list) -> list[str]:
+    """Readable worker outcomes (type + message) for failure diagnosis."""
+    labels = []
+    for item in outcomes:
+        if isinstance(item, Exception):
+            labels.append(f"{type(item).__name__}: {item}")
+        else:
+            labels.append(f"created={item.created}")
+    return labels
+
+
 def test_concurrent_resolvers_single_winner(
     reviewer_enrollment, fake_db, fake_conn_factory
 ) -> None:
@@ -826,9 +849,10 @@ def test_concurrent_resolvers_single_winner(
     for thread in threads:
         thread.join(timeout=15)
     assert all(not thread.is_alive() for thread in threads)
+    assert len(outcomes) == 2, _outcome_labels(outcomes)
     assert len(fake_db.decisions) == 1
     created = [item for item in outcomes if not isinstance(item, Exception) and item.created]
-    assert len(created) == 1
+    assert len(created) == 1, _outcome_labels(outcomes)
 
 
 def test_concurrent_rival_outcomes_one_conflict(
@@ -860,11 +884,16 @@ def test_concurrent_rival_outcomes_one_conflict(
         thread.start()
     for thread in threads:
         thread.join(timeout=15)
-    assert len(fake_db.decisions) == 1
-    assert sum(isinstance(item, writer.ReviewResolutionConflictError) for item in outcomes) == 1
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(outcomes) == 2, _outcome_labels(outcomes)
+    labels = _outcome_labels(outcomes)
+    assert len(fake_db.decisions) == 1, labels
+    assert sum(isinstance(item, writer.ReviewResolutionConflictError) for item in outcomes) == 1, labels
     assert sum(
         not isinstance(item, Exception) and item.created for item in outcomes
-    ) == 1
+    ) == 1, labels
+    # The loser wrote nothing: one committed decision and its one audit event.
+    assert len(fake_db.events) == 1, labels
 
 
 # --- Live PostgreSQL integration (GROWUP_PG_INTEGRATION=1, migration 010) ------
