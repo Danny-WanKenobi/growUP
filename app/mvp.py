@@ -1705,10 +1705,11 @@ def _successor_summary_from_records(
 ) -> dict[str, Any]:
     """Re-derive a committed successor summary (replay path, no writes).
 
-    The run key already binds the evidence digests, but property and
-    parent identity are re-validated against the stored successor
-    block: a replay caller with mismatched operation bindings is
-    refused instead of handed another operation's result.
+    The run key already binds the evidence digests, but property,
+    parent, and principal identity are re-validated against the
+    stored successor block: a replay caller with mismatched
+    operation bindings is refused instead of handed another
+    operation's result.
     """
     dossier_record = get_record_in_transaction(conn, run_id, KIND_DOSSIER_VERSION, dossier_key)
     link, _ = _link_in_transaction(conn, run_id, dossier_key)
@@ -1731,6 +1732,7 @@ def _successor_summary_from_records(
         "assessment_digest": str(
             (stored_successor.get("dcad_assessment", {}) or {}).get("digest", "") or ""
         ),
+        "principal": str(stored_successor.get("actor", "") or ""),
     }
     for name, stored_value in stored_bindings.items():
         if stored_value != str(bindings.get(name, "") or ""):
@@ -1790,6 +1792,9 @@ def commit_successor_audited(
     Amendment authority resolves from the backend-authenticated
     principal (enrollment-checked): no caller-supplied name can
     impersonate an enrolled amender, and nobody is auto-enrolled.
+    Authority is verified before any commit or replay output, so
+    an unenrolled caller cannot retrieve a committed successor
+    through the idempotent retry path either.
     Inside one transaction under the dossier serialization lock,
     re-verifies every approval binding: stored digests recomputed
     against contents, parent version/digest, collection/assessment
@@ -1820,6 +1825,10 @@ def commit_successor_audited(
         raise WorkflowError("successor commit requires explicit approval")
     if not str(principal or "").strip():
         raise WorkflowError("successor commit requires an authenticated principal")
+    # Authority gates every path below, including the completed-run
+    # replay shortcuts: an unenrolled principal is refused before
+    # reading or returning any committed successor output.
+    check_amendment_permission(str(principal).strip(), str(reason or ""))
     prop_uuid = _require_operational_uuid(property_id, "property_id")
     parent_uuid = _require_operational_uuid(parent_run_id, "parent_run_id")
     collection_uuid = _require_operational_uuid(collection_run_id, "collection_run_id")

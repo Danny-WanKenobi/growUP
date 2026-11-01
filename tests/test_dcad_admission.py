@@ -1153,6 +1153,76 @@ def test_successor_replay_validates_bindings(
     assert second["dossier_digest"] == first["dossier_digest"]
 
 
+def test_successor_replay_requires_authority(
+    monkeypatch: pytest.MonkeyPatch, _custody_env: None
+) -> None:
+    """An unenrolled principal cannot retrieve a commit through replay."""
+    from app import mvp as mvp_module
+    from app.custody import CustodyAuthError
+
+    db = _FakeDB()
+    parent = _seed_parent(db)
+    collection = _seed_collection(db, parent)
+    _patch_owned(monkeypatch, db)
+    args = dict(
+        property_id=PROP_ID,
+        parent_run_id=str(parent["run_id"]),
+        dossier_key=parent["dossier_key"],
+        parent_version=1,
+        parent_digest=str(parent["dossier_digest"]),
+        expected_custody_version=1,
+        collection_run_id=str(collection["run_id"]),
+        collection_digest=str(collection["collection_digest"]),
+        assessment_digest=str(collection["assessment_digest"]),
+        reason="assess admitted DCAD evidence",
+        principal="wondrue-operator",
+        approved=True,
+    )
+    first = mvp_module.commit_successor_audited(**args)
+    assert first["replayed"] is False
+    # Enrollment revoked after the commit: the identical retry must be
+    # refused before any replay output, not served from stored records.
+    monkeypatch.setenv("CUSTODY_AMENDERS", "")
+    with pytest.raises(CustodyAuthError, match="enrolled authorizer"):
+        mvp_module.commit_successor_audited(**args)
+
+
+def test_successor_replay_rejects_foreign_principal(
+    monkeypatch: pytest.MonkeyPatch, _custody_env: None
+) -> None:
+    """Replay binds the principal: another enrolled caller is refused."""
+    from app import mvp as mvp_module
+    from app.workflow_db import WorkflowError
+
+    db = _FakeDB()
+    parent = _seed_parent(db)
+    collection = _seed_collection(db, parent)
+    monkeypatch.setenv("CUSTODY_AMENDERS", "wondrue-operator,second-operator")
+    _patch_owned(monkeypatch, db)
+    args = dict(
+        property_id=PROP_ID,
+        parent_run_id=str(parent["run_id"]),
+        dossier_key=parent["dossier_key"],
+        parent_version=1,
+        parent_digest=str(parent["dossier_digest"]),
+        expected_custody_version=1,
+        collection_run_id=str(collection["run_id"]),
+        collection_digest=str(collection["collection_digest"]),
+        assessment_digest=str(collection["assessment_digest"]),
+        reason="assess admitted DCAD evidence",
+        principal="wondrue-operator",
+        approved=True,
+    )
+    first = mvp_module.commit_successor_audited(**args)
+    assert first["replayed"] is False
+    foreign = dict(args, principal="second-operator")
+    with pytest.raises(WorkflowError, match="replay binding mismatch"):
+        mvp_module.commit_successor_audited(**foreign)
+    second = mvp_module.commit_successor_audited(**args)
+    assert second["replayed"] is True
+    assert second["dossier_digest"] == first["dossier_digest"]
+
+
 def test_successor_chain_moved_conflicts(
     monkeypatch: pytest.MonkeyPatch, _custody_env: None
 ) -> None:
@@ -2096,6 +2166,27 @@ def test_commit_ignores_caller_authorizer_name(
 _LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
 needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
 
+# The only database these mutating PG checks may touch. Verified
+# against the live connection (not just configuration) before any
+# write, so a misconfigured run fails instead of touching the
+# operational database and its preserved history.
+_PG_GATE_DATABASE = "growup_mvp_gate"
+
+
+def _require_gate_database() -> None:
+    from app.properties_db import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_database() AS db")
+            name = str((cur.fetchone() or {}).get("db") or "")
+    if name != _PG_GATE_DATABASE:
+        pytest.fail(
+            f"refusing PG-mutating DCAD test on database {name!r}: "
+            f"owner must run against {_PG_GATE_DATABASE!r}",
+            pytrace=False,
+        )
+
 
 def _require_successor_tables() -> None:
     from app.properties_db import get_connection
@@ -2123,6 +2214,18 @@ def _pg_cleanup(
     dossier_ids: list[str],
     property_ids: list[str] | None = None,
 ) -> None:
+    """Remove disposable rows; append-only custody rows are retained.
+
+    ``dossier_versions`` and ``custody_receipts`` reject DELETE by
+    production trigger, so committed test rows there are deliberately
+    retained (the established convention for committed custody test
+    data). Every PG test here mints fresh property/dossier UUIDs, so
+    retained rows can never collide with repeat runs or other tests;
+    receipts carry ``issued_by='pg-test'`` and successor amendments
+    carry ``actor='pg-test-owner'`` for review attribution. Hot
+    snapshots, pilot events, workflow rows, and the clearly named
+    test property rows are deleted.
+    """
     from app.properties_db import get_connection
 
     run_ids = [str(item) for item in run_ids if item]
@@ -2130,10 +2233,16 @@ def _pg_cleanup(
     property_ids = [str(item) for item in (property_ids or []) if item]
     with get_connection() as conn:
         with conn.cursor() as cur:
-            if property_ids:
+            if dossier_ids:
+                # Hot snapshots allow DELETE (archival path); versions
+                # and receipts are permanent and stay.
                 cur.execute(
-                    "DELETE FROM properties WHERE id = ANY(%(ids)s)",
-                    {"ids": property_ids},
+                    "DELETE FROM custody_snapshots WHERE dossier_id = ANY(%(ids)s)",
+                    {"ids": dossier_ids},
+                )
+                cur.execute(
+                    "DELETE FROM pilot_events WHERE dossier_id = ANY(%(ids)s)",
+                    {"ids": dossier_ids},
                 )
             if run_ids:
                 cur.execute(
@@ -2144,22 +2253,10 @@ def _pg_cleanup(
                     "DELETE FROM workflow_runs WHERE run_id = ANY(%(ids)s)",
                     {"ids": run_ids},
                 )
-            if dossier_ids:
+            if property_ids:
                 cur.execute(
-                    "DELETE FROM custody_receipts WHERE dossier_id = ANY(%(ids)s)",
-                    {"ids": dossier_ids},
-                )
-                cur.execute(
-                    "DELETE FROM custody_snapshots WHERE dossier_id = ANY(%(ids)s)",
-                    {"ids": dossier_ids},
-                )
-                cur.execute(
-                    "DELETE FROM dossier_versions WHERE dossier_id = ANY(%(ids)s)",
-                    {"ids": dossier_ids},
-                )
-                cur.execute(
-                    "DELETE FROM pilot_events WHERE dossier_id = ANY(%(ids)s)",
-                    {"ids": dossier_ids},
+                    "DELETE FROM properties WHERE id = ANY(%(ids)s)",
+                    {"ids": property_ids},
                 )
         conn.commit()
 
@@ -2198,6 +2295,7 @@ def test_successor_commit_pg(monkeypatch: pytest.MonkeyPatch) -> None:
         put_record_in_transaction,
     )
 
+    _require_gate_database()
     _require_successor_tables()
     monkeypatch.setenv("CUSTODY_HMAC_KEY", "dcad-pg-test-custody-key-0123456789")
     monkeypatch.setenv("CUSTODY_AMENDERS", "pg-test-owner")
@@ -2546,10 +2644,12 @@ def test_collect_single_request_pg_race(monkeypatch: pytest.MonkeyPatch) -> None
     from app.properties_db import create_property, get_connection
     from app.workflow_db import get_run_by_key_in_transaction
 
+    _require_gate_database()
     _require_successor_tables()
     _pg_env(monkeypatch)
     prop = create_property(
         {
+            "name": "DCAD PG collect-race test property",
             "street_address": "2323 Chalk Hill Rd", "city": "Dallas",
             "state": "TX", "zip_code": "75212", "category": "commercial_property",
         }
@@ -2570,7 +2670,7 @@ def test_collect_single_request_pg_race(monkeypatch: pytest.MonkeyPatch) -> None
 
         monkeypatch.setattr(dcad_module, "collect_account", _fake_collect)
         barrier = threading.Barrier(2)
-        outcomes: list[tuple[str, str]] = []
+        outcomes: list[tuple[str, bool, str]] = []
 
         def _worker() -> None:
             try:
@@ -2582,9 +2682,14 @@ def test_collect_single_request_pg_race(monkeypatch: pytest.MonkeyPatch) -> None
                     principal="pg-test-owner", approved=True,
                 )
             except Exception as exc:  # collected for assertions below
-                outcomes.append(("err", f"{type(exc).__name__}: {exc}"))
+                outcomes.append(("err", False, f"{type(exc).__name__}: {exc}"))
             else:
-                outcomes.append(("ok", str(summary.get("collection_digest", ""))))
+                outcomes.append(
+                    (
+                        "ok", bool(summary.get("replayed")),
+                        str(summary.get("collection_digest", "")),
+                    )
+                )
 
         threads = [threading.Thread(target=_worker) for _ in range(2)]
         for thread in threads:
@@ -2594,10 +2699,11 @@ def test_collect_single_request_pg_race(monkeypatch: pytest.MonkeyPatch) -> None
         assert not any(thread.is_alive() for thread in threads)
         assert len(outcomes) == 2
         assert len(calls) == 1, outcomes
-        oks = [digest for kind, digest in outcomes if kind == "ok"]
+        oks = [item for item in outcomes if item[0] == "ok"]
         assert len(oks) >= 1, outcomes
-        assert len(set(oks)) == 1, outcomes  # every success replays the same bytes
-        for kind, detail in outcomes:
+        assert len([item for item in oks if item[1] is False]) == 1, outcomes
+        assert len({item[2] for item in oks}) == 1, outcomes  # same bytes
+        for kind, _replayed, detail in outcomes:
             if kind == "err":
                 assert (
                     "another caller holds" in detail or "uncertain prior" in detail
@@ -2632,13 +2738,16 @@ def test_successor_single_version_pg_race(monkeypatch: pytest.MonkeyPatch) -> No
     from app import mvp as mvp_module
     from app.custody_db import latest_version_in_transaction
     from app.mvp import successor_run_key
+    from app.pilot import canonical_quota_id
     from app.properties_db import create_property, get_connection
     from app.workflow_db import get_run_by_key_in_transaction
 
+    _require_gate_database()
     _require_successor_tables()
     _pg_env(monkeypatch)
     prop = create_property(
         {
+            "name": "DCAD PG successor-race test property",
             "street_address": "2323 Chalk Hill Rd", "city": "Dallas",
             "state": "TX", "zip_code": "75212", "category": "commercial_property",
         }
@@ -2708,6 +2817,41 @@ def test_successor_single_version_pg_race(monkeypatch: pytest.MonkeyPatch) -> No
                     {"d": dossier_uuid},
                 )
                 assert int(cur.fetchone()["n"]) == 2
+                cur.execute(
+                    "SELECT kind, from_agent, to_agent FROM custody_receipts "
+                    "WHERE dossier_id = %(d)s AND version = 2",
+                    {"d": dossier_uuid},
+                )
+                receipts = {
+                    (row["kind"], row["from_agent"], row["to_agent"])
+                    for row in cur.fetchall()
+                }
+                assert receipts == {
+                    ("forward", "gabriel", "raphael"),
+                    ("return", "raphael", "gabriel"),
+                }, receipts
+                cur.execute(
+                    "SELECT transition, COUNT(*) AS n FROM pilot_events "
+                    "WHERE dossier_id = %(d)s GROUP BY transition",
+                    {"d": str(canonical_quota_id(prop_id))},
+                )
+                counts = {row["transition"]: int(row["n"]) for row in cur.fetchall()}
+                # The successor evidence verifies no county, so no quota
+                # credit is recorded at all -- nothing to duplicate.
+                assert not counts, counts
+        # Legitimate sequential replay still serves the committed result.
+        replay = mvp_module.commit_successor_audited(
+            property_id=prop_id, parent_run_id=parent["run_id"],
+            dossier_key=parent["dossier_key"], parent_version=1,
+            parent_digest=parent["parent_digest"],
+            expected_custody_version=1,
+            collection_run_id=pair["run_id"],
+            collection_digest=pair["collection_digest"],
+            assessment_digest=pair["assessment_digest"],
+            reason="pg race acceptance", principal="pg-test-owner",
+            approved=True,
+        )
+        assert replay["replayed"] is True
+        assert replay["dossier_digest"] == oks[0][2]
     finally:
         _pg_cleanup(created_runs, [dossier_uuid], [prop_id])
-

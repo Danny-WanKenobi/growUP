@@ -2112,13 +2112,19 @@ changes and voice alignment) — never the unevaluated prior
 content. Amendment authority resolves from the
 backend-authenticated principal against the enrolled-amender
 allowlist (no caller-supplied name, no auto-enrollment), and
-the whole amend/snapshot/receipt/audit commit runs under the
+is verified before any commit or replay output: an unenrolled
+caller is refused even when the run is already complete, and
+replay additionally binds the original operation's principal,
+so a different enrolled caller cannot retrieve another
+operation's result as a replay. The whole
+amend/snapshot/receipt/audit commit runs under the
 per-dossier custody serialization lock, so concurrent
 identical commits append exactly one version while stale or
 conflicting attempts fail safely. Identical retries replay
 stored outputs only after their operation bindings validate;
 original history is never rewritten and pilot counts replay
-without new credit. No schema migration is needed: the new
+without new credit. Read-only previews stay available under
+their existing permissions and never amend. No schema migration is needed: the new
 record kinds (`dcad_collection`, `dcad_assessment`,
 `dcad_claim`, `dcad_refusal`) ride the schemaless workflow
 store. Wondrue: `preview_dcad_collection` (with `attempt`) /
@@ -2172,7 +2178,7 @@ python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **2,065 passed, 143 skipped** (133
+Local suite in this tree: **2,067 passed, 143 skipped** (133
 pre-existing skips plus 10 PG-gated checks), 17
 warnings, with legacy-helper coverage preserved on the supported
 owned entry point, plus the 16-check sanitized attribution suite
@@ -2180,7 +2186,7 @@ owned entry point, plus the 16-check sanitized attribution suite
 retained real snippets: TX/Texas identity, per-address ZIPs,
 directory-city attribution, coordinator verification
 persistence, shared-policy success contract, fail-closed
-association) and the 72-check DCAD admission suite
+association) and the 74-check DCAD admission suite
 (`tests/test_dcad_admission.py`: source-derived nested parser
 with title binding, labeled-row association, and the actual
 `span.DtlSectionHdr` section boundary, section/account
@@ -2198,11 +2204,20 @@ monthly exhaustion blocks transmit, single-request bound across
 assignment ids, two-connection race with one charge, recheck under
 a held lock, started-marker blocks uncertain replay), the three
 PG-gated tests in `tests/test_dcad_admission.py`
-(successor-commit end-to-end amendment with replay, history
-preservation, single-count pilot credit, and rollback atomicity;
-two-thread collect race asserting one mocked transmission; and
-two-thread successor race asserting exactly one v2), plus a
-full regression and health checks. Separately approved live DCAD
+(successor-commit end-to-end amendment with authorized replay,
+unenrolled-replay refusal, history preservation, no duplicate
+pilot credit, and rollback atomicity; two-thread collect race
+asserting one mocked transmission; and two-thread successor
+race asserting exactly one v2 with its intended receipts),
+plus a full regression and health checks. Those mutating checks
+verify they are connected to `growup_mvp_gate` before any write
+and fail rather than run elsewhere. Cleanup deletes disposable
+workflow, pilot-event, snapshot, and clearly named test-property
+rows; committed `dossier_versions` and `custody_receipts` rows
+are append-only by production trigger and are deliberately
+retained, keyed by fresh test UUIDs (receipts issued by
+`pg-test`, successor actor `pg-test-owner`) so repeat runs and
+other tests stay independent. Separately approved live DCAD
 retrieval is not executed here. Mocked success is not proof of
 PostgreSQL behavior, and skipped PG tests are not acceptance.
 

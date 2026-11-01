@@ -824,4 +824,3 @@ __all__ = [
     "parse_account_page",
     "require_collection_allowed",
 ]
-
