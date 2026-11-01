@@ -570,7 +570,7 @@ def test_runner_evaluation_threads_bound_and_timeout(monkeypatch) -> None:
 def test_runner_config_validates_evaluation_bounds() -> None:
     from app.discovery_runner import RunnerCell, RunnerConfig, RunnerError
 
-    cell = RunnerCell(county="Dallas", category="high_rise", bbox=(1, 1, 2, 2))
+    cell = RunnerCell(county="dallas county", category="high_rise", bbox=(1, 1, 2, 2))
     base = {"scope": "s", "policy": "pilot", "cells": [cell]}
     assert RunnerConfig(**base).evaluation_timeout == 15.0  # ordinary default
     assert RunnerConfig(**base, evaluation_timeout_seconds=12.0).evaluation_timeout == 12.0

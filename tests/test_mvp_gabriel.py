@@ -70,12 +70,37 @@ def _dossier(**overrides: Any) -> dict[str, Any]:
     dossier = {
         "identity_disputes": {},
         "conflicts": [],
-        "category_attribution": {"status": "observed"},
+        "category_attribution": {
+            "status": "observed",
+            "observed": "commercial_property",
+            "observations": [
+                {
+                    "value": "commercial_property",
+                    "origin": "extraction",
+                    "source_url": "https://broker-a.example/x",
+                }
+            ],
+        },
         "county_attribution": {"evidence_status": "observed"},
         "sources": ["https://broker-a.example/x"],
     }
     dossier.update(overrides)
     return dossier
+
+
+def _backed_county_attribution() -> dict[str, Any]:
+    return {
+        "evidence_status": "verified",
+        "value": "Dallas County",
+        "claims": [
+            {
+                "original": "Dallas County",
+                "normalized": "dallas county",
+                "source_url": "https://broker-a.example/x",
+                "authority": "official",
+            }
+        ],
+    }
 
 
 def test_qualify_clean_dossier() -> None:
@@ -86,11 +111,141 @@ def test_qualify_clean_dossier() -> None:
 
 
 def test_qualify_verified_county_earns_credit() -> None:
+    result = qualify_dossier(_dossier(county_attribution=_backed_county_attribution()))
+    assert result["outcome"] == "qualified"
+    assert result["county_credit"] == "Dallas County"
+
+
+def test_qualify_unbacked_observed_category_needs_research() -> None:
+    result = qualify_dossier(
+        _dossier(category_attribution={"status": "observed"})
+    )
+    assert result["outcome"] == "needs_research"
+    assert "category attribution malformed or unsupported" in result["reasons"]
+
+
+def test_qualify_unbacked_verified_county_earns_no_credit() -> None:
     result = qualify_dossier(
         _dossier(county_attribution={"evidence_status": "verified", "value": "Dallas County"})
     )
     assert result["outcome"] == "qualified"
-    assert result["county_credit"] == "Dallas County"
+    assert result["county_credit"] == ""
+
+
+def test_qualify_unbacked_verified_category_needs_research() -> None:
+    result = qualify_dossier(
+        _dossier(category_attribution={"status": "verified", "observed": "high_rise"})
+    )
+    assert result["outcome"] == "needs_research"
+    assert "category attribution malformed or unsupported" in result["reasons"]
+
+
+def test_qualify_supported_verified_category() -> None:
+    result = qualify_dossier(
+        _dossier(
+            category_attribution={
+                "status": "verified",
+                "verified": "high_rise",
+                "observations": [
+                    {
+                        "value": "high_rise",
+                        "origin": "extraction",
+                        "source_url": "https://broker-a.example/x",
+                    }
+                ],
+            }
+        )
+    )
+    assert result["outcome"] == "qualified"
+
+
+def test_qualify_verified_label_without_backing_rejected() -> None:
+    mismatched = qualify_dossier(
+        _dossier(
+            category_attribution={
+                "status": "verified",
+                "verified": "high_rise",
+                "observations": [
+                    {
+                        "value": "warehouse_industrial",
+                        "origin": "extraction",
+                        "source_url": "https://broker-a.example/x",
+                    }
+                ],
+            }
+        )
+    )
+    assert mismatched["outcome"] == "needs_research"
+    assert "category attribution malformed or unsupported" in mismatched["reasons"]
+    unknown_value = qualify_dossier(
+        _dossier(
+            category_attribution={
+                "status": "verified",
+                "verified": "skyscraper",
+                "observations": [
+                    {
+                        "value": "skyscraper",
+                        "origin": "extraction",
+                        "source_url": "https://broker-a.example/x",
+                    }
+                ],
+            }
+        )
+    )
+    assert unknown_value["outcome"] == "needs_research"
+
+
+def test_qualify_observed_category_requires_supporting_backing() -> None:
+    result = qualify_dossier(
+        _dossier(
+            category_attribution={
+                "status": "observed",
+                "observed": "high_rise",
+                "observations": [
+                    {
+                        "value": "warehouse_industrial",
+                        "origin": "extraction",
+                        "source_url": "https://broker-a.example/x",
+                    }
+                ],
+            }
+        )
+    )
+    assert result["outcome"] == "needs_research"
+    assert "category attribution malformed or unsupported" in result["reasons"]
+
+
+def test_qualify_stray_verified_value_rejected() -> None:
+    result = qualify_dossier(
+        _dossier(
+            category_attribution={
+                "status": "observed",
+                "observed": "high_rise",
+                "verified": "warehouse_industrial",
+                "observations": [
+                    {
+                        "value": "high_rise",
+                        "origin": "extraction",
+                        "source_url": "https://broker-a.example/x",
+                    }
+                ],
+            }
+        )
+    )
+    assert result["outcome"] == "needs_research"
+    assert "category attribution malformed or unsupported" in result["reasons"]
+
+
+def test_qualify_excluded_candidate_not_qualified() -> None:
+    result = qualify_dossier(_dossier(qc_status="exclude"))
+    assert result["outcome"] == "not_qualified"
+    assert result["reasons"] == ["excluded by quality control"]
+
+
+def test_qualify_deferred_candidate_not_qualified() -> None:
+    result = qualify_dossier(_dossier(qc_status="deferred"))
+    assert result["outcome"] == "not_qualified"
+    assert result["reasons"] == ["outside operating area"]
 
 
 def test_qualify_disputes_and_conflicts_need_research() -> None:
@@ -210,8 +365,18 @@ def test_persist_qualifications_requires_dossier() -> None:
 
 def _cell_dossier() -> dict[str, Any]:
     return _dossier(
-        county_attribution={"evidence_status": "verified", "value": "Dallas County"},
-        category_attribution={"status": "observed", "observed": "high_rise"},
+        county_attribution=_backed_county_attribution(),
+        category_attribution={
+            "status": "observed",
+            "observed": "high_rise",
+            "observations": [
+                {
+                    "value": "high_rise",
+                    "origin": "extraction",
+                    "source_url": "https://broker-a.example/x",
+                }
+            ],
+        },
     )
 
 

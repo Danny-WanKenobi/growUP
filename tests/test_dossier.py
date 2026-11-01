@@ -561,3 +561,118 @@ def test_round_and_result_bounds_rejected() -> None:
     )
     with pytest.raises(ValidationError):
         DossierRequest(rounds=[many])
+
+
+def test_dossier_populates_attribution_from_grouped_evidence() -> None:
+    """Extraction -> attribution -> dossier -> qualification on one snippet."""
+    from app.agents.gabriel.attribution import (
+        CategoryEvidenceStatus,
+        CountyEvidenceStatus,
+    )
+    from app.agents.gabriel.persist import qualify_dossier
+
+    intel = _intel(
+        _result(
+            "Warehouse space available",
+            "2323 Chalk Hill Rd, Dallas, TX 75212 warehouse space in Dallas County.",
+            url="https://listings.example.com/wh",
+        )
+    )
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    assert len(dossier_set.dossiers) == 1
+    dossier = dossier_set.dossiers[0]
+    category = dossier.category_attribution
+    assert category is not None
+    assert category.status == CategoryEvidenceStatus.OBSERVED
+    assert category.observed == "warehouse_industrial"
+    assert len(category.observations) == 1
+    assert category.observations[0].source_url == "https://listings.example.com/wh"
+    county = dossier.county_attribution
+    assert county is not None
+    assert county.evidence_status == CountyEvidenceStatus.OBSERVED
+    assert county.value is None  # established value requires verification
+    assert len(county.claims) == 1
+    assert county.claims[0].original == "Dallas County"
+    assert county.claims[0].normalized == "dallas county"
+    assert county.claims[0].authority == "listing"
+    verdict = qualify_dossier(dossier.model_dump(mode="json"))
+    assert verdict["outcome"] == "qualified"
+    assert verdict["county_credit"] == ""
+
+
+def test_multi_property_categories_stay_with_their_own_property() -> None:
+    """Warehouse/office signals in one result never cross-attribute."""
+    from app.agents.gabriel.attribution import CategoryEvidenceStatus
+    from app.agents.gabriel.extractor import (
+        ExtractedProperty,
+        ResultIntelligence,
+        group_by_property,
+    )
+    from app.agents.gabriel.producers import member_category_observations
+    from app.properties import PropertyCategory
+
+    item = ResultIntelligence(
+        assignment_id="a",
+        query="q",
+        result_url="https://example.com/portfolio",
+        domain="example.com",
+        title="Portfolio",
+        properties=[
+            ExtractedProperty(
+                street_address="2323 Chalk Hill Rd", city="Dallas",
+                state="TX", zip_code="75212",
+                category=PropertyCategory.WAREHOUSE_INDUSTRIAL,
+            ),
+            ExtractedProperty(
+                street_address="8702 S Lancaster Rd", city="Dallas",
+                state="TX", zip_code="75241",
+                category=PropertyCategory.COMMERCIAL_PROPERTY,
+            ),
+        ],
+    )
+    groups = {group.key: group for group in group_by_property([item])}
+    assert len(groups) == 2
+    office_key = next(key for key in groups if "lancaster" in key)
+    warehouse_key = next(key for key in groups if "chalk" in key)
+    office_obs = member_category_observations([0], [item], office_key)
+    assert [obs.value for obs in office_obs] == ["commercial_property"]
+    warehouse_obs = member_category_observations([0], [item], warehouse_key)
+    assert [obs.value for obs in warehouse_obs] == ["warehouse_industrial"]
+    dossier_set = build_dossiers(
+        DossierRequest(rounds=[ResearchIntelligence(results=[item])])
+    )
+    assert len(dossier_set.dossiers) == 2
+    office = next(
+        dossier for dossier in dossier_set.dossiers if dossier.key == office_key
+    )
+    assert office.category_attribution is not None
+    assert office.category_attribution.status == CategoryEvidenceStatus.OBSERVED
+    assert office.category_attribution.observed == "commercial_property"
+
+
+def test_dossier_attribution_never_verifies_from_snippets() -> None:
+    """Two agreeing snippets corroborate but cannot verify county/category."""
+    from app.agents.gabriel.attribution import (
+        CategoryEvidenceStatus,
+        CountyEvidenceStatus,
+    )
+
+    intel = _intel(
+        _result(
+            "Warehouse space available",
+            "2323 Chalk Hill Rd, Dallas, TX 75212 warehouse space in Dallas County.",
+            url="https://listings.example.com/wh",
+        ),
+        _result(
+            "Warehouse listing repeated",
+            "2323 Chalk Hill Rd, Dallas, TX 75212 warehouse space in Dallas County.",
+            url="https://other.example.com/wh",
+        ),
+    )
+    dossier_set = build_dossiers(DossierRequest(rounds=[intel]))
+    assert len(dossier_set.dossiers) == 1
+    dossier = dossier_set.dossiers[0]
+    assert dossier.category_attribution is not None
+    assert dossier.category_attribution.status == CategoryEvidenceStatus.CORROBORATED
+    assert dossier.county_attribution is not None
+    assert dossier.county_attribution.evidence_status == CountyEvidenceStatus.CORROBORATED

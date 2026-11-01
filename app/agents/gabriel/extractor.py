@@ -1288,6 +1288,26 @@ def eligible_identity_props(item: ResultIntelligence, group_key: str) -> list[Ex
     return eligible
 
 
+def eligible_category_props(item: ResultIntelligence, group_key: str) -> list[ExtractedProperty]:
+    """Props whose category may inform one candidate (never another property).
+
+    Stricter than :func:`eligible_identity_props`: a lone prop is
+    attributable to its group, but in a multi-property result only
+    props demonstrably at this candidate's address contribute.
+    Addressless or other-address props stay unattributed — their
+    category is neither assigned to this candidate nor manufactured
+    into a contradiction with unrelated claims.
+    """
+    if len(item.properties) == 1:
+        return list(item.properties)
+    eligible = []
+    for prop in item.properties:
+        key = _address_key(prop)
+        if key is not None and key == group_key:
+            eligible.append(prop)
+    return eligible
+
+
 def identity_disputes(
     items: list[ResultIntelligence], members: list[int], group_key: str
 ) -> dict[str, list[str]]:

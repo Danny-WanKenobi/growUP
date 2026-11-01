@@ -120,7 +120,7 @@ The initial development goal is a functioning demonstration that:
 
 The MVP will distinguish verified information, estimates, assumptions, and synthetic demonstration data.
 
-**Project status:** Coordinated MVP implemented with two demonstration paths — real-property evaluation (fail-closed; a candidate may legitimately stop at `needs_evidence`) and an isolated synthetic demonstration that runs the full software workflow on fictional fixtures. Deferred: autonomous 144-dossier execution, exhaustive city searches, OAuth/admin systems, outreach, additional agents, advanced underwriting, and detailed permitting.
+**Project status:** Coordinated MVP implemented with two demonstration paths — real-property evaluation (fail-closed; a candidate may legitimately stop at `needs_evidence`) and an isolated synthetic demonstration that runs the full software workflow on fictional fixtures. Deferred: self-launching autonomous execution (bursts are owner-launched and bounded, with durable progression across restarts), exhaustive city searches, OAuth/admin systems, outreach, additional agents, advanced underwriting, and detailed permitting.
 
 ---
 
@@ -1921,6 +1921,32 @@ custody-blocked stop names the pending `identity_review` row
 (`dossier-association`, with its reason), and the same persisted row is
 readable via the Wondrue `inspect_review` intent — no parallel queue.
 
+Persisted dossiers carry category and county attribution built from
+the grouped evidence through the normal production path: member
+category observations with their origins, source references, and
+statuses (the same shared observations the verification producer
+reads), plus county claims bound to their evidence. Only
+observations demonstrably belonging to the candidate contribute: a
+lone prop is attributable to its group, but in a multi-property
+result only props at the candidate's own address count —
+addressless or other-address category signals stay unattributed
+rather than cross-assigning or manufacturing a contradiction.
+Search targeting (category, county, city, bounding box) is context,
+never proof — observed or corroborated category must not become
+verified category, and no vacancy, distress, or legal-suitability
+claim is ever inferred from building category. Qualification
+rejects malformed or unsupported attribution rather than trusting
+a status label: excluded or deferred QC outcomes never qualify;
+every selected category (observed, corroborated, or verified)
+needs a known value with at least one backing observation
+normalizing to that same value, and a verified value outside
+verified status is rejected; county needs backing claims with a
+normalizable value. A caller-supplied verified label without
+supporting observations establishes nothing. Pilot cell credit
+additionally requires *verified* county attribution, and the generic
+evaluators cap at corroborated by design — see MVP limitations for
+the resulting county-admission blocker.
+
 ### Raphael — verification and authorization
 
 Raphael (`app/agents/raphael/`) loads persisted, server-owned dossier
@@ -3195,7 +3221,8 @@ no cell credit, and synthetic identifiers are never counted. Category
 weights start equal and only order tied cells. Planning never executes
 or spends: it orders open cells by truthful shortfall and annotates each
 candidate action with its estimated Brave cost and a monthly-budget
-verdict.
+verdict. The aggregate shortfall sums per-cell deficits, so an
+overfilled cell never conceals another cell's shortfall.
 
 Quota credit keys on the canonical operational dossier identity
 (`canonical_quota_id`, derived from `dossier_id_for_property`) — never
@@ -3278,13 +3305,18 @@ proceeding blind.
 
 ```bash
 python -m app.discovery_runner run --scope pilot-dfw --policy pilot \
-    --cells cells.json --max-passes 3 --max-duration 1800 --max-created 100
+    --cells cells.json --max-passes 3 --max-duration 1800 --max-created 100 \
+    --max-overpass-requests 3
 python -m app.discovery_runner status --scope pilot-dfw   # latest run + checkpoint
 python -m app.discovery_runner stop --scope pilot-dfw     # pause at next pass boundary
 ```
 
-Cells are operator-supplied `(county, category, bbox, source)` JSON;
-placeholders are never silently expanded. The same bursts are
+Cells are operator-supplied `(county, category, bbox, source)` JSON
+with canonical county/category names and finite south<north,
+west<east windows; placeholders are never silently expanded and
+non-canonical cells or degenerate windows are refused at validation,
+never widened or reinterpreted. City names in cell metadata are
+targeting notes, not proof of city coverage. The same bursts are
 available through Wondrue (`start_discovery` / `resume_discovery` /
 `stop_discovery` / `inspect_discovery`, request-safe caps). A proposed
 two-hour timed preset (`TIMED_TWO_HOUR_PRESET`: 7200 s, 48 passes,
@@ -3303,6 +3335,47 @@ SECONDS` (or the Wondrue burst args `brave_attempt_limit` /
 `timeout_seconds`) — the first owner-run evaluation uses limit 1
 with a 12-second timeout (see the acquisition-budget section
 above).
+
+Discovery progresses durably through the configured cells instead of
+repeating the same query: each search unit is a cell plus its exact
+bounding box and source, and checkpoints record per-unit pass
+counts, created totals, and exhaustion with the window limit that
+produced it. A zero-create pass exhausts that exact query (the same
+request deterministically returns the same window and the dedup
+store only grows, so a repeat could never create more); only a
+wider window reopens the unit, and any created property clears
+exhaustion. Under the pilot policy, units whose cell already holds
+four credited dossiers are skipped; timed reassessment attempts
+configured units regardless. No burst expands scope, subdivides
+boxes, or switches providers on its own. There is no
+self-launching loop: progression persists across owner-launched,
+approval-gated bursts, and each burst stops at its own bounds. The
+pilot ledger's stop gates planning only and the runner's stop pauses
+the worker — neither stops the other.
+
+Request budgets are stated up front and enforced separately per
+provider: Overpass discovery is capped by `--max-overpass-requests`
+(Wondrue `max_overpass_requests`; default one per pass, failed
+attempts spend the budget too), and coordinator evaluations halt
+before exceeding `max_passes × max_evaluations_per_pass ×
+evaluation_attempt_limit` Brave attempts, checked between
+evaluations alongside the duration and stop-request checks
+(in-flight evaluations run to their own timeout and may land just
+past a bound). Each discovery pass is also clamped to the remaining
+creation allowance. Reports state the computed `request_bounds`,
+actual `overpass_requests` and `brave_requests` spend,
+created/evaluated/qualified counts, newly credited dossiers,
+per-cell credited totals and deficits, aggregate `remaining_quota`
+(summed from per-cell deficits, so an overfilled cell never hides
+another cell's shortfall), Raphael decision tallies, exhausted
+units, and unresolved items (queued backlog depth, blocked and
+error counts). The final report always re-reads canonical counts
+from the same source before tallying, so credit earned by the last
+allowed round is included; if that read fails, quota progress is
+reported unavailable (no per-cell rows, `remaining_quota` and
+`credited_new` null) rather than stale counts presented as
+current. Reaching a pass limit is reported as a limit, never
+as pilot completion.
 
 ### Uriel — preparation-only packages
 
@@ -3384,13 +3457,24 @@ audit records, and regression fixtures are preserved.
 
 ### MVP limitations
 
-No autonomous 144-dossier execution, exhaustive city searches, OAuth/admin
-systems, outreach execution, additional agents, advanced underwriting, or
-detailed permitting. Synthetic records never count toward the 144-dossier
+No self-launching autonomous execution: discovery progresses durably
+across owner-launched, approval-gated bursts (see bounded discovery
+above). No exhaustive city searches, OAuth/admin systems, outreach
+execution, additional agents, advanced underwriting, or detailed
+permitting. Synthetic records never count toward the 144-dossier
 target. `michael_ready` pilot counter and pre-canonical `mvp-1` receipt
 rows are retained for history, not live use. Positive real-property
 authorization still needs reviewed registry curation plus aligned
-identity evidence. Known residual: pending-pass recovery depends on
+identity evidence. Pilot cell credit additionally requires verified
+county attribution, but no supported county-verification path
+exists: the generic county evaluator caps at corroborated, and DCAD
+admission proves only its account/address relationship. Retained
+evidence therefore stays county-unresolved, and a county-admission
+design is proposed for owner approval — no invented trust may fill
+this gap. The proposal must show that the specific retained record
+actually supports the county conclusion and handles jurisdiction
+exceptions and ambiguity; the district's name, hostname, or an
+authenticated download alone enrolls nothing. Known residual: pending-pass recovery depends on
 reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
@@ -3403,8 +3487,14 @@ acquisition-budget tree in this worktree (targeted rerun, full
 regression, the seven `GROWUP_PG_INTEGRATION`-gated acquisition
 tests, owner first-acquisition configuration, and health checks —
 all pending); a bounded live smoke test proving meaningful Meta
-runtime inference (see Demonstration); and real discovery runs
-(the two-hour timed preset is defined but not launched).
+runtime inference (see Demonstration); real discovery runs
+(the two-hour timed preset is defined but not launched); and the
+pilot-readiness tree in this worktree (attribution wiring, durable
+progression, per-provider request bounds, aggregate-shortfall fix,
+property-bound category observations, verified-category
+qualification, fresh final quota reporting — full offline suite
+green at 2,097 passed / 143 skipped / 17 warnings, owner
+PostgreSQL/Ubuntu validation pending).
 
 ## 🎥 Demonstration
 

@@ -494,13 +494,16 @@ def pilot_report_in_transaction(
             }
         )
     observed = dict(budget) if budget is not None else read_budget()
+    # Aggregate from per-cell deficits: an overfilled cell must never
+    # conceal another cell's shortfall.
+    aggregate_shortfall = sum(_shortfall(cell) for cell in cells)
     return {
         "status": state["status"],
         "weights": state["weights"],
         "cells": len(cells),
         "target_qualified": target_total,
         "qualified": totals["qualified"],
-        "shortfall": max(0, target_total - totals["qualified"]),
+        "shortfall": aggregate_shortfall,
         "totals": totals,
         "budget": {
             "remaining": observed.get("remaining"),

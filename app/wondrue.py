@@ -283,6 +283,7 @@ def preview_intent(
                 "; coordinator evaluations are NOT run (acquire not "
                 "requested): free OSM discovery only"
             )
+        overpass_bound = bounds[4] if bounds[4] is not None else bounds[0]
         return {
             "operations": operations,
             "inputs": {
@@ -294,9 +295,11 @@ def preview_intent(
                 "acquire": requested,
                 "max_evaluations": bounds[3],
                 "brave_attempt_limit": per_evaluation,
+                "max_overpass_requests": bounds[4],
             },
             "effects": effects,
             "cost_bounds": {
+                "overpass_requests": f"<= {overpass_bound}",
                 "brave_attempts": f"<= {brave_bound}" if requested else 0,
                 "meta_calls": 0,
             },
@@ -305,7 +308,10 @@ def preview_intent(
         return {
             "operations": ["request running worker to pause between passes"],
             "inputs": {"scope": args.get("scope", "")},
-            "effects": "worker exits at the next pass boundary; checkpoints preserved",
+            "effects": (
+                "worker exits at the next pass or evaluation boundary; "
+                "checkpoints preserved"
+            ),
             "cost_bounds": {"brave_attempts": 0, "meta_calls": 0},
         }
     if intent == "assist_explain":
@@ -607,7 +613,7 @@ def _acquire_request(args: dict[str, Any]) -> bool:
     raise WondrueError("acquire must be a boolean")
 
 
-def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int]:
+def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int, int | None]:
     """Strict burst bounds shared by preview and execution (fail closed)."""
     try:
         max_passes = int(args.get("max_passes", 1))
@@ -615,6 +621,20 @@ def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int]:
         max_created = int(args.get("max_created", 50))
     except (ValueError, TypeError) as exc:
         raise WondrueError("burst bounds must be numeric") from exc
+    raw_overpass = args.get("max_overpass_requests")
+    max_overpass_requests: int | None = None
+    if raw_overpass is not None:
+        if isinstance(raw_overpass, bool):
+            raise WondrueError("burst bounds must be numeric")
+        try:
+            overpass_float = float(raw_overpass)
+        except (ValueError, TypeError) as exc:
+            raise WondrueError("burst bounds must be numeric") from exc
+        if not overpass_float.is_integer():
+            raise WondrueError("burst bounds must be numeric")
+        max_overpass_requests = int(overpass_float)
+        if max_overpass_requests < 1:
+            raise WondrueError("max_overpass_requests must be an integer >= 1")
     raw_evaluations = args.get("max_evaluations", WONDRUE_BURST_MAX_EVALUATIONS)
     if isinstance(raw_evaluations, bool):
         raise WondrueError("burst bounds must be numeric")
@@ -635,7 +655,7 @@ def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int]:
         raise WondrueError(
             f"max_evaluations must be 0..{WONDRUE_BURST_MAX_EVALUATIONS}"
         )
-    return max_passes, max_duration, max_created, max_evaluations
+    return max_passes, max_duration, max_created, max_evaluations, max_overpass_requests
 
 
 def _evaluation_attempt_limit(args: dict[str, Any]) -> int:
@@ -687,7 +707,7 @@ def _burst_report(
     scope = str(args.get("scope", "") or "")
     if not scope:
         raise WondrueError("scope is required")
-    max_passes, max_duration, max_created, max_evaluations = _burst_bounds(args)
+    max_passes, max_duration, max_created, max_evaluations, max_overpass = _burst_bounds(args)
     # An explicit burst timeout overrides the runner's pass timeout for
     # coordinator evaluations; when absent the runner default applies.
     burst_timeout = (
@@ -707,6 +727,7 @@ def _burst_report(
         max_evaluations_per_pass=max_evaluations,
         evaluation_attempt_limit=_evaluation_attempt_limit(args),
         evaluation_timeout_seconds=burst_timeout,
+        max_overpass_requests=max_overpass,
     )
 
     def _connect() -> Any:

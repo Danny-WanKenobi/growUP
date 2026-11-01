@@ -520,6 +520,28 @@ def pilot_row(rows: list[dict[str, Any]], county: str, category: str) -> dict[st
     return next(row for row in rows if row["county"] == county and row["category"] == category)
 
 
+def test_overfilled_cell_does_not_conceal_other_shortfalls() -> None:
+    conn = _FakeConn()
+    ensure_ledger_in_transaction(conn)
+    for _ in range(6):
+        record_transition_in_transaction(
+            conn, county="dallas county", category="high_rise",
+            dossier_id=uuid4(), transition="qualified",
+        )
+    for _ in range(2):
+        record_transition_in_transaction(
+            conn, county="tarrant county", category="high_rise",
+            dossier_id=uuid4(), transition="qualified",
+        )
+    report = pilot_report_in_transaction(conn, budget=dict(_FAKE_BUDGET))
+    # Aggregate shortfall sums per-cell deficits: 0 + 2 + 34*4 = 138.
+    # A naive 144 - 8 = 136 would let the overfilled cell hide a deficit.
+    assert report["shortfall"] == 138
+    assert report["totals"]["qualified"] == 8
+    assert pilot_row(report["rows"], "dallas county", "high_rise")["shortfall"] == 0
+    assert pilot_row(report["rows"], "tarrant county", "high_rise")["shortfall"] == 2
+
+
 def test_qualified_completes_a_cell() -> None:
     conn = _FakeConn()
     ensure_ledger_in_transaction(conn)

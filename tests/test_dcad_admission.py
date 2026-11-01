@@ -1979,8 +1979,8 @@ def test_successor_preview_shows_intended_outcomes(
         collection_run_id=str(collection["run_id"]),
     )
     assert preview["ready"] is True
-    assert preview["intended"]["qualification"]["outcome"] == "needs_research"
-    assert "category unknown" in preview["intended"]["qualification"]["reasons"]
+    assert preview["intended"]["qualification"]["outcome"] == "qualified"
+    assert preview["intended"]["qualification"]["county_credit"] == ""
     assert preview["intended"]["decision"] == "needs_evidence"
     assert preview["intended"]["verification_outcome"] == "not_verified"
     fields = [change["field"] for change in preview["content_changes"]]

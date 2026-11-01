@@ -233,7 +233,7 @@ def test_one_active_worker_per_scope() -> None:
 def test_pilot_serves_unmet_cells_first() -> None:
     seen: list[str] = []
 
-    def _discovery(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         seen.append(cell.key)
         return _Pass(0)
 
@@ -261,7 +261,7 @@ def test_pilot_stops_when_quota_met() -> None:
     db = _db()
     report = run_worker(
         lambda: _FakeConn(db), _config(),
-        discovery_fn=lambda cell, run_id="": (calls.append(cell.key), _Pass(0))[1],
+        discovery_fn=lambda cell, run_id="", limit=0: (calls.append(cell.key), _Pass(0))[1],
         counts_fn=lambda: dict(counts),
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
     )
@@ -283,7 +283,7 @@ def test_timed_continues_past_quota() -> None:
     db = _db()
     report = run_worker(
         lambda: _FakeConn(db), _config(policy="timed", max_passes=2),
-        discovery_fn=lambda cell, run_id="": (calls.append(cell.key), _Pass(1))[1],
+        discovery_fn=lambda cell, run_id="", limit=0: (calls.append(cell.key), _Pass(1))[1],
         counts_fn=lambda: dict(counts),
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
     )
@@ -296,7 +296,7 @@ def test_limits_stop_burst() -> None:
     db = _db()
     report = run_worker(
         lambda: _FakeConn(db), _config(max_passes=1),
-        discovery_fn=lambda cell, run_id="": _Pass(3),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(3),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
     )
@@ -307,7 +307,7 @@ def test_limits_stop_burst() -> None:
     db2 = _db()
     report = run_worker(
         lambda: _FakeConn(db2), _config(max_passes=10, max_duration_seconds=5.0),
-        discovery_fn=lambda cell, run_id="": _Pass(0),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         clock_fn=lambda: tick.__setitem__("now", tick["now"] + 10.0) or tick["now"],
@@ -321,7 +321,7 @@ def test_stop_and_resume_without_duplicate_work() -> None:
     db = _db()
     seen: list[str] = []
 
-    def _stop_after_first(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _stop_after_first(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         seen.append(cell.key)
         conn = _FakeConn(db)
         assert request_stop_in_transaction(conn, "test") is True
@@ -336,7 +336,7 @@ def test_stop_and_resume_without_duplicate_work() -> None:
     assert first["passes"] == 1
     second = run_worker(
         lambda: _FakeConn(db), _config(max_passes=4),
-        discovery_fn=lambda cell, run_id="": (seen.append(cell.key), _Pass(0))[1],
+        discovery_fn=lambda cell, run_id="", limit=0: (seen.append(cell.key), _Pass(0))[1],
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
     )
@@ -351,7 +351,7 @@ def test_stop_and_resume_without_duplicate_work() -> None:
 def test_consecutive_failures_abort_with_backoff() -> None:
     sleeps: list[float] = []
 
-    def _boom(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _boom(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         raise RuntimeError("provider down")
 
     db = _db()
@@ -370,7 +370,7 @@ def test_auth_failure_aborts_immediately() -> None:
     class AuthError(Exception):
         pass
 
-    def _denied(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _denied(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         raise AuthError("bad key")
 
     db = _db()
@@ -390,7 +390,7 @@ def test_sabbath_pauses_without_work(monkeypatch: pytest.MonkeyPatch) -> None:
     db = _db()
     report = run_worker(
         lambda: _FakeConn(db), _config(),
-        discovery_fn=lambda cell, run_id="": (calls.append(cell.key), _Pass(0))[1],
+        discovery_fn=lambda cell, run_id="", limit=0: (calls.append(cell.key), _Pass(0))[1],
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=lambda: saturday,
     )
@@ -410,7 +410,7 @@ def test_busy_scope_reports_without_claim() -> None:
     )
     report = run_worker(
         lambda: _FakeConn(db), _config(),
-        discovery_fn=lambda cell, run_id="": _Pass(0), counts_fn=lambda: {},
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0), counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
     )
     assert report["outcome"] == "busy"
@@ -512,7 +512,7 @@ def test_worker_adopts_crashed_row_and_resumes_cursor() -> None:
     _stale(db)
     seen: list[int] = []
 
-    def _discovery(cell: RunnerCell, run_id: str = "") -> Any:
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> Any:
         seen.append(len(seen))
         return _Pass(2)
 
@@ -544,7 +544,7 @@ def test_stale_stopped_row_blocks_start_until_resume() -> None:
     report = run_worker(
         lambda: _FakeConn(db),
         _config(),
-        discovery_fn=lambda cell, run_id="": _Pass(0),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -555,7 +555,7 @@ def test_stale_stopped_row_blocks_start_until_resume() -> None:
     resumed = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, resume=True),
-        discovery_fn=lambda cell, run_id="": _Pass(0),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -575,7 +575,7 @@ def test_policy_mismatch_aborts_instead_of_adopting() -> None:
     report = run_worker(
         lambda: _FakeConn(db),
         _config(policy="timed"),
-        discovery_fn=lambda cell, run_id="": _Pass(0),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -604,7 +604,7 @@ def test_checkpoint_owner_fencing() -> None:
 def test_worker_exits_when_ownership_lost_mid_pass() -> None:
     db = _db()
 
-    def _hijack(cell: RunnerCell, run_id: str = "") -> Any:
+    def _hijack(cell: RunnerCell, run_id: str = "", limit: int = 0) -> Any:
         db["runs"][0]["owner"] = "recovery"  # adoption landed mid-pass
         return _Pass(3)
 
@@ -797,7 +797,7 @@ def test_pass_drives_created_properties_through_coordinator(
     report = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, acquire_approved=True),
-        discovery_fn=lambda cell, run_id="": _Pass(2, (pid1, pid2)),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(2, (pid1, pid2)),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -830,7 +830,7 @@ def test_resume_skips_terminal_evaluations_reruns_errors() -> None:
         return {"outcome": "error", "reason": "boom"}
 
     kwargs: dict[str, Any] = {
-        "discovery_fn": lambda cell, run_id="": _Pass(3, (pid1, pid2, pid3)),
+        "discovery_fn": lambda cell, run_id="", limit=0: _Pass(3, (pid1, pid2, pid3)),
         "counts_fn": lambda: {},
         "sleep_fn": lambda seconds: None,
         "now_fn": _no_sabbath,
@@ -851,7 +851,7 @@ def test_evaluations_gated_without_approval_or_coordinator(
     report = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1),
-        discovery_fn=lambda cell, run_id="": _Pass(1, (pid,)),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -863,7 +863,7 @@ def test_evaluations_gated_without_approval_or_coordinator(
     gated = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, acquire_approved=True),
-        discovery_fn=lambda cell, run_id="": _Pass(1, (pid,)),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -884,7 +884,7 @@ def test_max_evaluations_per_pass_bounds_driving() -> None:
     report = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=1),
-        discovery_fn=lambda cell, run_id="": _Pass(3, ids),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(3, ids),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -904,7 +904,7 @@ def test_evaluation_database_outage_aborts_burst() -> None:
     report = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1),
-        discovery_fn=lambda cell, run_id="": _Pass(1, (pid,)),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
@@ -1003,7 +1003,7 @@ def test_backlog_completes_capped_work_across_resume() -> None:
     first = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=5),
-        discovery_fn=lambda cell, run_id="": _Pass(10, ids),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(10, ids),
         **kwargs,
     )
     assert first["outcome"] == "completed"
@@ -1014,7 +1014,7 @@ def test_backlog_completes_capped_work_across_resume() -> None:
     second = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=5),
-        discovery_fn=lambda cell, run_id="": _Pass(0, ()),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0, ()),
         **kwargs,
     )
     assert second["evaluated"] == 5
@@ -1038,7 +1038,7 @@ def test_backlog_reconsiders_errors_never_repeats_blocked() -> None:
         return {"outcome": "evaluated", "qualified": 1}
 
     kwargs: dict[str, Any] = {
-        "discovery_fn": lambda cell, run_id="": _Pass(2, (flaky, refused)),
+        "discovery_fn": lambda cell, run_id="", limit=0: _Pass(2, (flaky, refused)),
         "counts_fn": lambda: {},
         "sleep_fn": lambda seconds: None,
         "now_fn": _no_sabbath,
@@ -1079,7 +1079,7 @@ def test_checkpoint_failure_recovers_backlog_without_rework(
         return {"outcome": "evaluated", "qualified": 0}
 
     kwargs: dict[str, Any] = {
-        "discovery_fn": lambda cell, run_id="": _Pass(2, ids),
+        "discovery_fn": lambda cell, run_id="", limit=0: _Pass(2, ids),
         "counts_fn": lambda: {},
         "sleep_fn": lambda seconds: None,
         "now_fn": _no_sabbath,
@@ -1209,7 +1209,7 @@ def test_live_recovery_folds_committed_pass() -> None:
         evaluated.append(pid)
         return {"outcome": "evaluated", "qualified": 0}
 
-    def _empty(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _empty(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         return _Pass(0, ())
 
     try:
@@ -1302,7 +1302,7 @@ def test_live_ceiling_drains_backlog_without_new_discovery() -> None:
     finally:
         conn.close()
 
-    def _must_not_run(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _must_not_run(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         raise AssertionError("discovery must not run once the ceiling is hit")
 
     evaluated: list[str] = []
@@ -1477,7 +1477,7 @@ def test_pass_attribution_saved_before_discovery() -> None:
     db = _db()
     seen: dict[str, Any] = {}
 
-    def _discovery(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         saved = db["runs"][0]["checkpoint"].get("pending_pass") or {}
         seen["pending"] = dict(saved)
         seen["run_id"] = run_id
@@ -1602,7 +1602,7 @@ def test_resume_recovers_interrupted_pass(
     drives: list[str] = []
     discovery_calls: list[str] = []
 
-    def _discovery(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         discovery_calls.append(cell.key)
         return _Pass(0, ())
 
@@ -1649,7 +1649,7 @@ def test_recovery_unavailable_aborts_loudly(
     monkeypatch.setattr("app.observability.store.by_run", _down)
     report = run_worker(
         lambda: _FakeConn(db), _config(max_passes=1),
-        discovery_fn=lambda cell, run_id="": _Pass(0, ()),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0, ()),
         counts_fn=lambda: {}, sleep_fn=lambda seconds: None,
         now_fn=_no_sabbath,
     )
@@ -1676,13 +1676,13 @@ def test_creation_ceiling_drains_backlog_without_new_discovery() -> None:
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=5,
                 max_created_total=10),
-        discovery_fn=lambda cell, run_id="": _Pass(10, ids),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(10, ids),
         **kwargs,
     )
     assert first["evaluated"] == 5
     assert first["evaluations_pending"] == 5
 
-    def _no_discovery(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _no_discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         raise AssertionError("ceiling must prevent new discovery")
 
     second = run_worker(
@@ -1719,20 +1719,20 @@ def test_drain_rounds_observe_stop_requests() -> None:
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=1,
                 max_created_total=4),
-        discovery_fn=lambda cell, run_id="": _Pass(4, ids),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(4, ids),
         **kwargs,
     )
     second = run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=5, max_evaluations_per_pass=2,
                 max_created_total=4),
-        discovery_fn=lambda cell, run_id="": _Pass(0, ()),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0, ()),
         **kwargs,
     )
     assert second["outcome"] == "paused"
     assert second["reason"] == "operator stop observed"
-    assert second["evaluated"] == 2  # one bounded drain round, then stop
-    assert second["evaluations_pending"] == 1
+    assert second["evaluated"] == 1  # stop observed between evaluations
+    assert second["evaluations_pending"] == 2
 
 
 def test_quota_satisfied_drains_backlog() -> None:
@@ -1750,7 +1750,7 @@ def test_quota_satisfied_drains_backlog() -> None:
     run_worker(
         lambda: _FakeConn(db),
         _config(max_passes=1, max_evaluations_per_pass=1),
-        discovery_fn=lambda cell, run_id="": _Pass(2, ids),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(2, ids),
         counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
         evaluate_fn=_eval,
@@ -1761,7 +1761,7 @@ def test_quota_satisfied_drains_backlog() -> None:
         for category in PILOT_CATEGORIES
     }
 
-    def _no_discovery(cell: RunnerCell, run_id: str = "") -> _Pass:
+    def _no_discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
         raise AssertionError("quota must prevent new discovery")
 
     report = run_worker(
@@ -1776,3 +1776,409 @@ def test_quota_satisfied_drains_backlog() -> None:
     assert report["reason"] == "pilot quota satisfied"
     assert report["evaluated"] == 1
     assert sorted(drives) == sorted(ids)
+
+
+def test_zero_created_pass_exhausts_unit() -> None:
+    db = _db()
+    calls: list[tuple[str, int]] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append((cell.unit_key, limit))
+        return _Pass(0, ())
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4),
+        discovery_fn=_seen,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert report["outcome"] == "completed"
+    assert report["reason"] == "all configured work units exhausted"
+    assert len(calls) == 1  # the exhausted query is never repeated
+    assert report["exhausted_units"] == [calls[0][0]]
+    assert report["overpass_requests"] == 1
+
+
+def test_exhausted_unit_reopens_on_wider_limit() -> None:
+    db = _db()
+    seen: list[int] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        seen.append(limit)
+        return _Pass(0, ())
+
+    kwargs: dict[str, Any] = {
+        "counts_fn": lambda: {}, "sleep_fn": lambda seconds: None,
+        "now_fn": _no_sabbath,
+    }
+    first = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, pass_limit=5),
+        discovery_fn=_seen, **kwargs,
+    )
+    assert first["reason"] == "all configured work units exhausted"
+    second = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, pass_limit=10, resume=True),
+        discovery_fn=_seen, **kwargs,
+    )
+    assert seen == [5, 10]  # wider window reopens the unit across bursts
+    assert second["reason"] == "all configured work units exhausted"
+
+
+def test_fulfilled_cell_skipped_pilot() -> None:
+    db = _db()
+
+    def _must_not_run(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        raise AssertionError("fulfilled pilot cell must be skipped")
+
+    counts = {("dallas county", "high_rise"): 4}
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4),
+        discovery_fn=_must_not_run,
+        counts_fn=lambda: dict(counts),
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert report["outcome"] == "completed"
+    assert report["reason"] == "all configured work units fulfilled"
+    assert report["overpass_requests"] == 0
+
+
+def test_timed_ignores_fulfillment() -> None:
+    db = _db()
+    calls: list[str] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.key)
+        return _Pass(0, ())
+
+    counts = {("dallas county", "high_rise"): 4}
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, policy="timed"),
+        discovery_fn=_seen,
+        counts_fn=lambda: dict(counts),
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert len(calls) == 1  # attempted despite fulfillment, then exhausted
+    assert report["reason"] == "all configured work units exhausted"
+
+
+def test_pass_limit_clamped_to_remaining_allowance() -> None:
+    db = _db()
+    seen: list[int] = []
+
+    def _honest(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        seen.append(limit)
+        ids = tuple(str(uuid4()) for _ in range(min(limit, 2)))
+        return _Pass(len(ids), ids)
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, pass_limit=10, max_created_total=3),
+        discovery_fn=_honest,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert seen == [3, 1]  # min(pass_limit, remaining) per pass
+    assert report["created"] == 3
+    assert report["reason"] == "creation budget exhausted"
+
+
+def test_overpass_budget_gates_discovery() -> None:
+    db = _db()
+    calls: list[str] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.key)
+        return _Pass(1, (str(uuid4()),))
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=5, max_overpass_requests=1),
+        discovery_fn=_seen,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert len(calls) == 1
+    assert report["overpass_requests"] == 1
+    assert report["outcome"] == "completed"
+    assert report["reason"] == "overpass request budget exhausted"
+
+
+def test_overpass_retries_share_request_budget() -> None:
+    db = _db()
+    calls: list[str] = []
+
+    def _flaky(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.key)
+        raise RuntimeError("provider down")
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=5, max_overpass_requests=2),
+        discovery_fn=_flaky,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert len(calls) == 2  # failed attempts spend the budget too
+    assert report["overpass_requests"] == 2
+    assert report["reason"] == "overpass request budget exhausted"
+
+
+def test_brave_bound_halts_evaluations() -> None:
+    db = _db()
+
+    def _source(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        ids = (str(uuid4()), str(uuid4()))
+        return _Pass(2, ids)
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        # Spend above the configured per-run limit simulates a resumed
+        # run keeping its wider persisted limit: the backstop case.
+        return {"outcome": "evaluated", "qualified": 0,
+                "decision": "needs_evidence", "brave_attempts": 2}
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=3, max_evaluations_per_pass=2,
+                evaluation_attempt_limit=1),
+        discovery_fn=_source,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    assert report["request_bounds"]["brave_requests"] == 3 * 2 * 1
+    assert report["brave_requests"] == 6
+    assert report["evaluated"] == 3
+    assert report["evaluations_preempted"] == "brave request bound reached"
+    assert report["unresolved"]["queued_backlog"] == 3
+
+
+def test_report_states_cells_deficits_and_decisions() -> None:
+    db = _db()
+    pid = str(uuid4())
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        return {"outcome": "evaluated", "qualified": 1, "decision": "needs_evidence"}
+
+    counts = {("dallas county", "high_rise"): 2}
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
+        counts_fn=lambda: dict(counts),
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    assert len(report["cells"]) == 36
+    dallas = next(
+        row for row in report["cells"]
+        if (row["county"], row["category"]) == ("dallas county", "high_rise")
+    )
+    assert (dallas["credited"], dallas["target"], dallas["deficit"]) == (2, 4, 2)
+    assert report["remaining_quota"] == 35 * 4 + 2
+    assert report["raphael_decisions"] == {"needs_evidence": 1}
+    assert report["credited_new"] == 0  # static counts never double-count
+    assert report["request_bounds"] == {"overpass_requests": 1, "brave_requests": 45}
+
+
+def test_credited_new_counts_per_cell_gains() -> None:
+    db = _db()
+    staged = [{}, {("dallas county", "high_rise"): 1}]
+    position = 0
+
+    def _counts() -> dict[tuple[str, str], int]:
+        nonlocal position
+        out = staged[min(position, 1)]
+        position += 1
+        return dict(out)
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=2),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(0, ()),
+        counts_fn=_counts,
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert report["credited_new"] == 1
+    assert report["remaining_quota"] == 143
+
+
+def test_duration_checked_between_evaluations() -> None:
+    db = _db()
+    ticks = [0.0, 0.0, 0.0, 1e6]
+    position = 0
+
+    def _clock() -> float:
+        nonlocal position
+        value = ticks[min(position, len(ticks) - 1)]
+        position += 1
+        return value
+
+    ids = (str(uuid4()), str(uuid4()))
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        return {"outcome": "evaluated", "qualified": 0}
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, max_duration_seconds=60.0),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(2, ids),
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+        clock_fn=_clock,
+    )
+    assert report["outcome"] == "paused"
+    assert report["reason"] == "duration limit reached"
+    assert report["evaluated"] == 1
+    assert report["evaluations_pending"] == 1
+
+
+def test_runner_config_rejects_unknown_cells_and_windows() -> None:
+    good = RunnerCell(county="dallas county", category="high_rise",
+                      bbox=(32.0, -97.0, 33.0, -96.0))
+
+    def _check(cell: RunnerCell, **overrides: Any) -> None:
+        params: dict[str, Any] = {
+            "scope": "t", "policy": "pilot", "cells": [cell],
+            "max_passes": 1, "max_duration_seconds": 60.0,
+            "max_created_total": 10,
+        }
+        params.update(overrides)
+        with pytest.raises(RunnerError):
+            RunnerConfig(**params).validate()
+
+    _check(RunnerCell(county="atlantis county", category="high_rise", bbox=good.bbox))
+    _check(RunnerCell(county="dallas county", category="skyscraper", bbox=good.bbox))
+    _check(RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(33.0, -97.0, 32.0, -96.0)))
+    _check(RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(float("nan"), -97.0, 33.0, -96.0)))
+    _check(RunnerCell(county="dallas county", category="high_rise",
+                       bbox=good.bbox, source=""))
+    _check(good, max_overpass_requests=0)
+    RunnerConfig(scope="t", policy="pilot", cells=[good], max_passes=1,
+                 max_duration_seconds=60.0, max_created_total=10).validate()
+
+
+def test_unit_keys_distinct_for_subdivisions() -> None:
+    north = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.0, -97.0, 33.0, -96.0))
+    south = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.5, -96.9, 33.0, -96.5))
+    assert north.key == south.key
+    assert north.unit_key != south.unit_key
+    db = _db()
+    calls: list[str] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.unit_key)
+        if cell.unit_key == north.unit_key:
+            return _Pass(0, ())
+        return _Pass(1, (str(uuid4()),))
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[north, south], max_passes=4),
+        discovery_fn=_seen,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert calls[0] == north.unit_key
+    assert calls[1] == south.unit_key  # exhaustion is per-unit, not per-cell
+    assert report["exhausted_units"] == [north.unit_key]
+
+
+def test_brave_usage_zero_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.db import DatabaseNotConfiguredError
+    from app.discovery_runner import _brave_used_for
+
+    def _missing() -> Any:
+        raise DatabaseNotConfiguredError("no database configured")
+
+    monkeypatch.setattr("app.properties_db.get_connection", _missing)
+    assert _brave_used_for("runner:s:pid", "q") == 0
+
+
+def test_brave_usage_reads_run_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from app.discovery_runner import _brave_used_for
+
+    monkeypatch.setattr(
+        "app.properties_db.get_connection", lambda: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        "app.workflow_db.get_run_by_key_in_transaction",
+        lambda conn, key: SimpleNamespace(usage={"brave_attempts": 3}),
+    )
+    assert _brave_used_for("runner:s:pid", "q") == 3
+
+
+def test_final_report_reads_fresh_counts_after_last_round() -> None:
+    db = _db()
+    staged = [{}, {("dallas county", "high_rise"): 1}]
+    position = 0
+
+    def _counts() -> dict[tuple[str, str], int]:
+        nonlocal position
+        out = staged[min(position, 1)]
+        position += 1
+        return dict(out)
+
+    pid = str(uuid4())
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        return {"outcome": "evaluated", "qualified": 1, "decision": "needs_evidence"}
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
+        counts_fn=_counts,
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    # The pass budget fills immediately after the last evaluation
+    # round; the final report must still include its credit.
+    assert report["outcome"] == "completed"
+    assert report["reason"] == "pass budget exhausted"
+    assert report["evaluated"] == 1
+    assert report["credited_new"] == 1
+    assert report["remaining_quota"] == 143
+    dallas = next(
+        row for row in report["cells"]
+        if (row["county"], row["category"]) == ("dallas county", "high_rise")
+    )
+    assert (dallas["credited"], dallas["deficit"]) == (1, 3)
+
+
+def test_final_report_marks_quota_unavailable_on_read_failure() -> None:
+    db = _db()
+    calls = 0
+
+    def _counts() -> dict[tuple[str, str], int]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("quota store down")
+        return {}
+
+    pid = str(uuid4())
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (pid,)),
+        counts_fn=_counts,
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert report["outcome"] == "completed"
+    assert report["cells"] == []
+    assert report["remaining_quota"] is None
+    assert report["credited_new"] is None
+    assert report["created"] == 1  # committed work preserved
+    assert report["checkpoint_durable"] is True

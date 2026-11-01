@@ -38,7 +38,11 @@ from app.agents.gabriel.attribution import (
     CategoryObservation,
     evaluate_category_evidence,
 )
-from app.agents.gabriel.extractor import ResearchIntelligence, group_by_property
+from app.agents.gabriel.extractor import (
+    ResearchIntelligence,
+    eligible_category_props,
+    group_by_property,
+)
 from app.agents.gabriel.ranking import PropertyRanking, RankedCandidate
 from app.agents.gabriel.source_registry import PRODUCTION_REGISTRY, SourceRegistry
 from app.agents.gabriel.verification import (
@@ -67,14 +71,34 @@ _CLAIM_FACT_KEYS = {
 _PROPOSED_BLOCKED_FACTS = ("levels", "height_m", "building", "designation")
 
 
-def _member_observations(
-    members: list[int], items: list,
+def member_category_observations(
+    members: list[int], items: list, group_key: str,
 ) -> list[CategoryObservation]:
-    """Category observations from grouped members' extracted properties."""
+    """Category observations from grouped members (shared production path).
+
+    Dossier attribution and the verification claim both build from
+    this mapping so the two never reason from different category
+    facts. Search targeting context is never included: only the
+    extractor's per-property category signals become observations,
+    and only when demonstrably belonging to this candidate.
+    """
+    return _member_observations(members, items, group_key)
+
+
+def _member_observations(
+    members: list[int], items: list, group_key: str,
+) -> list[CategoryObservation]:
+    """Category observations from grouped members' eligible properties.
+
+    Only props attributable to this candidate contribute; category
+    signals from another property in a multi-property result stay
+    unattributed rather than cross-assigning or manufacturing a
+    contradiction.
+    """
     observations: list[CategoryObservation] = []
     for index in members:
         item = items[index]
-        for prop in item.properties:
+        for prop in eligible_category_props(item, group_key):
             if prop.category is None:
                 continue
             observations.append(
@@ -179,7 +203,9 @@ def build_candidate_verification(
     byte for byte.
     """
     active = PRODUCTION_REGISTRY if registry is None else registry
-    mechanical = evaluate_category_evidence(_member_observations(members, items))
+    mechanical = evaluate_category_evidence(
+        member_category_observations(members, items, candidate.key)
+    )
     claim = mechanical.observed or ""
     if not claim and mechanical.status is CategoryEvidenceStatus.CONTRADICTORY:
         claim = mechanical.conflicting_values[0]
@@ -244,4 +270,5 @@ def build_candidate_verifications(
 __all__ = [
     "build_candidate_verification",
     "build_candidate_verifications",
+    "member_category_observations",
 ]

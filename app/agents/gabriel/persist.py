@@ -13,6 +13,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from app.agents.gabriel.attribution import (
+    normalize_category_value,
+    normalize_county_claim,
+)
+from app.agents.gabriel.ranking import QCStatus
 from app.workflow import (
     KIND_DOSSIER_VERSION,
     KIND_QUALIFICATION,
@@ -143,13 +148,59 @@ def persist_dossier_versions(
     return digests
 
 
+def _category_selection_supported(category: dict[str, Any], selected: str) -> bool:
+    """At least one backing observation normalizes to the selected value.
+
+    The selected value itself is caller-supplied; only agreement
+    from the preserved backing observations supports it. A label
+    with no supporting observation — or with observations for a
+    different value — is malformed or mismatched, never established.
+    """
+    observations = category.get("observations") or []
+    if not isinstance(observations, list):
+        return False
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        if normalize_category_value(str(observation.get("value", "") or "")) == selected:
+            return True
+    return False
+
+
 def qualify_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
     """Deterministic research qualification for one dossier payload.
 
     Qualified means research-complete enough for Raphael review — not
     authorized. Unknown county stays researchable but earns no
     county-cell credit (county_credit "").
+
+    A status label alone never suffices: every selected category —
+    observed, corroborated, or verified — requires a known value
+    with at least one backing observation normalizing to that same
+    value, and verified county credit requires backing claims
+    with a normalizable value. A caller-supplied verified label
+    without supporting observations establishes nothing.
+    Quality-control terminal states (excluded, deferred) never
+    qualify. Recorded unknowns (``missing``) stay informational:
+    resolving them is Raphael's handoff work, not a research gate.
     """
+    qc_status = str(dossier.get("qc_status", "") or "")
+    if qc_status == QCStatus.EXCLUDE.value:
+        return {
+            "outcome": "not_qualified",
+            "policy_version": QUALIFICATION_POLICY_VERSION,
+            "reasons": ["excluded by quality control"],
+            "evidence_refs": list(dossier.get("sources") or []),
+            "county_credit": "",
+        }
+    if qc_status == QCStatus.DEFERRED.value:
+        return {
+            "outcome": "not_qualified",
+            "policy_version": QUALIFICATION_POLICY_VERSION,
+            "reasons": ["outside operating area"],
+            "evidence_refs": list(dossier.get("sources") or []),
+            "county_credit": "",
+        }
     reasons: list[str] = []
     disputes = dossier.get("identity_disputes") or {}
     if disputes:
@@ -159,8 +210,6 @@ def qualify_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
         reasons.append(f"{len(conflicts)} unresolved conflict(s)")
     category = dossier.get("category_attribution") or {}
     category_status = str(category.get("status", "unknown"))
-    if category_status in ("unknown", ""):
-        reasons.append("category unknown")
     if category_status == "contradictory":
         return {
             "outcome": "not_qualified",
@@ -169,6 +218,23 @@ def qualify_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
             "evidence_refs": list(dossier.get("sources") or []),
             "county_credit": "",
         }
+    if category_status == "verified":
+        selected = normalize_category_value(str(category.get("verified") or ""))
+        if selected is None or not _category_selection_supported(category, selected):
+            reasons.append("category attribution malformed or unsupported")
+    elif category_status in ("observed", "corroborated"):
+        selected = normalize_category_value(str(category.get("observed") or ""))
+        # The attribution contract forbids a verified value outside
+        # verified status; a stray one would also hijack cell credit,
+        # which prefers verified over observed.
+        if category.get("verified") not in (None, ""):
+            reasons.append("category attribution malformed or unsupported")
+        elif selected is None or not _category_selection_supported(category, selected):
+            reasons.append("category attribution malformed or unsupported")
+    elif category_status in ("unknown", ""):
+        reasons.append("category unknown")
+    else:
+        reasons.append("category attribution malformed or unsupported")
     if reasons:
         return {
             "outcome": "needs_research",
@@ -180,7 +246,10 @@ def qualify_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
     county = dossier.get("county_attribution") or {}
     verified_county = ""
     if str(county.get("evidence_status", "")).lower() == "verified":
-        verified_county = str(county.get("value", "") or "")
+        value = str(county.get("value", "") or "")
+        claims = county.get("claims") or []
+        if value and claims and normalize_county_claim(value) is not None:
+            verified_county = value
     return {
         "outcome": "qualified",
         "policy_version": QUALIFICATION_POLICY_VERSION,

@@ -418,7 +418,7 @@ def test_start_discovery_acquire_ask_preview_then_execute(
     assert preview["outcome"] == "preview"
     assert preview["preview"]["inputs"]["acquire"] is True
     assert preview["preview"]["cost_bounds"] == {
-        "brave_attempts": "<= 54", "meta_calls": 0
+        "overpass_requests": "<= 2", "brave_attempts": "<= 54", "meta_calls": 0
     }
     assert "acquisition" in preview["preview"]["effects"]
     assert captured == {}  # preview performs no work

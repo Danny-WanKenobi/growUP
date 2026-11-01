@@ -17,6 +17,16 @@ checkpoints make stop/resume lossless. Nothing here launches
 background work: each invocation is a synchronous bounded burst, so
 Wondrue start/resume stays request-safe and long campaigns proceed
 as repeated operator-approved bursts (or CLI runs).
+
+Stop, duration, Sabbath, and request bounds apply between work
+units (passes and evaluations), never mid-write; an in-flight
+provider request cannot be cancelled and runs to its own
+timeout. Discovery advances through configured search units with
+durable exhaustion (a pass that creates nothing exhausts its
+exact query); fulfilled pilot cells are skipped under the pilot
+policy. Every pass carries an effective limit clamped to the
+remaining creation allowance, and the report states per-provider
+request bounds alongside actual spend.
 """
 
 from __future__ import annotations
@@ -63,6 +73,21 @@ class RunnerCell:
     def key(self) -> str:
         return f"{self.county}||{self.category}"
 
+    @property
+    def unit_key(self) -> str:
+        """Durable search-unit identity: pilot cell + exact window + source.
+
+        ``key`` names the pilot cell for quota accounting; ``unit_key``
+        names one configured search window for progression state, so
+        approved geographic subdivisions (same county/category,
+        different bboxes) progress and exhaust independently.
+        """
+        south, west, north, east = self.bbox
+        return (
+            f"{self.county}||{self.category}||"
+            f"{south!r},{west!r},{north!r},{east!r}||{self.source}"
+        )
+
 
 @dataclass
 class RunnerConfig:
@@ -86,14 +111,42 @@ class RunnerConfig:
     max_evaluations_per_pass: int = 5
     evaluation_attempt_limit: int = 9
     evaluation_timeout_seconds: float | None = None
+    max_overpass_requests: int | None = None
+
+    @property
+    def overpass_request_bound(self) -> int:
+        """Burst Overpass request budget (defaults to one per pass)."""
+        if self.max_overpass_requests is None:
+            return self.max_passes
+        return self.max_overpass_requests
 
     def validate(self) -> None:
+        from app.pilot import normalize_category, normalize_county
+
         if not str(self.scope or "").strip():
             raise RunnerError("scope is required")
         if self.policy not in POLICIES:
             raise RunnerError(f"unknown policy: {self.policy!r}")
         if not self.cells:
             raise RunnerError("at least one cell is required")
+        for cell in self.cells:
+            try:
+                normalize_county(cell.county)
+                normalize_category(cell.category)
+            except ValueError as exc:
+                raise RunnerError(f"unknown pilot cell: {cell.key} ({exc})") from exc
+            for value in cell.bbox:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise RunnerError(f"cell bbox must hold numbers: {cell.key}")
+                if value != value or value in (float("inf"), float("-inf")):
+                    raise RunnerError(f"cell bbox must be finite: {cell.key}")
+            south, west, north, east = cell.bbox
+            if not (south < north and west < east):
+                raise RunnerError(
+                    f"cell bbox must order south<north, west<east: {cell.key}"
+                )
+            if not str(cell.source or "").strip():
+                raise RunnerError(f"cell source is required: {cell.key}")
         if self.max_passes < 1:
             raise RunnerError("max_passes must be >= 1")
         if self.max_duration_seconds <= 0:
@@ -126,6 +179,12 @@ class RunnerConfig:
             or self.evaluation_timeout_seconds > 300
         ):
             raise RunnerError("evaluation_timeout_seconds must be within (0, 300]")
+        if self.max_overpass_requests is not None and (
+            isinstance(self.max_overpass_requests, bool)
+            or not isinstance(self.max_overpass_requests, int)
+            or self.max_overpass_requests < 1
+        ):
+            raise RunnerError("max_overpass_requests must be an integer >= 1")
 
     @property
     def evaluation_timeout(self) -> float:
@@ -466,12 +525,12 @@ def finish_run_in_transaction(
 
 
 def request_stop_in_transaction(conn: Any, scope: str) -> bool:
-    """Ask a running worker to pause between passes (True if one runs).
+    """Ask a running worker to pause between work units (True if one runs).
 
     The row stays 'running' so the scope slot remains held: no second
     worker can claim it while the owner is still in flight. The owner
-    observes the flag at the next pass boundary and marks itself
-    paused on exit.
+    observes the flag at the next pass or evaluation boundary and
+    marks itself paused on exit.
     """
     try:
         with conn.cursor() as cur:
@@ -494,6 +553,9 @@ def _fresh_checkpoint(cells: list[RunnerCell]) -> dict[str, Any]:
         "passes": 0,
         "created_total": 0,
         "per_cell": {cell.key: 0 for cell in cells},
+        "cell_state": {},
+        "overpass_requests": 0,
+        "brave_requests": 0,
         "evaluations": {},
         "backlog": [],
         "discovery_runs": [],
@@ -510,6 +572,13 @@ def _fresh_checkpoint(cells: list[RunnerCell]) -> dict[str, Any]:
     }
 
 
+def _canonical_cell_key(cell: RunnerCell) -> tuple[str, str]:
+    """Pilot-cell identity in canonical form for ledger lookups."""
+    from app.pilot import normalize_category, normalize_county
+
+    return (normalize_county(cell.county), normalize_category(cell.category))
+
+
 def _cell_order_pilot(
     cells: list[RunnerCell], counts: dict[tuple[str, str], int]
 ) -> list[RunnerCell]:
@@ -517,10 +586,160 @@ def _cell_order_pilot(
     return sorted(
         cells,
         key=lambda cell: (
-            counts.get((cell.county, cell.category), 0),
+            counts.get(_canonical_cell_key(cell), 0),
             cells.index(cell),
         ),
     )
+
+
+def burst_request_bounds(config: RunnerConfig) -> dict[str, int]:
+    """Stated per-provider request maxima for one approved burst.
+
+    Overpass: one request per discovery call against
+    ``overpass_request_bound`` (retries share the budget). Brave:
+    at most ``max_passes`` drive rounds of
+    ``max_evaluations_per_pass`` attempts at ``evaluation_attempt_limit``
+    each — every drive round is paired with exactly one consumed
+    pass. A resumed run keeps its persisted (never widened) limit,
+    which may exceed the configured figure for that one run, so
+    the worker enforces the bound by halting further evaluations
+    once burst spend reaches it rather than assuming per-attempt
+    exactness. In-flight requests run to their own timeout and
+    may land just past a bound.
+    """
+    return {
+        "overpass_requests": config.overpass_request_bound,
+        "brave_requests": (
+            config.max_passes
+            * config.max_evaluations_per_pass
+            * config.evaluation_attempt_limit
+        ),
+    }
+
+
+def _unit_state(checkpoint: dict[str, Any], unit_key: str) -> dict[str, Any]:
+    """Get-or-create durable progression state for one search unit."""
+    cell_state = checkpoint.setdefault("cell_state", {})
+    if not isinstance(cell_state, dict):
+        cell_state = checkpoint["cell_state"] = {}
+    state = cell_state.get(unit_key)
+    if not isinstance(state, dict):
+        state = {"passes": 0, "created": 0, "exhausted": False,
+                 "reason": "", "limit": 0}
+        cell_state[unit_key] = state
+    return state
+
+
+def _mark_unit_exhausted(
+    state: dict[str, Any], *, reason: str, limit: int
+) -> None:
+    state["exhausted"] = True
+    state["reason"] = reason
+    state["limit"] = int(limit)
+
+
+def _unit_runnable(
+    cell: RunnerCell,
+    state: dict[str, Any],
+    *,
+    counts: dict[tuple[str, str], int],
+    policy: str,
+    effective_limit: int,
+) -> bool:
+    """Whether a search unit may take another discovery pass.
+
+    Exhausted units stay skipped unless a wider window reopens them
+    (a larger pass limit sees provider results beyond the exhausted
+    head). Under the pilot policy, fulfilled cells are skipped;
+    timed reassessment continues past quota by design.
+    """
+    from app.pilot import TARGET_QUALIFIED_PER_CELL
+
+    if state.get("exhausted") and int(effective_limit) <= int(state.get("limit", 0)):
+        return False
+    if policy == "pilot" and (
+        counts.get(_canonical_cell_key(cell), 0) >= TARGET_QUALIFIED_PER_CELL
+    ):
+        return False
+    return True
+
+
+def _record_unit_progress(
+    checkpoint: dict[str, Any], unit_key: str, result: Any, effective_limit: int
+) -> None:
+    """Record one pass against a search unit, exhausting honestly.
+
+    A pass that creates nothing exhausts its exact query: the same
+    request deterministically returns the same window, and the
+    dedup store only grows, so a repeat could never create more.
+    Progress (created > 0) clears exhaustion, including after a
+    wider-limit revisit. Window signals are read tolerantly so
+    scripted doubles (created-only counts) still exhaust on zeros.
+    """
+    state = _unit_state(checkpoint, unit_key)
+    counts = getattr(result, "counts", None)
+    try:
+        created = int(getattr(counts, "created", 0) or 0)
+    except (TypeError, ValueError):
+        created = 0
+    state["passes"] = int(state.get("passes", 0)) + 1
+    state["created"] = int(state.get("created", 0)) + created
+    if created > 0:
+        state["exhausted"] = False
+        state["reason"] = ""
+        return
+    raw_returned = getattr(counts, "returned", None)
+    try:
+        returned = None if raw_returned is None else int(raw_returned)
+    except (TypeError, ValueError):
+        returned = None
+    try:
+        unusable = int(getattr(counts, "skipped_unusable", 0) or 0)
+    except (TypeError, ValueError):
+        unusable = 0
+    if returned is None:
+        reason = "no created results (unreported window)"
+    elif returned == 0:
+        reason = "empty window"
+    elif unusable == 0:
+        reason = "all duplicates at this limit"
+    else:
+        reason = "no usable results at this limit"
+    _mark_unit_exhausted(state, reason=reason, limit=effective_limit)
+
+
+def _no_runnable_reason(
+    config: RunnerConfig,
+    checkpoint: dict[str, Any],
+    counts: dict[tuple[str, str], int],
+    effective_limit: int,
+) -> str:
+    """Honest completion reason when no search unit may run.
+
+    Mirrors :func:`_unit_runnable` branch order so every unit lands
+    in exactly one bucket.
+    """
+    from app.pilot import TARGET_QUALIFIED_PER_CELL
+
+    exhausted = 0
+    fulfilled = 0
+    for cell in config.cells:
+        state = _unit_state(checkpoint, cell.unit_key)
+        if state.get("exhausted") and int(effective_limit) <= int(state.get("limit", 0)):
+            exhausted += 1
+        elif (
+            config.policy == "pilot"
+            and counts.get(_canonical_cell_key(cell), 0) >= TARGET_QUALIFIED_PER_CELL
+        ):
+            fulfilled += 1
+        else:  # pragma: no cover - unreachable when no unit is runnable
+            exhausted += 1
+    total = len(config.cells)
+    if exhausted == total and fulfilled == 0:
+        return "all configured work units exhausted"
+    if fulfilled == total and exhausted == 0:
+        return "all configured work units fulfilled"
+    return f"no runnable discovery units ({exhausted} exhausted, {fulfilled} fulfilled)"
 
 
 def _cell_order_timed(
@@ -579,6 +798,18 @@ def _merge_saved_checkpoint(
     for key, value in (saved.get("per_cell") or {}).items():
         if key in checkpoint["per_cell"]:
             checkpoint["per_cell"][key] = int(value)
+    current_units = {cell.unit_key for cell in config.cells}
+    for key, value in (saved.get("cell_state") or {}).items():
+        if key in current_units and isinstance(value, dict):
+            checkpoint["cell_state"][key] = {
+                "passes": int(value.get("passes", 0)),
+                "created": int(value.get("created", 0)),
+                "exhausted": bool(value.get("exhausted", False)),
+                "reason": str(value.get("reason", "") or ""),
+                "limit": int(value.get("limit", 0)),
+            }
+    checkpoint["overpass_requests"] = int(saved.get("overpass_requests", 0))
+    checkpoint["brave_requests"] = int(saved.get("brave_requests", 0))
     saved_evals = saved.get("evaluations") or {}
     if isinstance(saved_evals, dict):
         checkpoint["evaluations"] = {
@@ -838,6 +1069,39 @@ def build_evaluation_query(prop: dict[str, Any]) -> str | None:
     return f"{query} commercial property"
 
 
+def _brave_used_for(assignment_id: str, query: str) -> int:
+    """Brave attempts charged to one evaluation run (0 when absent).
+
+    Reads the run's durable usage counter, which increments before
+    each transmission — ambiguous and failed transmitted attempts
+    count, replays and refusals do not. Zero when the database is
+    unconfigured (scripted doubles) or the run does not exist yet;
+    real outages propagate so the burst aborts loudly.
+    """
+    from app.db import DatabaseNotConfiguredError
+    from app.mvp import evaluation_key
+    from app.properties_db import get_connection
+    from app.workflow_db import get_run_by_key_in_transaction
+
+    try:
+        conn = get_connection()
+    except DatabaseNotConfiguredError:
+        return 0
+    try:
+        run = get_run_by_key_in_transaction(conn, evaluation_key(assignment_id, query))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if run is None:
+        return 0
+    try:
+        return max(0, int((run.usage or {}).get("brave_attempts", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def evaluate_property(
     scope: str,
     property_id: str,
@@ -862,6 +1126,10 @@ def evaluate_property(
       address, invalid identity); terminal.
     - ``error``: anything else went wrong; re-driven on resume.
 
+    Every post-coordinator outcome carries ``brave_attempts``: the
+    durable usage delta for this call (transmitted attempts count,
+    replays and refusals do not).
+
     Database outages propagate so the burst aborts loudly.
     """
     if not approved:
@@ -881,17 +1149,21 @@ def evaluate_property(
     query = build_evaluation_query(prop)
     if query is None:
         return {"outcome": "skipped", "reason": "no usable address"}
+    assignment_id = f"runner:{scope}:{pid}"
+    spent_before = _brave_used_for(assignment_id, query)
     try:
         summary = start_evaluation_audited(
-            f"runner:{scope}:{pid}", query,
+            assignment_id, query,
             approved=True, timeout_seconds=timeout_seconds, property_id=pid,
             brave_attempt_limit=brave_attempt_limit,
         )
     except WorkflowError as exc:
+        spent = max(0, _brave_used_for(assignment_id, query) - spent_before)
         message = str(exc)
         if any(marker in message for marker in _NO_RETRY_MARKERS):
-            return {"outcome": "blocked", "reason": message}
-        return {"outcome": "error", "reason": message}
+            return {"outcome": "blocked", "reason": message, "brave_attempts": spent}
+        return {"outcome": "error", "reason": message, "brave_attempts": spent}
+    spent = max(0, _brave_used_for(assignment_id, query) - spent_before)
     qualification = summary.get("qualification") or {}
     dossiers = len(qualification) if isinstance(qualification, dict) else 0
     qualified = (
@@ -905,6 +1177,7 @@ def evaluate_property(
         "decision": str(summary.get("decision", "")),
         "dossiers": dossiers,
         "qualified": qualified,
+        "brave_attempts": spent,
     }
 
 
@@ -919,6 +1192,8 @@ def _drive_evaluations(
     config: RunnerConfig,
     checkpoint: dict[str, Any],
     report: dict[str, Any],
+    *,
+    preempt_fn: Callable[[], str | None] | None = None,
 ) -> tuple[int, int] | None:
     """Drive the durable backlog head through the coordinator (one pass).
 
@@ -929,8 +1204,12 @@ def _drive_evaluations(
     in-flight evaluation resumes under its deterministic assignment,
     where the coordinator either replays the completed artifact or
     refuses an ambiguous attempt — never blindly re-running a
-    possibly-charged call. Returns (evaluated, qualified) or None
-    on database outage (backlog intact for the finish-path re-save).
+    possibly-charged call. ``preempt_fn`` is consulted between
+    evaluations; a non-empty return stops the drive with that
+    reason recorded. Brave spend accrues monotonically per outcome
+    (retried pids re-add, never overwrite past spend). Returns
+    (evaluated, qualified) or None on database outage (backlog
+    intact for the finish-path re-save).
     """
     backlog = checkpoint.setdefault("backlog", [])
     if not isinstance(backlog, list):
@@ -946,6 +1225,14 @@ def _drive_evaluations(
     for pid in list(backlog):
         if driven >= config.max_evaluations_per_pass:
             break
+        if preempt_fn is not None:
+            try:
+                preempted = preempt_fn()
+            except (DatabaseUnavailableError, DatabaseNotConfiguredError):
+                return None
+            if preempted:
+                report["evaluations_preempted"] = preempted
+                break
         try:
             outcome = evaluate_fn(config.scope, str(pid))
         except (DatabaseUnavailableError, DatabaseNotConfiguredError):
@@ -954,6 +1241,11 @@ def _drive_evaluations(
             outcome = {"outcome": "error", "reason": "empty evaluation outcome"}
         evaluations[str(pid)] = outcome
         driven += 1
+        try:
+            spent = int(outcome.get("brave_attempts", 0) or 0)
+        except (TypeError, ValueError):
+            spent = 0
+        checkpoint["brave_requests"] = int(checkpoint.get("brave_requests", 0)) + max(0, spent)
         if outcome.get("outcome") in TERMINAL_EVAL_OUTCOMES:
             try:
                 backlog.remove(pid)
@@ -984,7 +1276,9 @@ def run_worker(
 
     ``get_conn`` supplies short-lived connections the worker commits
     and closes itself. ``discovery_fn`` defaults to the real
-    ``run_discovery``; tests inject scripted doubles. Returns a
+    ``run_discovery`` and is always called as
+    ``discovery_fn(cell, run_id, limit)`` with the pass's effective
+    creation-clamped limit; tests inject scripted doubles. Returns a
     plain-JSON report; never raises for provider failures (they
     abort the burst with a recorded reason instead).
 
@@ -1015,11 +1309,31 @@ def run_worker(
     config.validate()
     sleep = sleep_fn or time.sleep
     clock = clock_fn or time.monotonic
+    bounds = burst_request_bounds(config)
     if discovery_fn is None:
         from app.agents.gabriel.schemas import BoundingBoxInput, DiscoveryRunRequest
         from app.agents.gabriel.service import run_discovery
+        from app.agents.gabriel.sources.base import UnknownSourceError, get_source
 
-        def _real(cell: RunnerCell, run_id: str = "") -> Any:
+        for cell in config.cells:
+            try:
+                get_source(cell.source)
+            except UnknownSourceError as exc:
+                raise RunnerError(f"unknown discovery source: {cell.source!r}") from exc
+            # Fail fast on deterministic request-shape errors before any
+            # provider request is attempted or counted.
+            south, west, north, east = cell.bbox
+            DiscoveryRunRequest(
+                source=cell.source,
+                bbox=BoundingBoxInput(
+                    south=south, west=west, north=north, east=east
+                ),
+                categories=[cell.category],
+                limit=config.pass_limit,
+                timeout_seconds=config.pass_timeout_seconds,
+            )
+
+        def _real(cell: RunnerCell, run_id: str, limit: int) -> Any:
             south, west, north, east = cell.bbox
             return run_discovery(
                 DiscoveryRunRequest(
@@ -1028,7 +1342,7 @@ def run_worker(
                         south=south, west=west, north=north, east=east
                     ),
                     categories=[cell.category],
-                    limit=config.pass_limit,
+                    limit=int(limit),
                     timeout_seconds=config.pass_timeout_seconds,
                     run_id=run_id or None,
                 )
@@ -1072,7 +1386,17 @@ def run_worker(
         "created": 0,
         "evaluated": 0,
         "qualified_dossiers": 0,
+        "request_bounds": dict(bounds),
+        "overpass_requests": 0,
+        "brave_requests": 0,
+        "cells": [],
+        "credited_new": 0,
+        "remaining_quota": None,
+        "raphael_decisions": {},
+        "exhausted_units": [],
+        "unresolved": {"queued_backlog": 0, "blocked": 0, "errors": 0},
         "evaluations_precondition": evaluations_precondition,
+        "evaluations_preempted": None,
         "recovered_pending_pass": None,
         "reason": None,
     }
@@ -1137,6 +1461,23 @@ def run_worker(
     burst_created = 0
     burst_evaluated = 0
     burst_qualified = 0
+    overpass_baseline = int(checkpoint.get("overpass_requests", 0))
+    brave_baseline = int(checkpoint.get("brave_requests", 0))
+    counts_before: dict[tuple[str, str], int] | None = None
+    counts_last: dict[tuple[str, str], int] | None = None
+    evaluations_halted: str | None = None
+    burst_decisions: dict[str, int] = {}
+    if evaluate_fn is not None:
+        _inner_evaluate = evaluate_fn
+
+        def _counting_evaluate(scope: str, pid: str) -> dict[str, Any]:
+            outcome = _inner_evaluate(scope, pid)
+            if isinstance(outcome, dict) and outcome.get("outcome") == "evaluated":
+                decision = str(outcome.get("decision", "") or "") or "unknown"
+                burst_decisions[decision] = burst_decisions.get(decision, 0) + 1
+            return outcome
+
+        evaluate_fn = _counting_evaluate
 
     def _usage() -> dict[str, Any]:
         return {
@@ -1145,13 +1486,120 @@ def run_worker(
             "created": burst_created,
             "evaluated": burst_evaluated,
             "qualified_dossiers": burst_qualified,
+            "overpass_requests": (
+                int(checkpoint.get("overpass_requests", 0)) - overpass_baseline
+            ),
+            "brave_requests": (
+                int(checkpoint.get("brave_requests", 0)) - brave_baseline
+            ),
         }
+
+    def _refresh_final_counts() -> None:
+        """Fresh canonical counts for the final report, or unavailable.
+
+        The last evaluation round may earn credit after the loop's
+        most recent quota read (notably when the pass budget fills
+        immediately after that round), so the final report always
+        re-reads from the same canonical source. A failed read
+        marks quota progress unavailable instead of presenting
+        stale counts as current; committed work and recovery are
+        unaffected.
+        """
+        nonlocal counts_before, counts_last
+        try:
+            fresh = dict(counts_fn())
+        except Exception:
+            counts_last = None
+            return
+        if counts_before is None:
+            counts_before = dict(fresh)
+        counts_last = dict(fresh)
+
+    def _tally_cells() -> None:
+        from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER
+        from app.pilot import PILOT_CATEGORIES, TARGET_QUALIFIED_PER_CELL
+
+        if counts_last is None:
+            # Quota progress unreadable: report it unavailable with
+            # no per-cell rows, never zeros or stale counts.
+            report["cells"] = []
+            report["remaining_quota"] = None
+            report["credited_new"] = None
+            return
+        rows: list[dict[str, Any]] = []
+        remaining = 0
+        credited = 0
+        for county in COUNTY_PRIORITY_ORDER:
+            for category in PILOT_CATEGORIES:
+                key = (county, category)
+                have = int(counts_last.get(key, 0))
+                deficit = max(0, TARGET_QUALIFIED_PER_CELL - have)
+                remaining += deficit
+                if counts_before is not None:
+                    credited += max(0, have - int(counts_before.get(key, 0)))
+                rows.append({
+                    "county": county, "category": category,
+                    "credited": have, "target": TARGET_QUALIFIED_PER_CELL,
+                    "deficit": deficit,
+                })
+        report["cells"] = rows
+        report["remaining_quota"] = remaining
+        report["credited_new"] = credited
+
+    def _tally_outcomes() -> None:
+        blocked = 0
+        errors = 0
+        for outcome in (checkpoint.get("evaluations") or {}).values():
+            if not isinstance(outcome, dict):
+                continue
+            kind = str(outcome.get("outcome", "") or "")
+            if kind == "blocked":
+                blocked += 1
+            elif kind == "error":
+                errors += 1
+        report["raphael_decisions"] = dict(burst_decisions)
+        report["unresolved"] = {
+            "queued_backlog": _backlog_depth(checkpoint),
+            "blocked": blocked,
+            "errors": errors,
+        }
+        report["exhausted_units"] = sorted(
+            key
+            for key, state in (checkpoint.get("cell_state") or {}).items()
+            if isinstance(state, dict) and state.get("exhausted")
+        )
 
     def _tally() -> None:
         report["passes"] = burst_passes
         report["created"] = burst_created
         report["evaluated"] = burst_evaluated
         report["qualified_dossiers"] = burst_qualified
+        report["overpass_requests"] = (
+            int(checkpoint.get("overpass_requests", 0)) - overpass_baseline
+        )
+        report["brave_requests"] = (
+            int(checkpoint.get("brave_requests", 0)) - brave_baseline
+        )
+        _tally_cells()
+        _tally_outcomes()
+
+    def _should_preempt() -> str | None:
+        """Stop reason between evaluations, or None to continue."""
+        if _sabbath_blackout(now_fn() if now_fn else None):
+            return "Sabbath blackout window"
+        if clock() - started >= config.max_duration_seconds:
+            return "duration limit reached"
+        preempt_conn = _connect()
+        try:
+            preempt_state = run_state_in_transaction(preempt_conn, run_id)
+        finally:
+            _close(preempt_conn)
+        if preempt_state is not None and preempt_state["stop_requested"]:
+            return "operator stop observed"
+        spent = int(checkpoint.get("brave_requests", 0)) - brave_baseline
+        if spent >= bounds["brave_requests"]:
+            return "brave request bound reached"
+        return None
 
     def _finish(status: str, reason: str | None) -> dict[str, Any]:
         report.update(outcome=status, reason=reason)
@@ -1177,8 +1625,46 @@ def run_worker(
             report["checkpoint_durable"] = True
         finally:
             _close(end)
+        _refresh_final_counts()
         _tally()
         return report
+
+    def _drain_or_finish(reason: str) -> bool:
+        """One evaluation-only round; False when the burst finished.
+
+        Shared by every discovery-resting path (creation ceiling,
+        quota satisfied, request budget spent, no runnable units):
+        drain the durable backlog within the pass budget, honoring
+        preemption between evaluations, or finish completed when no
+        drive is possible.
+        """
+        nonlocal burst_evaluated, burst_qualified, burst_passes, evaluations_halted
+        if (
+            evaluate_fn is None
+            or evaluations_halted is not None
+            or _backlog_depth(checkpoint) == 0
+        ):
+            _finish("completed", reason)
+            return False
+        driven = _drive_evaluations(
+            evaluate_fn, config, checkpoint, report, preempt_fn=_should_preempt
+        )
+        if driven is None:  # database outage inside the coordinator
+            _finish("aborted", "evaluation database unavailable")
+            return False
+        burst_evaluated += driven[0]
+        burst_qualified += driven[1]
+        burst_passes += 1
+        if not _persist_checkpoint():
+            return False
+        preempted = report.get("evaluations_preempted")
+        if preempted and preempted != "brave request bound reached":
+            _finish("paused", preempted)
+            return False
+        if preempted:
+            evaluations_halted = preempted
+        sleep(config.pacing_seconds)
+        return True
 
     def _persist_checkpoint() -> bool:
         """Save the checkpoint; finish and False when it cannot be saved.
@@ -1244,6 +1730,9 @@ def run_worker(
             counts = counts_fn()
         except Exception as exc:  # quota reads must not invent progress
             return _finish("aborted", f"pilot counts unreadable: {type(exc).__name__}")
+        if counts_before is None:
+            counts_before = dict(counts)
+        counts_last = dict(counts)
         ceiling_hit = checkpoint["created_total"] >= config.max_created_total
         quota_done = config.policy == "pilot" and _quota_met(counts)
         if ceiling_hit or quota_done:
@@ -1256,24 +1745,39 @@ def run_worker(
                 if ceiling_hit
                 else "pilot quota satisfied"
             )
-            if evaluate_fn is None or _backlog_depth(checkpoint) == 0:
-                return _finish("completed", reason)
-            driven = _drive_evaluations(evaluate_fn, config, checkpoint, report)
-            if driven is None:  # database outage inside the coordinator
-                return _finish("aborted", "evaluation database unavailable")
-            burst_evaluated += driven[0]
-            burst_qualified += driven[1]
-            burst_passes += 1
-            if not _persist_checkpoint():
+            if not _drain_or_finish(reason):
                 return report
-            sleep(config.pacing_seconds)
+            continue
+        spent_overpass = int(checkpoint.get("overpass_requests", 0)) - overpass_baseline
+        if spent_overpass >= bounds["overpass_requests"]:
+            if not _drain_or_finish("overpass request budget exhausted"):
+                return report
             continue
         ordered = (
             _cell_order_pilot(config.cells, counts)
             if config.policy == "pilot"
             else _cell_order_timed(config.cells, checkpoint)
         )
-        cell = ordered[checkpoint["cursor"] % len(ordered)]
+        # A pass can never exceed the remaining creation allowance:
+        # the effective limit is clamped before discovery runs.
+        remaining = config.max_created_total - int(checkpoint["created_total"])
+        effective_limit = min(config.pass_limit, max(remaining, 1))
+        cell = None
+        for step in range(len(ordered)):
+            candidate = ordered[(int(checkpoint["cursor"]) + step) % len(ordered)]
+            state = _unit_state(checkpoint, candidate.unit_key)
+            if _unit_runnable(
+                candidate, state, counts=counts,
+                policy=config.policy, effective_limit=effective_limit,
+            ):
+                cell = candidate
+                checkpoint["cursor"] = int(checkpoint["cursor"]) + step + 1
+                break
+        if cell is None:
+            reason = _no_runnable_reason(config, checkpoint, counts, effective_limit)
+            if not _drain_or_finish(reason):
+                return report
+            continue
         pending_id = _pass_run_id(config.scope, run_id, checkpoint["passes"])
         checkpoint["pending_pass"] = {
             "seq": checkpoint["passes"],
@@ -1283,9 +1787,16 @@ def run_worker(
         if not _persist_checkpoint():
             return report
         try:
-            result = discovery_fn(cell, pending_id)
+            result = discovery_fn(cell, pending_id, effective_limit)
             created = int(getattr(result.counts, "created", 0))
         except Exception as exc:
+            # Attempts count even when they fail: a transmitted
+            # request was spent. Pure pre-transmit validation
+            # failures are fail-fast at burst start, so anything
+            # reaching here conservatively counts as one request.
+            checkpoint["overpass_requests"] = (
+                int(checkpoint.get("overpass_requests", 0)) + 1
+            )
             consecutive_failures += 1
             if _is_auth_error(exc) or type(exc).__name__ in (
                 "DatabaseNotConfiguredError",
@@ -1305,14 +1816,13 @@ def run_worker(
             sleep(backoff)
             continue
         consecutive_failures = 0
+        checkpoint["overpass_requests"] = int(checkpoint.get("overpass_requests", 0)) + 1
         burst_passes += 1
         burst_created += created
         checkpoint["passes"] = int(checkpoint["passes"]) + 1
         checkpoint["created_total"] = int(checkpoint["created_total"]) + created
         checkpoint["per_cell"][cell.key] = int(checkpoint["per_cell"][cell.key]) + created
-        checkpoint["cursor"] = int(checkpoint["cursor"]) + 1
-        checkpoint["last_cell"] = cell.key
-        checkpoint["last_pass_created"] = created
+        _record_unit_progress(checkpoint, cell.unit_key, result, effective_limit)
         try:
             pass_ids = [str(i) for i in (getattr(result, "created_ids", None) or [])]
         except TypeError:
@@ -1321,12 +1831,19 @@ def run_worker(
         checkpoint["pending_pass"] = None
         if not _persist_checkpoint():
             return report
-        if evaluate_fn is not None:
-            driven = _drive_evaluations(evaluate_fn, config, checkpoint, report)
+        if evaluate_fn is not None and evaluations_halted is None:
+            driven = _drive_evaluations(
+                evaluate_fn, config, checkpoint, report, preempt_fn=_should_preempt
+            )
             if driven is None:  # database outage inside the coordinator
                 return _finish("aborted", "evaluation database unavailable")
             burst_evaluated += driven[0]
             burst_qualified += driven[1]
+            preempted = report.get("evaluations_preempted")
+            if preempted and preempted != "brave request bound reached":
+                return _finish("paused", preempted)
+            if preempted:
+                evaluations_halted = preempted
             if not _persist_checkpoint():
                 return report
         sleep(config.pacing_seconds)
@@ -1371,7 +1888,7 @@ def main(argv: list[str] | None = None) -> int:
             "[--max-passes N] [--max-duration SECONDS] [--max-created N] "
             "[--resume] [--created-by LABEL] [--acquire-approved] "
             "[--max-evaluations N] [--evaluation-attempt-limit 1..18] "
-            "[--evaluation-timeout SECONDS]",
+            "[--evaluation-timeout SECONDS] [--max-overpass-requests N]",
             file=sys.stderr,
         )
         return 1
@@ -1420,6 +1937,7 @@ def main(argv: list[str] | None = None) -> int:
         if not scope or not cells_path:
             raise RunnerError("--scope and --cells are required for run")
         raw_eval_timeout = _opt("--evaluation-timeout")
+        raw_overpass = _opt("--max-overpass-requests")
         config = RunnerConfig(
             scope=scope,
             policy=_opt("--policy", "pilot") or "pilot",
@@ -1434,6 +1952,9 @@ def main(argv: list[str] | None = None) -> int:
             evaluation_attempt_limit=int(_opt("--evaluation-attempt-limit", "9") or "9"),
             evaluation_timeout_seconds=(
                 float(raw_eval_timeout) if raw_eval_timeout is not None else None
+            ),
+            max_overpass_requests=(
+                int(raw_overpass) if raw_overpass is not None else None
             ),
         )
         report = run_worker(_connect, config)

@@ -18,7 +18,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.agents.gabriel.attribution import CategoryAttribution, CountyAttribution
+from app.agents.gabriel.attribution import (
+    CategoryAttribution,
+    CountyAttribution,
+    CountyClaim,
+    evaluate_category_evidence,
+    evaluate_county_evidence,
+)
 from app.agents.gabriel.extractor import (
     MoneyKind,
     ResearchIntelligence,
@@ -27,6 +33,8 @@ from app.agents.gabriel.extractor import (
     assembled_identity,
     group_by_property,
 )
+from app.agents.gabriel.claims import build_county_claim
+from app.agents.gabriel.producers import member_category_observations
 from app.agents.gabriel.source_identity import evidence_host
 from app.agents.gabriel.ranking import (
     CountyEligibility,
@@ -212,6 +220,25 @@ class _DossierEvidence:
         self.underuse: list[tuple[str, ResultIntelligence, int, str]] = []
         self.counties: list[tuple[str, ResultIntelligence, int]] = []
         self.structure: dict[str, tuple[ResultIntelligence, int, str]] = {}
+
+
+def _county_claims_for(evidence: _DossierEvidence) -> list[CountyClaim]:
+    """County claims from the dossier's single-property county mentions.
+
+    Only mentions already attributed to this property participate;
+    multi-property observations stay unattributed, and search
+    targeting context is never treated as evidence.
+    """
+    return [
+        build_county_claim(
+            mention=county,
+            source_url=item.result_url or "",
+            excerpt=f"county mention {county!r}"[:300],
+            observed_at=item.retrieved_at or None,
+            round_no=round_no,
+        )
+        for county, item, round_no in evidence.counties
+    ]
 
 
 def _collect_round_evidence(
@@ -821,6 +848,10 @@ def build_dossiers(request: DossierRequest) -> DossierSet:
             identity_disputes=dict(candidate.identity_disputes),
             county=candidate.county,
             county_evidence=candidate.county_evidence,
+            county_attribution=evaluate_county_evidence(_county_claims_for(evidence)),
+            category_attribution=evaluate_category_evidence(
+                member_category_observations(members, items, candidate.key)
+            ),
             qc_status=candidate.qc_status,
             exclusions=candidate.exclusions,
             deferrals=candidate.deferrals,
