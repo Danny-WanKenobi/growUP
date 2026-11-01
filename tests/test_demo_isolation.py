@@ -107,17 +107,15 @@ def test_production_authorization_rejects_demo_keys() -> None:
         authorize_in_transaction(_Conn(), uuid4(), demo_id("dossier"))
 
 
-def test_production_acquisition_rejects_demo_assignment() -> None:
-    from app.agents.raphael.acquire import acquire_evidence_in_transaction
+def test_production_acquisition_rejects_demo_assignment(monkeypatch) -> None:
+    from app.agents.raphael.acquire import ensure_artifact_owned
 
-    class _Conn:
-        def cursor(self) -> Any:
-            raise AssertionError("must fail before any SQL")
+    def _connect_bomb(config: Any = None) -> Any:
+        raise AssertionError("must fail before any connection")
 
+    monkeypatch.setattr("app.properties_db.get_connection", _connect_bomb)
     with pytest.raises(WorkflowError, match="demo identifiers"):
-        acquire_evidence_in_transaction(
-            _Conn(), uuid4(), demo_id("a1"), "q", approved=True
-        )
+        ensure_artifact_owned(uuid4(), demo_id("a1"), "q", approved=True)
 
 
 def test_simulated_decision_cannot_authorize_real_scenario() -> None:

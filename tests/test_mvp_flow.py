@@ -26,16 +26,15 @@ def _enabled(monkeypatch) -> None:
 
 
 def _stub_gabriel(monkeypatch, calls: dict[str, int]) -> None:
-    def _acquire(conn: Any, run_id: Any, aid: str, query: str, **kwargs: Any) -> dict[str, Any]:
+    def _ensure(run_id: Any, aid: str, query: str, **kwargs: Any) -> dict[str, Any]:
         calls["acquire"] = calls.get("acquire", 0) + 1
         return {"attempt": "completed", "assignment_id": aid, "query": query, "results": []}
 
     def _replay(conn: Any, run_id: Any, aid: str) -> dict[str, Any]:
         return {"attempt": "completed", "assignment_id": aid, "query": "q", "results": []}
 
-    monkeypatch.setattr(mvp_module, "acquire_evidence_in_transaction", _acquire)
+    monkeypatch.setattr(mvp_module, "ensure_artifact_owned", _ensure)
     monkeypatch.setattr(mvp_module, "replay_artifact", _replay)
-    monkeypatch.setattr(mvp_module, "begin_attempt", lambda *a, **k: calls.update({"begun": 1}))
     monkeypatch.setattr(mvp_module, "get_record_in_transaction", lambda *a, **k: None)
     from app.agents.gabriel.extractor import ResearchIntelligence
 
@@ -223,7 +222,6 @@ def test_recorded_failed_attempt_refuses_retry(monkeypatch, _enabled: None) -> N
     with pytest.raises(WorkflowError, match="prior acquisition recorded"):
         mvp_module.evaluate_real(_Conn(), uuid4(), "a1", "q", approved=True)
     assert "acquire" not in calls
-    assert "begun" not in calls
 
 
 def test_stop_run_sets_status(monkeypatch, _enabled: None) -> None:
@@ -254,13 +252,53 @@ def test_audited_start_binds_permanent_event(monkeypatch, _enabled: None) -> Non
     )
     import app.workflow_db as workflow_db
 
+    def _create_run(**kwargs: Any) -> Any:
+        seen["run_limits"] = kwargs.get("limits")
+        return SimpleNamespace(run_id=uuid4())
+
+    monkeypatch.setattr(workflow_db, "create_run", _create_run)
     monkeypatch.setattr(
-        workflow_db, "create_run_in_transaction",
-        lambda conn, **k: SimpleNamespace(run_id=uuid4()),
+        mvp_module, "ensure_artifact_owned",
+        lambda *a, **k: seen.update({"acquired": True}),
     )
     summary = mvp_module.start_evaluation_audited("a1", "q", approved=True)
     assert summary == {"stage": "done"}
     assert seen["operation_class"].value == "consequential_internal"
+    assert seen["run_limits"] == {"brave_attempts": 9}  # ordinary default
+    assert seen.get("acquired") is True  # artifact committed before the chain
+
+
+def test_audited_start_honors_explicit_attempt_limit(monkeypatch, _enabled: None) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.observability.transactions.run_consequential_transaction",
+        lambda **k: k["mutate"](_Conn()),
+    )
+    monkeypatch.setattr(
+        mvp_module, "evaluate_real", lambda *a, **k: {"stage": "done"}
+    )
+    import app.workflow_db as workflow_db
+
+    def _create_run(**kwargs: Any) -> Any:
+        seen["run_limits"] = kwargs.get("limits")
+        return SimpleNamespace(run_id=uuid4())
+
+    monkeypatch.setattr(workflow_db, "create_run", _create_run)
+    monkeypatch.setattr(
+        mvp_module, "ensure_artifact_owned", lambda *a, **k: None
+    )
+    mvp_module.start_evaluation_audited(
+        "a1", "q", approved=True, brave_attempt_limit=1
+    )
+    assert seen["run_limits"] == {"brave_attempts": 1}
+    with pytest.raises(WorkflowError, match="brave_attempt_limit"):
+        mvp_module.start_evaluation_audited(
+            "a1", "q", approved=True, brave_attempt_limit=0
+        )
+    with pytest.raises(WorkflowError, match="brave_attempt_limit"):
+        mvp_module.start_evaluation_audited(
+            "a1", "q", approved=True, brave_attempt_limit=19
+        )
 
 
 def test_audited_stop_binds_permanent_event(monkeypatch, _enabled: None) -> None:

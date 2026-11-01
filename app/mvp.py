@@ -34,8 +34,9 @@ from app.agents.gabriel.sources.brave import BraveSearchResult
 from app.agents.onesimus.crops import crop_profile
 from app.agents.onesimus.service import ClassifiedInput, run_scenario_in_transaction
 from app.agents.raphael.acquire import (
-    acquire_evidence_in_transaction,
-    begin_attempt,
+    DEFAULT_ATTEMPT_LIMIT,
+    MAX_ATTEMPT_LIMIT,
+    ensure_artifact_owned,
     replay_artifact,
 )
 from app.agents.raphael.service import authorize_in_transaction
@@ -216,15 +217,15 @@ def _gabriel_stage(
                 "ambiguous prior attempt crashed before completion; "
                 "retry requires a new assignment id"
             )
-        begin_attempt(run_id, assignment_id, approved=approved)
-        artifact = acquire_evidence_in_transaction(
-            conn, run_id, assignment_id, query,
+        # Owned acquisition: both budgets commit and the provider
+        # transmits with no business transaction open, so the caller's
+        # transaction never spans an external call. The helper
+        # re-checks committed state authoritatively (the run must be
+        # durably committed before this stage runs with a fresh id).
+        ensure_artifact_owned(
+            run_id, assignment_id, query,
             approved=approved, timeout_seconds=timeout_seconds,
         )
-        if artifact.get("attempt") != "completed":
-            raise WorkflowError(
-                f"acquisition {artifact.get('attempt')}: {artifact.get('error')}"
-            )
         replayed = replay_artifact(conn, run_id, assignment_id)
     intelligence = extract_research_intelligence(_reconstruct_results(replayed))
     ranking = rank_intelligence(intelligence)
@@ -389,6 +390,13 @@ def evaluate_real(
     without it packages stay draft and simulation is refused.
     ``property_id`` binds built dossiers to the operational property
     under evaluation (explicit caller targeting context).
+
+    The run must already be durably committed when a fresh assignment
+    still needs acquisition: the Gabriel stage acquires through
+    owned connections (provider outside any transaction), which can
+    only see committed runs. :func:`start_evaluation_audited`
+    commits the run and the artifact before opening the coordinated
+    transaction; direct callers on PostgreSQL must do the same.
     """
     _require_enabled()
     run = get_run_in_transaction(conn, run_id)
@@ -665,6 +673,20 @@ def _evaluation_event(assignment_id: str, query: str, idempotency_key: str) -> A
     )
 
 
+def evaluation_key(assignment_id: str, query: str) -> str:
+    """Deterministic idempotency key for one evaluation (resume-safe)."""
+    return f"mvp-{digest_payload({'a': assignment_id, 'q': query})[:16]}"
+
+
+def validate_attempt_limit(value: Any) -> int:
+    """Validate an explicit per-run Brave attempt bound (1..18)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WorkflowError("brave_attempt_limit must be an integer 1..18")
+    if value < 1 or value > MAX_ATTEMPT_LIMIT:
+        raise WorkflowError("brave_attempt_limit must be an integer 1..18")
+    return value
+
+
 def start_evaluation_audited(
     assignment_id: str,
     query: str,
@@ -676,22 +698,44 @@ def start_evaluation_audited(
     run_simulation: bool = False,
     simulation_key: str | None = None,
     property_id: str | None = None,
+    brave_attempt_limit: int = DEFAULT_ATTEMPT_LIMIT,
 ) -> dict[str, Any]:
-    """Create a run and evaluate it with its permanent audit event, atomically."""
+    """Evaluate one assignment in committed phases plus an audited chain.
+
+    Phase 1 commits the run (durably visible before any other
+    connection accounts an attempt). Phase 2 commits the evidence
+    artifact: budget charges and the started-marker commit before the
+    provider transmits, and transmission happens with no business
+    transaction open. Phase 3 runs the remaining chain inside the
+    coordinated transaction, where the Gabriel stage replays the
+    committed artifact instead of transmitting. The permanent audit
+    event commits if and only if the coordinated chain commits, so
+    it always describes actually committed stages.
+
+    ``brave_attempt_limit`` (default 9, ordinary allowance) bounds
+    Brave attempts for a newly created run; a resumed run keeps its
+    persisted limit (re-invocation never widens it). A crash between
+    phases resumes losslessly: a completed artifact replays without a
+    new charge, while a started-marker without an artifact (an
+    uncertain provider request) refuses the same assignment id.
+    """
     from app.observability.policy import OperationClass
     from app.observability.transactions import run_consequential_transaction
-    from app.workflow_db import create_run_in_transaction
+    from app.workflow_db import create_run
 
     _require_enabled()
     if not assignment_id or not query:
         raise WorkflowError("assignment_id and query are required")
-    key = f"mvp-{digest_payload({'a': assignment_id, 'q': query})[:16]}"
+    limit = validate_attempt_limit(brave_attempt_limit)
+    key = evaluation_key(assignment_id, query)
     event = _evaluation_event(assignment_id, query, key)
+    run = create_run(idempotency_key=key, limits={"brave_attempts": limit})
+    ensure_artifact_owned(
+        run.run_id, assignment_id, query,
+        approved=approved, timeout_seconds=timeout_seconds,
+    )
 
     def _mutate(conn: Any) -> dict[str, Any]:
-        run = create_run_in_transaction(
-            conn, idempotency_key=key, limits={"brave_attempts": 9}
-        )
         return evaluate_real(
             conn, run.run_id, assignment_id, query,
             site_inputs=site_inputs, approved=approved,

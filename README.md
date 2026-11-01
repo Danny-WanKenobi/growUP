@@ -351,23 +351,35 @@ run lifecycle, atomic audit, and the `identity_review` record
 (`tests/test_raphael.py`), and the full coordinator chain
 (`tests/test_funnel_acceptance.py`), and the inference budget
 reserve/reconcile round trip (`tests/test_inference_assist.py`).
-Confirmed deployed checkpoint `0ec9e18` (migrations 001–017 on
+Confirmed deployed checkpoint `2aebc93` (migrations 001–017 on
 both databases): full regression reached **2,097 passed, zero
 failures/skips** (17 deprecation warnings); operational health
 checks passed for both databases, application health/readiness,
 PostgreSQL availability, and the service; HTTPS `/wondrue`
-routing now works. Earlier runs had surfaced (and corrected)
-five custody-ordering failures, two test-contract mismatches,
-two route-test ambient-database assumptions, the
-throttle-profile review gaps, and the unrendered cockpit
-template braces. The cockpit preference/status work in this tree
-is newer than that checkpoint: immediate validated profile
-persistence, a separate inference-setting indicator, plain-text
-banner punctuation, masked Wondrue-access-key labeling, and
-actionable authentication explanations. It needs a targeted
-rerun, full regression, and health checks — all **pending owner
-execution** — plus owner browser acceptance, which scripted
-checks cannot establish. No Nginx change is part of this fix.
+routing works, and owner browser acceptance passed for profile
+persistence, the throttle indicator, and the target banner.
+Earlier runs had surfaced (and corrected) five custody-ordering
+failures, two test-contract mismatches, two route-test
+ambient-database assumptions, the throttle-profile review gaps,
+and the unrendered cockpit template braces. This tree holds only
+the owner-operated Wondrue credential procedure below (no code
+changes): provisioning, restart, and validation are **pending
+owner execution**. No migration, Nginx change, or deployment is
+part of this task.
+
+The owner has additionally confirmed the deployed baseline
+(`2aebc93`: 2,097 PostgreSQL tests passed, zero failures/skips, 17
+warnings; health, HTTPS, browser, and Wondrue authentication checks
+passed) and then **intentionally reset application data**:
+`growup_dev` currently contains no properties, evidence, or workflow
+records. The acquisition-budget and transaction-ordering code in
+this tree (`app/agents/raphael/acquire.py`,
+`app/mvp.py`, `app/wondrue.py`, `app/discovery_runner.py`,
+`app/workflow_db.py`, `tests/test_acquisition_budget.py`) is newer
+than that checkpoint: local suites are green (see the acquisition
+test commands below), while targeted rerun, full regression, and
+the `GROWUP_PG_INTEGRATION`-gated acquisition checks on the
+disposable database are **pending owner execution**.
 
 ### Synthetic demo fixture
 
@@ -1908,6 +1920,328 @@ authorization fails closed until curation exists. Human-supplied or
 reviewed evidence keeps that provenance and is never relabeled
 `adapter_collected`.
 
+### Acquisition budgets, evaluation ordering, and the first-run bound
+
+Every coordinator-originated Brave request (`app/mvp.py` →
+`app/agents/raphael/acquire.py`) carries the same guards on both
+entry paths (Wondrue `start_real_evaluation` and the discovery
+runner's `evaluate_property`, which share one audited wrapper):
+
+- Explicit approval is required; there is no ambient authority.
+- Exactly one shared monthly unit is reserved through the existing
+  `research_budget` accounting (`app/research_budget_db.py`,
+  `BRAVE_MONTHLY_CEILING`, default 100) **before** transmission,
+  and the durable per-run bound (`brave_attempts`, default 9, hard
+  ceiling 18) is checked first — either exhaustion refuses the
+  provider call with nothing transmitted. Reservations are never
+  refunded, so ambiguous and failed transmitted attempts count
+  conservatively. Reservation happens in `begin_attempt` only:
+  artifact replay and the research-run path (which reserves for its
+  own transmissions) never double-charge the same request.
+- Ambiguous outcomes (timeouts, transport/provider failures) persist
+  as `attempt="ambiguous"` artifacts and are never silently
+  retried: the same assignment id is terminal and a new id is
+  required.
+- One assignment is claimed atomically: under the locked run row,
+  `begin_attempt` rechecks the stored artifact and started-marker
+  before charging either budget, returning `claimed`, `replayed`
+  (completed evidence already stored — no new charge), or raising
+  a refusal (already-started/ambiguous id, stopped run, exhausted
+  bound, exhausted month). Only the claiming caller transmits, and
+  the lock is never held during HTTP — two racers yield exactly
+  one provider invocation and one monthly/per-run charge.
+
+Fresh evaluations run in committed phases so no business
+transaction ever spans an external call.
+`start_evaluation_audited` (1) commits the run — durably visible
+before any other connection accounts an attempt; (2) commits the
+evidence artifact — budget charges and the started-marker commit
+before the provider transmits, transmission happens with no
+transaction open, and the artifact commits immediately after; then
+(3) runs the remaining chain inside the coordinated transaction,
+where the Gabriel stage replays the committed artifact instead of
+transmitting. The permanent `wondrue.evaluation.completed` audit
+event commits if and only if the coordinated chain commits, so it
+always describes actually committed stages. Crash/resume: a
+completed artifact replays without a new charge; a started-marker
+without an artifact (an uncertain provider request) refuses the
+same id; a pre-transmit refusal (unapproved, over bound, monthly
+exhausted, stopped run) charges nothing and stays retryable. A
+resumed run keeps its persisted limit — re-invocation never widens
+it. The owned path (`ensure_artifact_owned` → locked
+`begin_attempt` claim → transmit → persisted artifact) is the only
+supported acquisition entry point: the legacy in-transaction
+helpers were deleted outright because a bare started-marker could
+not prove a monthly reservation, so no remaining helper transmits
+without the locked claim and no application path treats a marker
+alone as permission to transmit. Accurate crash/ambiguity limits:
+a crash between the monthly reservation and the per-run commit
+over-counts the month by one (conservative, never refunded); a
+crash after the marker commits but before the artifact persists
+leaves that assignment id terminal — resume refuses it and a new
+id is required, never a blind retry; a transmitted ambiguous
+attempt keeps its persisted artifact and is likewise terminal for
+that id.
+
+The initial owner-run evaluation is a configurable single-request
+bound rather than the ordinary nine-attempt allowance:
+`brave_attempt_limit=1`, 12-second provider timeout, no automatic
+retries, zero Meta requests (the evaluation path issues none; run
+it with a structured intent and `use_live: false` and do not
+follow with `compare_scenarios` or assistance intents), no
+outreach (no sender exists), and no simulated conversions
+(`run_simulation` stays `false`). Thread it through
+`start_evaluation_audited(brave_attempt_limit=1)`, the Wondrue
+`start_real_evaluation` args (`brave_attempt_limit`,
+`timeout_seconds`, `property_id`), or the runner
+(`--evaluation-attempt-limit 1 --evaluation-timeout 12`, or the
+same Wondrue burst args); ask-mode previews state the bound
+before anything executes.
+
+Operational-property intake is a prerequisite, not a coordinator
+function. The coordinator never invents a property identity or
+forces an unrelated dossier onto one: the property must already
+exist via the validated intake (`POST /properties`, sourced
+estimated/verified pairs) or OSM discovery intake, and the
+coordinator only associates at most one dossier whose own
+normalized address uniquely supports the target
+(`associate_dossiers_with_property` + `find_by_address`; ambiguity
+records a pending `identity_review` and custody blocks honestly).
+The runner derives a deterministic assignment
+(`runner:{scope}:{property_id}`) and query from the property's own
+stored address and skips address-less rows with reasons; a Wondrue
+evaluation without a resolvable target stops at the custody block
+instead of guessing.
+
+Focused checks (mocked providers, disposable data; PG-gated tests
+skip without `GROWUP_PG_INTEGRATION=1`):
+
+```bash
+python -m pytest -q tests/test_acquisition_budget.py tests/test_mvp_flow.py tests/test_raphael.py
+python -m pytest -q tests
+git diff --check
+```
+
+Local suite in this tree: **1,976 passed, 140 skipped** (133
+pre-existing skips plus 7 new PG-gated acquisition checks), 17
+warnings, with the legacy-helper tests removed and their approval,
+budget, ambiguity, persistence, replay, demo-isolation, and
+stopped-run checks preserved on the supported owned entry point.
+Pending owner execution on the disposable database
+(`growup_mvp_gate`) after `python -m app.migrate`: the seven
+`GROWUP_PG_INTEGRATION`-gated tests in
+`tests/test_acquisition_budget.py` (uncommitted-run
+invisibility demonstration, committed fresh-run acquisition,
+monthly exhaustion blocks transmit, single-request bound across
+assignment ids, two-connection race with one charge, recheck under
+a held lock, started-marker blocks uncertain replay), plus a
+full regression and health checks. Mocked success is not proof of
+PostgreSQL behavior, and skipped PG tests are not acceptance.
+
+### Owner first-acquisition configuration (proposed, not executed)
+
+No acquisition is authorized until the owner completes code review,
+deployment, and this configuration. Run this block on the Ubuntu
+host. It provisions a custody HMAC key **only if absent** (an
+existing valid key is preserved; a present-but-short key stops for
+an explicit owner decision — ordinary setup never silently rotates),
+enables the workflow only after the owner confirms the reviewed code
+is deployed, keeps live Meta spending disabled, and restarts only
+`growup.service` with readiness verification. Lengths and statuses
+are printed; values never are. Both confirmations read from the
+controlling terminal (`/dev/tty`) — never `input()`, whose stdin
+carries the program itself — the paste-back uses hidden terminal
+input, and the shown key is copied only into the owner's own
+private records.
+
+```bash
+sudo -v
+sudo python3 <<'PYEOF'
+import getpass, os, re, secrets, stat, subprocess, sys, tempfile, time
+ENV = "/var/www/growup/shared/growup.env"
+SERVICE = "growup.service"
+HMAC_KEY = "CUSTODY_HMAC_KEY"
+WORKFLOW_KEY = "MVP_WORKFLOW_ENABLED"
+SPEND_KEY = "META_SPEND_APPROVED"
+ALLOW_KEY = "INFERENCE_TOKEN_ALLOWANCE"
+MIN_HMAC_CHARS = 16
+def stop(message):
+    print("STOP: " + message)
+    raise SystemExit(1)
+def ask(prompt):
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    with open("/dev/tty") as tty:
+        return tty.readline().rstrip("\n")
+def sysctl(*args):
+    try:
+        return subprocess.run(["systemctl"] + list(args), capture_output=True, text=True)
+    except OSError as exc:
+        stop(f"cannot run service manager: {exc}")
+def split_assignment(line, key):
+    match = re.match(rf"^(export\s+)?{key}\s*=\s*(.*?)\s*$", line.rstrip("\n"))
+    if not match:
+        return None
+    body = match.group(2).strip()
+    if len(body) >= 2 and body[0] == body[-1] and body[0] in "\"'":
+        body = body[1:-1]
+    return (match.group(1) or "", body.strip())
+# --- preflight: service identity and environment safety (no values printed) ---
+unit = sysctl("cat", SERVICE)
+if unit.returncode != 0:
+    stop(f"{SERVICE} not found ({unit.stderr.strip()}); refusing to guess layout")
+match = re.search(r"^EnvironmentFile=\s*(\S+)", unit.stdout, re.M)
+if not match or match.group(1).lstrip("-") != ENV:
+    stop("service EnvironmentFile is not the expected path; review the unit file first")
+if os.path.islink(ENV):
+    stop("environment path is a symlink; refusing to follow it")
+lst = os.lstat(ENV)
+if not stat.S_ISREG(lst.st_mode):
+    stop("environment path is not a regular file")
+orig_mode = stat.S_IMODE(lst.st_mode)
+if orig_mode & 0o077:
+    stop(f"environment file permissions {oct(orig_mode)} grant group/other access; refusing")
+orig_uid, orig_gid = lst.st_uid, lst.st_gid
+fd = os.open(ENV, os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    raw = os.read(fd, 1 << 20).decode("utf-8")
+finally:
+    os.close(fd)
+lines = raw.splitlines(keepends=True)
+values = {}
+for key in (HMAC_KEY, WORKFLOW_KEY, SPEND_KEY, ALLOW_KEY):
+    hits = [i for i, line in enumerate(lines) if split_assignment(line, key) is not None]
+    if len(hits) > 1:
+        stop(f"duplicate {key} assignments (lines {[i + 1 for i in hits]}); dedupe manually first")
+    values[key] = split_assignment(lines[hits[0]], key)[1] if hits else ""
+# --- custody key state: absent -> provision; valid -> preserve; short -> stop ---
+hmac_state = "NOT configured" if not values[HMAC_KEY] else (
+    "configured" if len(values[HMAC_KEY]) >= MIN_HMAC_CHARS else "TOO SHORT")
+print(f"[info] {HMAC_KEY}: {hmac_state} (minimum {MIN_HMAC_CHARS} characters)")
+if values[HMAC_KEY] and len(values[HMAC_KEY]) < MIN_HMAC_CHARS:
+    stop("a short custody key is configured; replacing it would invalidate existing "
+         "receipt MACs, so replacement needs an explicit owner decision, not this block")
+fresh_hmac = ""
+if not values[HMAC_KEY]:
+    if ask("Generate a NEW custody HMAC key now? Type YES to continue: ").strip() != "YES":
+        stop("aborted by owner; nothing changed")
+    generated = secrets.token_urlsafe(32)
+    print("=" * 70)
+    print("OWNER ONLY - copy this value now into your own private records, kept")
+    print("where only you can retrieve it, as the Grow Up custody HMAC key.")
+    print("This value is shown once and is not for sharing.")
+    print("=" * 70)
+    print(generated)
+    pasted = getpass.getpass("Paste the value back to install it: ")
+    if not pasted or pasted != generated or len(pasted) < MIN_HMAC_CHARS:
+        stop("paste-back did not match; nothing was written")
+    fresh_hmac = pasted
+else:
+    print("[ok] existing custody key preserved (no rotation)")
+# --- workflow enablement only after review + deployment; spend stays off ---
+if values[SPEND_KEY] == "1":
+    stop("live Meta spending is enabled (META_SPEND_APPROVED=1); refusing")
+if (values[ALLOW_KEY] or "0").strip() not in ("", "0"):
+    stop("an inference token allowance is granted; reset it to 0 first")
+print("[ok] live Meta spending is disabled (no allowance)")
+enable = ask("Enable the real-property workflow (MVP_WORKFLOW_ENABLED=1)? "
+              "Type YES only if the reviewed code is deployed: ").strip() == "YES"
+if not enable:
+    stop("workflow left disabled by owner choice; nothing changed")
+def install_lines(content, dest, mode, uid, gid):
+    data = "".join(content).encode("utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=".growup.env.", dir=os.path.dirname(ENV))
+    try:
+        os.write(tmp_fd, data)
+        os.fchmod(tmp_fd, mode)
+        os.fchown(tmp_fd, uid, gid)
+        os.close(tmp_fd)
+        os.replace(tmp_path, dest)
+    except BaseException:
+        try:
+            os.close(tmp_fd)
+        except OSError:
+            pass
+        try:
+            if os.path.lexists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+backup = f"{ENV}.bak-{stamp}"
+install_lines(lines, backup, 0o600, 0, 0)
+print(f"[ok] restricted root-owned backup: {backup}")
+updates = {WORKFLOW_KEY: "1"}
+if fresh_hmac:
+    updates[HMAC_KEY] = fresh_hmac
+out = []
+seen = set()
+for line in lines:
+    replaced = False
+    for key, value in updates.items():
+        parsed = split_assignment(line, key)
+        if parsed is not None:
+            out.append(f"{parsed[0]}{key}={value}\n")
+            seen.add(key)
+            replaced = True
+    if not replaced:
+        out.append(line)
+if out and not out[-1].endswith("\n"):
+    out[-1] = out[-1] + "\n"
+for key, value in updates.items():
+    if key not in seen:
+        out.append(f"{key}={value}\n")
+install_lines(out, ENV, orig_mode, orig_uid, orig_gid)
+print("[ok] environment file updated atomically (custody key only if absent; workflow enabled)")
+def service_active():
+    probe = sysctl("is-active", SERVICE)
+    return probe.returncode == 0 and probe.stdout.strip() == "active"
+def probe(path):
+    result = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+         f"http://127.0.0.1:8001{path}"],
+        capture_output=True, text=True)
+    return result.stdout.strip() == "200"
+def wait_ready(timeout_s=60):
+    end = time.time() + timeout_s
+    while time.time() < end:
+        if service_active() and probe("/health") and probe("/ready"):
+            return True
+        time.sleep(2)
+    return False
+restart = sysctl("restart", SERVICE)
+if restart.returncode != 0 or not wait_ready():
+    print("RESTART/READINESS FAILED; restoring the original environment file")
+    bfd = os.open(backup, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        backup_lines = os.read(bfd, 1 << 20).decode("utf-8").splitlines(keepends=True)
+    finally:
+        os.close(bfd)
+    install_lines(backup_lines, ENV, orig_mode, orig_uid, orig_gid)
+    sysctl("restart", SERVICE)
+    stop("rolled back to the ORIGINAL environment; setup did not complete")
+print("[ok] service active; GET /health -> 200; GET /ready -> 200")
+print("DONE: workflow enabled with spending disabled. Next: verify the monthly "
+      "budget row and ceiling (read-only), then run the pending test gates.")
+PYEOF
+```
+
+Verify without spending (read-only; prints counts only):
+
+```bash
+sudo -u growup psql -d growup_dev -c \
+  "SELECT research_month, used, ceiling FROM research_budget \
+   WHERE research_month = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM');"
+sudo -u growup psql -d growup_dev -c \
+  "SELECT count(*) AS runs FROM workflow_runs; SELECT count(*) AS records FROM workflow_records;"
+```
+
+Expected before the first acquisition: the month row reads `0`
+used (created on first reservation) against ceiling `100`, and
+both workflow counts read `0` after the intentional reset. Any
+`used > 0` needs an owner explanation before proceeding.
+
 ### Onesimus — preliminary engineering (no money)
 
 Onesimus (`app/agents/onesimus/`) evaluates one crop profile (butterhead
@@ -2031,6 +2365,347 @@ fallback. Automated tests keep working, and emergency diagnostic
 execution requires explicit owner authorization
 (`EMERGENCY_DIAGNOSTIC_DEMO=1`). Provider failure never substitutes
 synthetic results automatically.
+
+### Owner-operated Wondrue credential setup
+
+Grants: `WONDRUE_OPERATOR_KEY` → full mode range,
+`WONDRUE_READER_KEY` → read-only, both presented on the
+`X-Wondrue-Key` header and compared with `hmac.compare_digest`.
+Both absent/blank fails closed with 503
+`wondrue_not_configured`; a missing/unknown key returns 401
+`unauthorized`; a reader attempting an operator action is refused
+with 403 before the action executes. No default credential
+exists, and keys never appear in logs or error responses. There
+is no code defect here: provisioning is purely operational, so
+no migration, Nginx change, deployment, or dependency is needed
+— only a `growup.service` restart to load the new environment.
+
+Run this block on the Ubuntu host. Preflight completes before
+anything is generated or written: it verifies the service unit,
+its effective user/group, and its environment-file path;
+parses the environment with correct quote/whitespace/`export`
+handling (never exact-line grep); refuses unsafe permissions,
+symlinks, duplicates, enabled live spending, identical
+operator/reader values, partial configuration, and any existing
+configured pair — all without displaying values. Only then does
+it provision two distinct 32-byte random credentials, keep a
+root-owned restricted backup, update only the two assignments
+atomically, and restart plus readiness-check the service.
+Temporary and backup files are created mode `0600` from the
+outset via `mkstemp`; secrets are never written to a normally
+created file. Secrets travel through the controlling terminal
+only (the heredoc feeds the script, `/dev/tty` feeds the
+secrets) — never command-line arguments, shell history, chat,
+Git, or temporary plaintext files. There is no rotation bypass
+in this block: existing, partial, or identical credentials stop
+the run for owner review, and ordinary setup can never silently
+become rotation.
+
+```bash
+sudo -v
+sudo python3 <<'PYEOF'
+import getpass, os, re, secrets, stat, subprocess, sys, tempfile, time
+# WONDRUE_ENV_FILE_OVERRIDE / WONDRUE_SYSTEMCTL / WONDRUE_SYSTEMCTL_SCRIPT
+# exist for offline testing only; unset, the production paths apply.
+ENV = os.environ.get("WONDRUE_ENV_FILE_OVERRIDE", "/var/www/growup/shared/growup.env")
+SYSCTL = os.environ.get("WONDRUE_SYSTEMCTL", "systemctl")
+SYSCTL_SCRIPT = os.environ.get("WONDRUE_SYSTEMCTL_SCRIPT", "")
+SERVICE = "growup.service"
+ACCOUNT = "growup"
+READY_TIMEOUT_S = 60
+OP_KEY = "WONDRUE_OPERATOR_KEY"
+RD_KEY = "WONDRUE_READER_KEY"
+SPEND_KEY = "META_SPEND_APPROVED"
+def stop(message):
+    print("STOP: " + message)
+    raise SystemExit(1)
+def ask(prompt):
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    with open("/dev/tty") as tty:
+        return tty.readline().rstrip("\n")
+def sysctl(*args):
+    cmd = [SYSCTL] + ([SYSCTL_SCRIPT] if SYSCTL_SCRIPT else []) + list(args)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as exc:
+        stop(f"cannot run service manager: {exc}")
+def split_assignment(line, key):
+    match = re.match(rf"^(export\s+)?{key}\s*=\s*(.*?)\s*$", line.rstrip("\n"))
+    if not match:
+        return None
+    body = match.group(2).strip()
+    if len(body) >= 2 and body[0] == body[-1] and body[0] in "\"'":
+        body = body[1:-1]
+    return (match.group(1) or "", body.strip())
+def owner_name(uid, gid):
+    try:
+        import grp, pwd
+        return f"{pwd.getpwuid(uid).pw_name}:{grp.getgrgid(gid).gr_name}"
+    except (ImportError, KeyError):
+        return f"{uid}:{gid}"
+# --- preflight: service identity (no values printed) ---
+unit = sysctl("cat", SERVICE)
+if unit.returncode != 0:
+    stop(f"{SERVICE} not found ({unit.stderr.strip()}); refusing to guess layout")
+match = re.search(r"^EnvironmentFile=\s*(\S+)", unit.stdout, re.M)
+if not match or match.group(1).lstrip("-") != ENV:
+    stop("service EnvironmentFile is not the expected path; review the unit file first")
+ident = sysctl("show", SERVICE, "-p", "User,Group")
+props = dict(line.split("=", 1) for line in ident.stdout.splitlines() if "=" in line)
+if props.get("User", "") != ACCOUNT or props.get("Group", "") != ACCOUNT:
+    stop(f"service user/group is {props.get('User')}:{props.get('Group')}, expected growup:growup")
+print(f"[ok] {SERVICE} runs as growup:growup and uses {ENV}")
+# --- preflight: environment file safety ---
+if os.path.islink(ENV):
+    stop("environment path is a symlink; refusing to follow it")
+lst = os.lstat(ENV)
+if not stat.S_ISREG(lst.st_mode):
+    stop("environment path is not a regular file")
+orig_mode = stat.S_IMODE(lst.st_mode)
+if orig_mode & 0o077:
+    stop(f"environment file permissions {oct(orig_mode)} grant group/other access; refusing")
+orig_uid, orig_gid = lst.st_uid, lst.st_gid
+print(f"[info] env file {owner_name(orig_uid, orig_gid)} {oct(orig_mode)} (will be preserved)")
+fd = os.open(ENV, os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    raw = os.read(fd, 1 << 20).decode("utf-8")
+finally:
+    os.close(fd)
+lines = raw.splitlines(keepends=True)
+# --- preflight: configuration state ---
+values = {}
+for key in (OP_KEY, RD_KEY, SPEND_KEY):
+    hits = [i for i, line in enumerate(lines) if split_assignment(line, key) is not None]
+    if len(hits) > 1:
+        stop(f"duplicate {key} assignments (lines {[i + 1 for i in hits]}); dedupe manually first")
+    values[key] = split_assignment(lines[hits[0]], key)[1] if hits else ""
+if values[SPEND_KEY] == "1":
+    stop("live spending is enabled (META_SPEND_APPROVED=1); disable it before credential setup")
+print("[ok] live spending is not enabled")
+print(f"[info] {OP_KEY}: {'configured' if values[OP_KEY] else 'NOT configured'}")
+print(f"[info] {RD_KEY}: {'configured' if values[RD_KEY] else 'NOT configured'}")
+if values[OP_KEY] and values[RD_KEY]:
+    if values[OP_KEY] == values[RD_KEY]:
+        stop("operator and reader credentials are identical; owner review required")
+    print("[ok] A distinct configured pair already exists; nothing changed.")
+    print("This block has no rotation bypass; rotation needs a separately approved procedure.")
+    raise SystemExit(0)
+if bool(values[OP_KEY]) != bool(values[RD_KEY]):
+    stop("only one key is configured; owner review required (no silent completion)")
+# --- provisioning (only reached with neither key configured) ---
+if ask("Generate two NEW 32-byte credentials now? Type YES to continue: ").strip() != "YES":
+    stop("aborted by owner; nothing changed")
+fresh = {}
+for label, key in (("OPERATOR", OP_KEY), ("READER", RD_KEY)):
+    generated = secrets.token_urlsafe(32)
+    print("=" * 70)
+    print(f"OWNER ONLY - SAVE NOW in your password manager as Grow Up {label} key.")
+    print("This value is shown once and is not for sharing.")
+    print("=" * 70)
+    print(generated)
+    pasted = getpass.getpass(f"Paste the {label} value back to install it: ")
+    if not pasted or pasted != generated:
+        stop("paste-back did not match; nothing was written")
+    fresh[key] = pasted
+if fresh[OP_KEY] == fresh[RD_KEY] or len(fresh[OP_KEY]) < 32 or len(fresh[RD_KEY]) < 32:
+    stop("credentials must be distinct and at least 32 characters; nothing was written")
+def install_lines(content, dest, mode, uid, gid):
+    data = "".join(content).encode("utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=".growup.env.", dir=os.path.dirname(ENV))
+    try:
+        os.write(tmp_fd, data)
+        os.fchmod(tmp_fd, mode)
+        os.fchown(tmp_fd, uid, gid)
+        os.close(tmp_fd)
+        os.replace(tmp_path, dest)
+    except BaseException:
+        try:
+            os.close(tmp_fd)
+        except OSError:
+            pass
+        try:
+            if os.path.lexists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+backup = f"{ENV}.bak-{stamp}"
+install_lines(lines, backup, 0o600, 0, 0)
+print(f"[ok] restricted root-owned backup: {backup}")
+out = []
+seen = set()
+for line in lines:
+    replaced = False
+    for key in (OP_KEY, RD_KEY):
+        parsed = split_assignment(line, key)
+        if parsed is not None:
+            out.append(f"{parsed[0]}{key}={fresh[key]}\n")
+            seen.add(key)
+            replaced = True
+    if not replaced:
+        out.append(line)
+if out and not out[-1].endswith("\n"):
+    out[-1] = out[-1] + "\n"
+for key in (OP_KEY, RD_KEY):
+    if key not in seen:
+        out.append(f"{key}={fresh[key]}\n")
+install_lines(out, ENV, orig_mode, orig_uid, orig_gid)
+print("[ok] environment file updated atomically (only the two Wondrue assignments added)")
+def service_active():
+    probe = sysctl("is-active", SERVICE)
+    return probe.returncode == 0 and probe.stdout.strip() == "active"
+def probe(path):
+    result = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+         f"http://127.0.0.1:8001{path}"],
+        capture_output=True, text=True)
+    return result.stdout.strip() == "200"
+def wait_ready():
+    end = time.time() + READY_TIMEOUT_S
+    while time.time() < end:
+        if service_active() and probe("/health") and probe("/ready"):
+            return True
+        time.sleep(2)
+    return False
+restart = sysctl("restart", SERVICE)
+if restart.returncode != 0 or not wait_ready():
+    print("RESTART/READINESS FAILED; restoring the original environment file")
+    try:
+        bfd = os.open(backup, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            backup_lines = os.read(bfd, 1 << 20).decode("utf-8").splitlines(keepends=True)
+        finally:
+            os.close(bfd)
+        install_lines(backup_lines, ENV, orig_mode, orig_uid, orig_gid)
+        print("[ok] original environment file restored")
+    except OSError as exc:
+        stop(f"RECOVERY FAILED to restore {ENV} from {backup}: {exc}; restore manually, then restart {SERVICE}")
+    sysctl("restart", SERVICE)
+    if wait_ready():
+        stop("new credentials rolled back; service recovered on the ORIGINAL environment - setup did not complete")
+    stop(f"RECOVERY FAILED: service not ready after rollback; backup preserved at {backup} - investigate before retrying")
+print("[ok] service active; GET /health -> 200; GET /ready -> 200")
+print("DONE: credentials installed. Next: run the validation block, then the browser steps.")
+PYEOF
+```
+
+Recovery: the timestamped root-owned `growup.env.bak-*`
+backup restores with `sudo cp -a <backup>
+/var/www/growup/shared/growup.env` followed by `sudo systemctl
+restart growup.service`; the setup block also rolls back
+automatically if restart or readiness fails, and always
+preserves the backup. There is deliberately no rotation bypass:
+existing, partial, or identical credentials stop the run for
+owner review.
+
+Validate with this second owner-run block. It runs as the
+`growup` service account, takes keys through hidden
+controlling-terminal input only, and prints statuses and
+PASS/FAIL — never credentials or contents. Routing follows the
+Ubuntu layout: TCP to `127.0.0.1:443` (Nginx), TLS server name
+`securecodeusa.local`, `Host: securecodeusa.local`, and the
+existing `/etc/nginx/ssl/dev-local.crt` as the explicit trust
+anchor with hostname verification and the partial-chain flag
+matching the established HTTPS checks (no unverified context; a
+certificate mismatch fails closed). Every request sets
+`use_live: false` explicitly. Operations are harmless
+preview/help calls only: previews may create one ephemeral
+in-memory approval token (single-use, expiring), but nothing
+executes — no dossier changes, workflow stages, outreach,
+inference, discovery, synthetic events, or demo reset. The block
+never sources the server environment, so no spend or acquisition
+flags are inherited.
+
+```bash
+sudo -u growup python3 <<'PYEOF'
+import getpass, http.client, json, os, socket, ssl, sys
+HOST = "securecodeusa.local"
+PORT = 443
+DEST = "127.0.0.1"
+CAFILE = "/etc/nginx/ssl/dev-local.crt"
+if not os.path.isfile(CAFILE) or not os.access(CAFILE, os.R_OK):
+    print(f"STOP: trust anchor {CAFILE} missing or unreadable by growup")
+    raise SystemExit(1)
+CTX = ssl.create_default_context(cafile=CAFILE)
+CTX.verify_mode = ssl.CERT_REQUIRED
+CTX.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+CTX.check_hostname = True
+results = []
+def call(method, path, key, payload):
+    body = json.dumps(payload).encode() if payload is not None else None
+    raw = socket.create_connection((DEST, PORT), timeout=15)
+    try:
+        sock = CTX.wrap_socket(raw, server_hostname=HOST)
+    except Exception:
+        raw.close()
+        raise
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=15)
+    conn.sock = sock
+    headers = {"Host": HOST}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if key is not None:
+        headers["X-Wondrue-Key"] = key
+    try:
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read().decode()
+    finally:
+        conn.close()
+def check(name, ok):
+    results.append(ok)
+    print(("PASS " if ok else "FAIL ") + name)
+operator = getpass.getpass("Operator Wondrue key (hidden): ")
+reader = getpass.getpass("Reader Wondrue key (hidden): ")
+probe_bad = "wrong-key-probe-0001"
+ask_demo = {"mode": "ask", "target": "demo", "use_live": False,
+            "intent": {"intent": "start_demo", "args": {}}}
+help_read = {"mode": "read-only", "target": "demo", "use_live": False,
+             "intent": {"intent": "help", "args": {}}}
+bodies = []
+try:
+    status, body = call("POST", "/wondrue/command", operator, ask_demo)
+except (OSError, ssl.SSLError) as exc:
+    print(f"STOP: TLS/connection failure: {exc}")
+    raise SystemExit(1)
+bodies.append(body)
+check(f"operator ask-preview succeeds (HTTP {status})",
+      status == 200 and '"preview"' in body)
+status, body = call("POST", "/wondrue/command", reader, help_read)
+bodies.append(body)
+check(f"reader read-only help succeeds (HTTP {status})", status == 200)
+status, body = call("POST", "/wondrue/command", None, help_read)
+bodies.append(body)
+check(f"missing key denied (HTTP {status})", status == 401)
+status, body = call("POST", "/wondrue/command", probe_bad, help_read)
+bodies.append(body)
+check(f"invalid key denied (HTTP {status})", status == 401)
+status, body = call("POST", "/wondrue/command", reader, ask_demo)
+bodies.append(body)
+check(f"reader escalation refused pre-execution (HTTP {status})", status == 403)
+status, body = call("GET", "/wondrue", None, None)
+check(f"cockpit page serves (HTTP {status})", status == 200)
+sanitized = all(
+    operator not in item and reader not in item and probe_bad not in item
+    for item in bodies)
+check("responses sanitized (no credential echo)", sanitized)
+print("RESULT:", "ALL PASS - nothing executed (previews/help only; one ephemeral token at most)"
+      if all(results) else "FAILURES PRESENT - review statuses above")
+sys.exit(0 if all(results) else 1)
+PYEOF
+```
+
+Browser steps at `https://securecodeusa.local:8443/wondrue`:
+paste the operator key into the masked **Wondrue access key**
+field for ask/full work, or the reader key with **read-only**
+mode for inspection; a harmless first command is `help` in
+read-only mode on the synthetic target. Keep **live inference
+unchecked**. Both keys are Wondrue credentials, distinct from
+the Baseten API key, and the cockpit never saves them. Live
+inference itself remains separately authorized and is untouched
+by credential setup.
 
 ### Shared inference capabilities (Baseten)
 
@@ -2291,17 +2966,14 @@ tied timestamps plus random UUIDs broke chain ordering, produced
 wrong-holder assertions downstream, and an archival fixture tried to
 `UPDATE` an immutable snapshot row. The ordering/serialization fixes
 above and an aged-snapshot test fixture (inserted historical, never
-updated) resolve them; the confirmed `0ec9e18` checkpoint passed
+updated) resolve them; the confirmed `2aebc93` checkpoint passed
 full regression (2,097 passed, zero failures/skips),
 migrations 001–017 on both databases, and operational health
-checks with the cockpit template fix deployed; HTTPS routing
-works. The cockpit preference/status work in this tree (local
-suite green: 1,964 passed, 133 skipped — 131 PG-gated, 2
-POSIX-only — 17 warnings, mocked providers only; served script
-syntax- and behavior-checked under Node with a DOM stub, not
-browser-accepted) needs a fresh validation cycle (targeted
-rerun, full regression, health checks, owner browser
-acceptance, live smoke test) — **pending owner execution**.
+checks with the cockpit preference/status work deployed; HTTPS
+routing works and owner browser acceptance passed. This tree
+holds only the credential procedure (no code changes): owner
+credential setup, service restart, validation, and the live
+smoke test are **pending owner execution**.
 
 Snapshots older than 90 days move to the archive table via
 `archive_snapshots()`; retrieval checks the hot table first, then the
@@ -2425,7 +3097,14 @@ evaluations need explicit acquisition approval: the
 `--acquire-approved` CLI flag, or a Wondrue burst with `acquire: true`
 from the operator grant (ask mode previews the bounds first; see
 below). Without it the runner creates property records and reports
-`evaluations_precondition` instead of driving them.
+`evaluations_precondition` instead of driving them. Each evaluation
+shares the coordinator's budget guards (one shared monthly unit per
+transmitted request plus the per-run bound, default 9); narrow them
+with `--evaluation-attempt-limit 1..18` and `--evaluation-timeout
+SECONDS` (or the Wondrue burst args `brave_attempt_limit` /
+`timeout_seconds`) — the first owner-run evaluation uses limit 1
+with a 12-second timeout (see the acquisition-budget section
+above).
 
 ### Uriel — preparation-only packages
 
@@ -2514,17 +3193,16 @@ reading the interrupted run's permanent decision events from the
 event store; an unreadable store aborts the burst rather than
 proceeding blind (see bounded discovery above). Validation gates
 (each needs
-its own owner approval): a targeted rerun, full regression, and
-final database health checks for the cockpit preference/status
-work in this tree (local suite: 1,964 passed, 133 skips — 131
-PG-gated, 2 POSIX-only — 17 warnings, mocked providers;
-checkpoint `0ec9e18` was fully green: 2,097 full with zero
-failures/skips, health checks passed, HTTPS routing works);
-owner browser acceptance of the cockpit (scripted checks cannot
-establish it); a bounded live smoke test proving meaningful
-Meta runtime inference (see Demonstration); and real
-discovery runs (the two-hour timed preset is defined but not
-launched).
+its own owner approval): owner Wondrue credential setup and
+service restart (procedure below; checkpoint `2aebc93` was fully
+green: 2,097 full with zero failures/skips, health checks
+passed, HTTPS routing works, browser acceptance passed); the
+acquisition-budget tree in this worktree (targeted rerun, full
+regression, the seven `GROWUP_PG_INTEGRATION`-gated acquisition
+tests, owner first-acquisition configuration, and health checks —
+all pending); a bounded live smoke test proving meaningful Meta
+runtime inference (see Demonstration); and real discovery runs
+(the two-hour timed preset is defined but not launched).
 
 ## 🎥 Demonstration
 
@@ -2545,7 +3223,10 @@ real records are untouched.
 
 **B. Real-property evaluation (needs PostgreSQL + approvals).** With
 `MVP_WORKFLOW_ENABLED=1`, send `start_real_evaluation` with an
-`assignment_id` and planner-issued `query`. Gabriel acquires evidence
+`assignment_id` and planner-issued `query` (optional
+`brave_attempt_limit`, `timeout_seconds`, and `property_id` args;
+the first acquisition uses limit 1 with a 12-second timeout —
+see the acquisition-budget section). Gabriel acquires evidence
 within the run's Brave bound, persists artifacts/dossier/qualification,
 and Raphael applies the real policy: expect `needs_evidence` until
 reviewed registry curation and aligned identity evidence exist — that

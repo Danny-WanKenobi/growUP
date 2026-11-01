@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -11,7 +10,6 @@ import pytest
 
 from app.agents.raphael import acquire as raphael_acquire
 from app.agents.raphael.service import authorize_in_transaction, evaluate_dossier
-from app.agents.gabriel.sources.brave import BraveTimeout
 from app.pilot import canonical_quota_id
 from app.workflow import digest_payload
 from app.workflow_db import WorkflowError
@@ -254,21 +252,6 @@ def test_authorize_is_idempotent_per_digest() -> None:
     assert stored["dossier_digest"] == payload["digest"]
 
 
-def _run_row(**overrides: Any) -> dict[str, Any]:
-    row = {
-        "run_id": uuid4(),
-        "idempotency_key": "k",
-        "stage": "raphael",
-        "status": "open",
-        "correlation_id": "",
-        "limits": {"brave_attempts": 9},
-        "usage": {},
-        "errors": [],
-    }
-    row.update(overrides)
-    return row
-
-
 def _artifact_row(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "record_id": uuid4(),
@@ -281,77 +264,11 @@ def _artifact_row(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def test_acquire_requires_approval() -> None:
-    conn = _FakeConn([_run_row()])
-    with pytest.raises(WorkflowError, match="explicit approval"):
-        raphael_acquire.acquire_evidence_in_transaction(
-            conn, uuid4(), "a1", "q", approved=False
-        )
-
-
-def test_begin_attempt_records_charge_and_marker() -> None:
-    conn = _FakeConn([_run_row()])
-    raphael_acquire.begin_attempt_in_transaction(conn, uuid4(), "a1", approved=True)
-    statements = [sql for sql, _ in conn._cursor.executed]
-    assert any("jsonb_set(usage" in sql for sql in statements)
-    assert any("errors = errors ||" in sql for sql in statements)
-
-
-def test_begin_attempt_requires_approval_and_bound() -> None:
-    conn = _FakeConn([_run_row()])
-    with pytest.raises(WorkflowError, match="explicit approval"):
-        raphael_acquire.begin_attempt_in_transaction(conn, uuid4(), "a1", approved=False)
-    conn = _FakeConn([_run_row(usage={"brave_attempts": 9})])
-    with pytest.raises(WorkflowError, match="bound reached"):
-        raphael_acquire.begin_attempt_in_transaction(conn, uuid4(), "a1", approved=True)
-
-
-def test_acquire_enforces_run_bound() -> None:
-    conn = _FakeConn([_run_row(usage={"brave_attempts": 10})])
-    with pytest.raises(WorkflowError, match="bound reached"):
-        raphael_acquire.acquire_evidence_in_transaction(
-            conn, uuid4(), "a1", "q", approved=True
-        )
-
-
-def test_acquire_caps_limit_at_eighteen() -> None:
-    conn = _FakeConn([_run_row(usage={"brave_attempts": 19}, limits={"brave_attempts": 99})])
-    with pytest.raises(WorkflowError, match="bound reached"):
-        raphael_acquire.acquire_evidence_in_transaction(
-            conn, uuid4(), "a1", "q", approved=True
-        )
-
-
-def test_acquire_persists_completed_artifact(monkeypatch) -> None:
-    item = SimpleNamespace(
-        model_dump=lambda mode=None: {
-            "url": "https://broker-a.example/x", "title": "T", "snippet": "S",
-            "domain": "broker-a.example", "published_at": None,
-            "retrieved_at": "2026-10-30T00:00:00+00:00", "rank": 1,
-        }
-    )
-    monkeypatch.setattr(raphael_acquire, "execute_query", lambda q, aid, t: [item])
-    conn = _FakeConn([_run_row(), "ECHO_INSERT"])
-    stored = raphael_acquire.acquire_evidence_in_transaction(
-        conn, uuid4(), "a1", "q", approved=True
-    )
-    assert stored["attempt"] == "completed"
-    assert stored["collection_provenance"] == "adapter_collected"
-    # Usage was charged by begin_attempt, not here.
-    assert not any("jsonb_set(usage" in sql for sql, _ in conn._cursor.executed)
-
-
-def test_acquire_records_ambiguous_timeout(monkeypatch) -> None:
-    def _boom(query: str, assignment_id: str, timeout: float) -> Any:
-        raise BraveTimeout("slow")
-
-    monkeypatch.setattr(raphael_acquire, "execute_query", _boom)
-    conn = _FakeConn([_run_row(), "ECHO_INSERT"])
-    stored = raphael_acquire.acquire_evidence_in_transaction(
-        conn, uuid4(), "a1", "q", approved=True
-    )
-    assert stored["attempt"] == "ambiguous"
-    assert "timeout" in stored["error"]
+# NOTE: acquisition approval, budget, ambiguity, persistence, and
+# stopped-run checks live in tests/test_acquisition_budget.py and
+# exercise the single supported entry point (ensure_artifact_owned).
+# The legacy in-transaction acquisition helpers were removed; only
+# replay remains on a caller-supplied connection.
 
 
 def test_replay_loads_without_network() -> None:

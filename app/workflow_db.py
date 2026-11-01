@@ -100,10 +100,21 @@ def create_run_in_transaction(
     return _run_from_row(dict(row))
 
 
-def get_run_in_transaction(conn: Any, run_id: UUID) -> WorkflowRun | None:
+def get_run_in_transaction(
+    conn: Any, run_id: UUID, *, for_update: bool = False
+) -> WorkflowRun | None:
+    """Return one run, optionally locking its row until commit/rollback.
+
+    ``for_update=True`` serializes concurrent bounded-charge decisions
+    (e.g. acquisition attempts) on the same run; the lock releases
+    when the caller's transaction ends.
+    """
+    sql = "SELECT * FROM workflow_runs WHERE run_id = %(rid)s"
+    if for_update:
+        sql += " FOR UPDATE"
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM workflow_runs WHERE run_id = %(rid)s", {"rid": run_id})
+            cur.execute(sql, {"rid": run_id})
             row = cur.fetchone()
     except _DRIVER_ERRORS as exc:
         raise _wrap_driver(exc) from exc

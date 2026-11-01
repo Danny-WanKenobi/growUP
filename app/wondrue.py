@@ -83,8 +83,9 @@ INFERENCE_INTENTS = frozenset(
 WONDRUE_BURST_MAX_PASSES = 5
 WONDRUE_BURST_MAX_DURATION_SECONDS = 900.0
 WONDRUE_BURST_MAX_EVALUATIONS = 5
-# Worst-case metered calls per coordinator evaluation (mirrors the
-# ``limits={"brave_attempts": 9}`` in start_evaluation_audited).
+# Default metered calls per coordinator evaluation (ordinary
+# allowance; entry points accept an explicit ``brave_attempt_limit``
+# instead of hardcoding this for every run).
 BRAVE_ATTEMPTS_PER_EVALUATION = 9
 
 APPROVAL_TTL_SECONDS = 600
@@ -205,9 +206,15 @@ def preview_intent(
     if intent == "start_real_evaluation":
         return {
             "operations": ["brave acquisition (<= run bound)", "persist artifacts/dossier/qualification", "raphael authorize"],
-            "inputs": {"assignment_id": args.get("assignment_id", ""), "query": args.get("query", "")},
+            "inputs": {
+                "assignment_id": args.get("assignment_id", ""),
+                "query": args.get("query", ""),
+                "brave_attempt_limit": _evaluation_attempt_limit(args),
+                "timeout_seconds": _evaluation_timeout(args),
+                "property_id": args.get("property_id", ""),
+            },
             "effects": "writes workflow run + records; may spend Brave budget",
-            "cost_bounds": {"brave_attempts": "<= run limit (default 9)", "meta_calls": "0 unless compare follows"},
+            "cost_bounds": {"brave_attempts": f"<= {_evaluation_attempt_limit(args)} (run limit)", "meta_calls": 0},
         }
     if intent == "start_demo":
         return {
@@ -249,9 +256,8 @@ def preview_intent(
     if intent in ("start_discovery", "resume_discovery"):
         requested = _acquire_request(args)
         bounds = _burst_bounds(args)
-        brave_bound = (
-            bounds[0] * bounds[3] * BRAVE_ATTEMPTS_PER_EVALUATION
-        )
+        per_evaluation = _evaluation_attempt_limit(args)
+        brave_bound = bounds[0] * bounds[3] * per_evaluation
         operations = ["bounded discovery burst (existing OSM adapter)"]
         if requested:
             operations.append(
@@ -283,6 +289,7 @@ def preview_intent(
                 "max_created": bounds[2],
                 "acquire": requested,
                 "max_evaluations": bounds[3],
+                "brave_attempt_limit": per_evaluation,
             },
             "effects": effects,
             "cost_bounds": {
@@ -576,6 +583,46 @@ def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int]:
     return max_passes, max_duration, max_created, max_evaluations
 
 
+def _evaluation_attempt_limit(args: dict[str, Any]) -> int:
+    """Per-run Brave attempt bound for one evaluation (default 9)."""
+    raw = args.get("brave_attempt_limit", BRAVE_ATTEMPTS_PER_EVALUATION)
+    if isinstance(raw, bool):
+        raise WondrueError("brave_attempt_limit must be an integer 1..18")
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (ValueError, TypeError) as exc:
+        raise WondrueError("brave_attempt_limit must be an integer 1..18") from exc
+    if isinstance(raw, float) and not float(raw).is_integer():
+        raise WondrueError("brave_attempt_limit must be an integer 1..18")
+    if limit < 1 or limit > 18:
+        raise WondrueError("brave_attempt_limit must be an integer 1..18")
+    return limit
+
+
+def _evaluation_timeout(args: dict[str, Any]) -> float:
+    """Provider timeout for one evaluation (default 12s)."""
+    raw = args.get("timeout_seconds", 12.0)
+    if isinstance(raw, bool):
+        raise WondrueError("timeout_seconds must be within (0, 300]")
+    try:
+        timeout = float(raw)  # type: ignore[arg-type]
+    except (ValueError, TypeError) as exc:
+        raise WondrueError("timeout_seconds must be within (0, 300]") from exc
+    if timeout <= 0 or timeout > 300:
+        raise WondrueError("timeout_seconds must be within (0, 300]")
+    return timeout
+
+
+def _evaluation_property(args: dict[str, Any]) -> str | None:
+    """Optional operational property target (context, not identity proof)."""
+    raw = args.get("property_id", "")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if not isinstance(raw, str):
+        raise WondrueError("property_id must be an operational UUID string")
+    return raw.strip()
+
+
 def _burst_report(
     args: dict[str, Any], *, resume: bool = False, acquire_approved: bool = False
 ) -> dict[str, Any]:
@@ -586,6 +633,12 @@ def _burst_report(
     if not scope:
         raise WondrueError("scope is required")
     max_passes, max_duration, max_created, max_evaluations = _burst_bounds(args)
+    # An explicit burst timeout overrides the runner's pass timeout for
+    # coordinator evaluations; when absent the runner default applies.
+    burst_timeout = (
+        _evaluation_timeout(args) if args.get("timeout_seconds") is not None
+        else None
+    )
     config = runner_module.RunnerConfig(
         scope=scope,
         policy=str(args.get("policy", "pilot") or "pilot"),
@@ -597,6 +650,8 @@ def _burst_report(
         created_by="wondrue-command",
         acquire_approved=acquire_approved,
         max_evaluations_per_pass=max_evaluations,
+        evaluation_attempt_limit=_evaluation_attempt_limit(args),
+        evaluation_timeout_seconds=burst_timeout,
     )
 
     def _connect() -> Any:
@@ -631,23 +686,15 @@ def _execute_real(
         if not assignment_id or not query:
             raise WondrueError("assignment_id and query are required")
         site = args.get("site_inputs") if isinstance(args.get("site_inputs"), dict) else None
-        if conn is None:
-            # Audited wrapper owns the coordinated transaction.
-            summary = mvp_module.start_evaluation_audited(
-                assignment_id, query, site_inputs=site, approved=True
-            )
-            return {"summary": summary}
-        from app.workflow import digest_payload
-        from app.workflow_db import create_run_in_transaction as _create
-
-        run = _create(
-            conn,
-            idempotency_key=f"mvp-{digest_payload({'a': assignment_id, 'q': query})[:16]}",
-            limits={"brave_attempts": 9},
-        )
-        summary = mvp_module.evaluate_real(
-            conn, run.run_id, assignment_id, query,
-            site_inputs=site, approved=True,
+        # One audited path with or without a route connection: the
+        # wrapper commits the run and the artifact on owned
+        # connections before the coordinated chain runs, so both
+        # entry shapes keep identical budget/approval safeguards.
+        summary = mvp_module.start_evaluation_audited(
+            assignment_id, query, site_inputs=site, approved=True,
+            timeout_seconds=_evaluation_timeout(args),
+            property_id=_evaluation_property(args),
+            brave_attempt_limit=_evaluation_attempt_limit(args),
         )
         return {"summary": summary}
     if intent in ("inspect_candidate", "inspect_evidence", "explain_decision", "inspect_review") and conn is None:

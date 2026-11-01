@@ -84,6 +84,8 @@ class RunnerConfig:
     created_by: str = ""
     acquire_approved: bool = False
     max_evaluations_per_pass: int = 5
+    evaluation_attempt_limit: int = 9
+    evaluation_timeout_seconds: float | None = None
 
     def validate(self) -> None:
         if not str(self.scope or "").strip():
@@ -110,6 +112,31 @@ class RunnerConfig:
             raise RunnerError("claim_lease_seconds must be positive")
         if self.max_evaluations_per_pass < 0:
             raise RunnerError("max_evaluations_per_pass must be >= 0")
+        if (
+            isinstance(self.evaluation_attempt_limit, bool)
+            or not isinstance(self.evaluation_attempt_limit, int)
+            or self.evaluation_attempt_limit < 1
+            or self.evaluation_attempt_limit > 18
+        ):
+            raise RunnerError("evaluation_attempt_limit must be an integer 1..18")
+        if self.evaluation_timeout_seconds is not None and (
+            isinstance(self.evaluation_timeout_seconds, bool)
+            or not isinstance(self.evaluation_timeout_seconds, (int, float))
+            or self.evaluation_timeout_seconds <= 0
+            or self.evaluation_timeout_seconds > 300
+        ):
+            raise RunnerError("evaluation_timeout_seconds must be within (0, 300]")
+
+    @property
+    def evaluation_timeout(self) -> float:
+        """Provider timeout for coordinator evaluations.
+
+        An explicit evaluation timeout wins; otherwise evaluations
+        share the pass timeout (ordinary behavior).
+        """
+        if self.evaluation_timeout_seconds is not None:
+            return float(self.evaluation_timeout_seconds)
+        return float(self.pass_timeout_seconds)
 
 
 # Proposed (NOT launched) two-hour timed configuration. Duration and any
@@ -534,6 +561,8 @@ def _config_bounds(config: RunnerConfig) -> dict[str, Any]:
         "claim_lease_seconds": config.claim_lease_seconds,
         "acquire_approved": config.acquire_approved,
         "max_evaluations_per_pass": config.max_evaluations_per_pass,
+        "evaluation_attempt_limit": config.evaluation_attempt_limit,
+        "evaluation_timeout_seconds": config.evaluation_timeout,
     }
 
 
@@ -810,14 +839,21 @@ def build_evaluation_query(prop: dict[str, Any]) -> str | None:
 
 
 def evaluate_property(
-    scope: str, property_id: str, *, approved: bool, timeout_seconds: float
+    scope: str,
+    property_id: str,
+    *,
+    approved: bool,
+    timeout_seconds: float,
+    brave_attempt_limit: int = 9,
 ) -> dict[str, Any]:
     """Drive one discovered property through the existing coordinator.
 
     Uses the property's own operational identity end to end (one
     pipeline): a deterministic assignment derived from that identity,
     acquisition through the coordinator's budget/ambiguity guards,
-    dossier persistence, qualification, and Raphael review. Outcomes:
+    dossier persistence, qualification, and Raphael review.
+    ``brave_attempt_limit`` bounds Brave attempts for a newly created
+    run (a resumed run keeps its persisted limit). Outcomes:
 
     - ``evaluated``: coordinator summary with decision + qualified count.
     - ``blocked``: coordinator refused (ambiguous prior attempt or
@@ -849,6 +885,7 @@ def evaluate_property(
         summary = start_evaluation_audited(
             f"runner:{scope}:{pid}", query,
             approved=True, timeout_seconds=timeout_seconds, property_id=pid,
+            brave_attempt_limit=brave_attempt_limit,
         )
     except WorkflowError as exc:
         message = str(exc)
@@ -1013,12 +1050,14 @@ def run_worker(
         else:
             evaluations_precondition = None
             approved = config.acquire_approved
-            timeout = config.pass_timeout_seconds
+            timeout = config.evaluation_timeout
+            attempt_limit = config.evaluation_attempt_limit
 
             def _default_evaluate(scope: str, pid: str) -> dict[str, Any]:
                 return evaluate_property(
                     scope, pid, approved=approved,
                     timeout_seconds=timeout,
+                    brave_attempt_limit=attempt_limit,
                 )
 
             evaluate_fn = _default_evaluate
@@ -1331,7 +1370,8 @@ def main(argv: list[str] | None = None) -> int:
             "--scope SCOPE [--policy pilot|timed] [--cells FILE] "
             "[--max-passes N] [--max-duration SECONDS] [--max-created N] "
             "[--resume] [--created-by LABEL] [--acquire-approved] "
-            "[--max-evaluations N]",
+            "[--max-evaluations N] [--evaluation-attempt-limit 1..18] "
+            "[--evaluation-timeout SECONDS]",
             file=sys.stderr,
         )
         return 1
@@ -1379,6 +1419,7 @@ def main(argv: list[str] | None = None) -> int:
         cells_path = _opt("--cells") or ""
         if not scope or not cells_path:
             raise RunnerError("--scope and --cells are required for run")
+        raw_eval_timeout = _opt("--evaluation-timeout")
         config = RunnerConfig(
             scope=scope,
             policy=_opt("--policy", "pilot") or "pilot",
@@ -1390,6 +1431,10 @@ def main(argv: list[str] | None = None) -> int:
             created_by=_opt("--created-by", "cli") or "cli",
             acquire_approved="--acquire-approved" in opts,
             max_evaluations_per_pass=int(_opt("--max-evaluations", "5") or "5"),
+            evaluation_attempt_limit=int(_opt("--evaluation-attempt-limit", "9") or "9"),
+            evaluation_timeout_seconds=(
+                float(raw_eval_timeout) if raw_eval_timeout is not None else None
+            ),
         )
         report = run_worker(_connect, config)
         print(json.dumps(report, default=str))
