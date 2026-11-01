@@ -48,6 +48,8 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_simulation",
         "inspect_discovery",
         "inspect_inference_usage",
+        "preview_dcad_collection",
+        "preview_successor",
     }
 )
 CONSEQUENTIAL_INTENTS = frozenset(
@@ -64,6 +66,8 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "analyze_evidence",
         "explain_economics",
         "draft_outreach",
+        "collect_dcad_evidence",
+        "commit_successor",
     }
 )
 # Consequential intents that may spend inference budget: approval
@@ -336,6 +340,56 @@ def preview_intent(
             "cost_bounds": {"brave_attempts": 0, "meta_calls": "<= 1"},
             "inference": _inference_preview(profile, budget),
         }
+    if intent == "collect_dcad_evidence":
+        return {
+            "operations": [
+                "exclusive committed claim, then one pinned HTTPS GET",
+                "retain bytes, then persist assessment or inspectable refusal",
+            ],
+            "inputs": {
+                "account": args.get("account", ""),
+                "property_id": args.get("property_id", ""),
+                "parent_run_id": args.get("parent_run_id", ""),
+                "dossier_key": args.get("dossier_key", ""),
+                "attempt": args.get("attempt", "1"),
+            },
+            "effects": (
+                "at most one external read per attempt (12s timeout, "
+                "256 KiB cap, no redirects/retries/proxy); writes one "
+                "admission run with claim, collection, and assessment "
+                "or refusal records; no dossier, custody, or pilot "
+                "changes"
+            ),
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": 0, "dcad_requests": 1},
+        }
+    if intent == "commit_successor":
+        return {
+            "operations": [
+                "re-verify approval-bound parent/evidence digests + custody",
+                "persist successor dossier version + qualification",
+                "amend custody, snapshot, hand Gabriel -> Raphael",
+                "route the Raphael decision",
+            ],
+            "inputs": {
+                "property_id": args.get("property_id", ""),
+                "parent_run_id": args.get("parent_run_id", ""),
+                "dossier_key": args.get("dossier_key", ""),
+                "parent_version": args.get("parent_version", ""),
+                "parent_digest": args.get("parent_digest", ""),
+                "expected_custody_version": args.get("expected_custody_version", ""),
+                "collection_run_id": args.get("collection_run_id", ""),
+                "collection_digest": args.get("collection_digest", ""),
+                "assessment_digest": args.get("assessment_digest", ""),
+                "reason": args.get("reason", ""),
+            },
+            "effects": (
+                "one successor run; appends a custody version under "
+                "the authenticated principal (must be an enrolled "
+                "amender); original history untouched; pilot counts "
+                "replay without new credit"
+            ),
+            "cost_bounds": {"brave_attempts": 0, "meta_calls": 0, "dcad_requests": 0},
+        }
     raise WondrueError(f"no preview for intent {intent!r}")
 
 
@@ -480,8 +534,9 @@ def _help_text() -> str:
         "Kratky scenarios, inspect Uriel packages, preview/run/inspect "
         "Priscilla cohort simulations, start/stop/resume/inspect "
         "bounded discovery, explain stored results and economics, "
-        "analyze evidence, draft Uriel copy, or inspect inference "
-        "usage. Modes: read-only (inspect only), ask "
+        "analyze evidence, draft Uriel copy, inspect inference "
+        "usage, or preview/collect DCAD evidence and preview/commit "
+        "same-dossier successors. Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits). "
         "Each assistance capability spends at most one provider "
         "call; a natural-language request may spend one more for "
@@ -825,6 +880,69 @@ def _execute_real(
         from app import assist as assist_module
 
         return {"inference_usage": assist_module.inference_usage_snapshot()}
+    if intent == "preview_dcad_collection":
+        if conn is None:
+            raise WondrueError("real target requires a database connection")
+        return {
+            "collection_preview": mvp_module.preview_dcad_collection_in_transaction(
+                conn,
+                account=str(args.get("account", "") or ""),
+                property_id=str(args.get("property_id", "") or ""),
+                parent_run_id=str(args.get("parent_run_id", "") or ""),
+                dossier_key=str(args.get("dossier_key", "") or ""),
+                attempt=str(args.get("attempt", "") or "1"),
+            )
+        }
+    if intent == "collect_dcad_evidence":
+        if not acquire_authorized:
+            raise WondrueAuthError("DCAD collection requires the operator grant")
+        return {
+            "collection": mvp_module.collect_dcad_audited(
+                account=str(args.get("account", "") or ""),
+                property_id=str(args.get("property_id", "") or ""),
+                parent_run_id=str(args.get("parent_run_id", "") or ""),
+                dossier_key=str(args.get("dossier_key", "") or ""),
+                attempt=str(args.get("attempt", "") or "1"),
+                principal=str(capability_ctx.get("principal", "") or ""),
+                approved=True,
+            )
+        }
+    if intent == "preview_successor":
+        if conn is None:
+            raise WondrueError("real target requires a database connection")
+        return {
+            "successor_preview": mvp_module.preview_successor_in_transaction(
+                conn,
+                property_id=str(args.get("property_id", "") or ""),
+                parent_run_id=str(args.get("parent_run_id", "") or ""),
+                dossier_key=str(args.get("dossier_key", "") or ""),
+                collection_run_id=str(args.get("collection_run_id", "") or ""),
+            )
+        }
+    if intent == "commit_successor":
+        if not acquire_authorized:
+            raise WondrueAuthError("successor commit requires the operator grant")
+        try:
+            parent_version = int(args.get("parent_version", 0))
+            expected_custody_version = int(args.get("expected_custody_version", 0))
+        except (TypeError, ValueError) as exc:
+            raise WondrueError("parent and custody versions must be integers") from exc
+        return {
+            "successor": mvp_module.commit_successor_audited(
+                property_id=str(args.get("property_id", "") or ""),
+                parent_run_id=str(args.get("parent_run_id", "") or ""),
+                dossier_key=str(args.get("dossier_key", "") or ""),
+                parent_version=parent_version,
+                parent_digest=str(args.get("parent_digest", "") or ""),
+                expected_custody_version=expected_custody_version,
+                collection_run_id=str(args.get("collection_run_id", "") or ""),
+                collection_digest=str(args.get("collection_digest", "") or ""),
+                assessment_digest=str(args.get("assessment_digest", "") or ""),
+                reason=str(args.get("reason", "") or ""),
+                principal=str(capability_ctx.get("principal", "") or ""),
+                approved=True,
+            )
+        }
     raise WondrueError(f"unknown intent {intent!r}")
 
 

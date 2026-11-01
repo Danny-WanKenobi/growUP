@@ -258,6 +258,63 @@ def put_record_in_transaction(
     return existing
 
 
+def insert_record_if_absent_in_transaction(
+    conn: Any,
+    run_id: UUID,
+    *,
+    kind: str,
+    record_key: str,
+    version: int,
+    payload: dict[str, Any],
+    digest: str,
+) -> WorkflowRecord | None:
+    """Insert one record row, or return None when the key already exists.
+
+    Unlike :func:`put_record_in_transaction`, no digest comparison is
+    made: callers use this for exclusive claims whose racers carry
+    distinct payloads (timestamps), then re-read the durable state.
+    """
+    if kind not in RECORD_KINDS:
+        raise WorkflowError(f"unknown workflow record kind: {kind!r}")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO workflow_records "
+                "(record_id, run_id, kind, record_key, version, payload, digest) "
+                "VALUES (%(rid)s, %(run)s, %(kind)s, %(key)s, %(version)s, "
+                "%(payload)s, %(digest)s) "
+                "ON CONFLICT (run_id, kind, record_key, version) DO NOTHING "
+                "RETURNING *",
+                {
+                    "rid": uuid4(),
+                    "run": run_id,
+                    "kind": kind,
+                    "key": record_key,
+                    "version": version,
+                    "payload": json.dumps(payload, sort_keys=True),
+                    "digest": digest,
+                },
+            )
+            row = cur.fetchone()
+    except _DRIVER_ERRORS as exc:
+        raise _wrap_driver(exc) from exc
+    return _record_from_row(dict(row)) if row is not None else None
+
+
+def get_run_by_key_in_transaction(conn: Any, idempotency_key: str) -> WorkflowRun | None:
+    """Read one run by idempotency key (read-only, no creation)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM workflow_runs WHERE idempotency_key = %(key)s",
+                {"key": idempotency_key},
+            )
+            row = cur.fetchone()
+    except _DRIVER_ERRORS as exc:
+        raise _wrap_driver(exc) from exc
+    return _run_from_row(dict(row)) if row is not None else None
+
+
 def get_record_in_transaction(
     conn: Any, run_id: UUID, kind: str, record_key: str, version: int | None = None
 ) -> WorkflowRecord | None:

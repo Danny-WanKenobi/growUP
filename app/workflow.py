@@ -30,6 +30,10 @@ KIND_MODEL_EXECUTION = "model_execution"
 KIND_CUSTODY_LINK = "custody_link"
 KIND_IDENTITY_REVIEW = "identity_review"
 KIND_WONDRUE_ASSISTANCE = "wondrue_assistance"
+KIND_DCAD_COLLECTION = "dcad_collection"
+KIND_DCAD_ASSESSMENT = "dcad_assessment"
+KIND_DCAD_CLAIM = "dcad_claim"
+KIND_DCAD_REFUSAL = "dcad_refusal"
 
 RECORD_KINDS = frozenset(
     {
@@ -42,6 +46,10 @@ RECORD_KINDS = frozenset(
         KIND_CUSTODY_LINK,
         KIND_IDENTITY_REVIEW,
         KIND_WONDRUE_ASSISTANCE,
+        KIND_DCAD_COLLECTION,
+        KIND_DCAD_ASSESSMENT,
+        KIND_DCAD_CLAIM,
+        KIND_DCAD_REFUSAL,
     }
 )
 

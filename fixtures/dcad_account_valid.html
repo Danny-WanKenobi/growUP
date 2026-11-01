@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!-- TEST MATERIAL ONLY: DCAD commercial-account page structure derived
+     from observed live markup for account 00000700090000000 (element ids
+     lblPageTitle, PropAddr1_lblPropAddr, lblMainImp; nested improvement
+     tables with inline Desc / Total Area / Year Built labels; the two
+     observed improvement entries with their description, area, and year
+     values; the following lblLandCert section marker). The h2 elements
+     are representative simplifications (period labels only); real
+     sectioning uses span.DtlSectionHdr. The Land-section decoy row and
+     the FieldTitle/FieldValue spans are negative controls: neither may
+     yield an entry or a section boundary. Surrounding layout is
+     simplified and unobserved values are representative. Not retained
+     live source evidence. -->
+<html>
+<head><title>DCAD Commercial Account Detail (test fixture)</title></head>
+<body>
+<form method="post" action="AcctDetailCom.aspx?ID=00000700090000000" id="mainForm">
+<input type="hidden" name="__VIEWSTATE" value="test-viewstate-bytes" />
+<div>
+<span id="lblPageTitle" class="PageTitle">
+Commercial Account #00000700090000000
+</span>
+</div>
+<div>
+<h2>Property Location - Current 2027</h2>
+<span id="PropAddr1_lblPropAddr">2323 CHALK HILL RD</span>
+</div>
+<div>
+<span id="lblMainImp" class="DtlSectionHdr">
+Improvements (Current 2027)
+</span>
+<table id="MainImp_outer">
+<tr><td>
+<table id="MainImp_imp1">
+<tr><td><b>Desc:</b>&nbsp; STORAGE WAREHOUSE</td><td><b>Total Area:</b>&nbsp; 19,440 sqft</td><td><b>Year Built:</b>&nbsp; 1968</td></tr>
+<tr><td><b>Foundation (Area):</b>&nbsp; 17,200 sqft</td><td><b>Net Lease Area:</b>&nbsp; 18,000 sqft</td><td><b>Depreciation:</b>&nbsp; 12%</td></tr>
+</table>
+<span class="FieldTitle">Owner Name</span><span class="FieldValue">TEST OWNER</span>
+</td></tr>
+<tr><td>
+<table id="MainImp_imp2">
+<tr><td><b>Desc:</b>&nbsp; OFFICE BUILDING</td><td><b>Total Area:</b>&nbsp; 1,440 sqft</td><td><b>Year Built:</b>&nbsp; 1968</td></tr>
+<tr><td><b>Foundation (Area):</b>&nbsp; 1,100 sqft</td><td><b>Net Lease Area:</b>&nbsp; 1,200 sqft</td><td><b>Depreciation:</b>&nbsp; 8%</td></tr>
+</table>
+</td></tr>
+</table>
+</div>
+<div>
+<span id="lblLandCert" class="DtlSectionHdr">
+Land (2026 Certified Values)
+</span>
+<table id="Land_decoy">
+<tr><td><b>Desc:</b>&nbsp; DECOY LOT</td><td><b>Total Area:</b>&nbsp; 99,999 sqft</td><td><b>Year Built:</b>&nbsp; 2001</td></tr>
+</table>
+</div>
+<div>
+<h2>Certified 2026 Appraisal Values</h2>
+<span id="Values_lblCertified">Certified 2026 Appraisal Values</span>
+</div>
+<div>
+Nearby accounts: <a href="AcctDetailCom.aspx?ID=00000700090000001">00000700090000001</a>
+</div>
+<script>var acct = "00000700090000000";</script>
+<style>.cls { content: "00000700090000000"; }</style>
+</form>
+</body>
+</html>

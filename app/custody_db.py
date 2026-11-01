@@ -205,6 +205,25 @@ def get_version_in_transaction(
     return _version_from_row(dict(row)) if row is not None else None
 
 
+def lock_dossier_in_transaction(conn: Any, dossier_id: UUID) -> None:
+    """Hold the per-dossier serialization lock until commit or rollback.
+
+    Same advisory key the version append and receipt issuance paths
+    take, so version/holder checks made under this lock stay valid
+    through amendment, snapshot, receipts, and audit commit. Shared
+    key ``custody:{dossier_id}``; transaction-scoped (releases on
+    commit/rollback, never leaks across transactions).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%(key)s))",
+                {"key": f"custody:{dossier_id}"},
+            )
+    except _DRIVER_ERRORS as exc:
+        raise _wrap_driver(exc) from exc
+
+
 def latest_version_in_transaction(conn: Any, dossier_id: UUID) -> DossierVersion | None:
     try:
         with conn.cursor() as cur:

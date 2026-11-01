@@ -51,12 +51,16 @@ Grow Up is designed around seven coordinated AI agents working through a shared 
 | Agricultural Engineering | **Onesimus** | Designs hypothetical indoor agricultural systems and evaluates production scenarios. |
 | Conversational cockpit | **Wondrue** | Sole end-user interface: presents findings, takes commands/corrections, and invokes permitted operations through backend-enforced controls. |
 | Financial Feasibility | **Michael** | Owns deterministic financial calculations and feasibility assessments. |
-| Opportunity & Outreach | **Uriel** | Prepares opportunity and outreach campaign packages; executes outreach only when implemented and explicitly authorized. |
+| Opportunity & Outreach | **Uriel** | Prepares opportunity and outreach campaign packages; no sender exists, and live mode alone grants no sending authority. |
 | Conversion Tracker | **Priscilla** | Tracks delivery, engagement, responses, and lead conversion, distinguishing actual from simulated events. |
 
 The agents share a common property record and coordinated workflow rather than operating as seven independent applications. Processing order is Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla, with Wondrue coordinating throughout (not a duplicate pipeline).
 
 **MVP scope:** the coordinated MVP implements the full six-stage pipeline plus the Wondrue cockpit. Gabriel assembles evidence-backed dossiers; Raphael performs deterministic authorization over persisted dossier versions (preliminary simulation scoping only); Onesimus evaluates two passive-Kratky engineering configurations; Michael owns all financial arithmetic and feasibility verdicts; Uriel prepares genuine campaign packages (no sender exists); Priscilla tracks conversion events with simulated and actual evidence strictly separated. Wondrue enforces read-only / ask / full access modes server-side. Dossiers move between agents under shared operational custody (append-only versions, immutable snapshots, authenticated receipts); a resumable 36-cell pilot ledger tracks the 144-dossier target. No outreach execution exists.
+
+**Long-term capabilities (planned, not implemented):** Nicole — Permits & Licenses; Theresia Key — Underwriting; Simeon — Deal Coordination/Closing; Solomon — Construction Coordination; Gabriella — Vacant-Lot Discovery; Elmer — Accounting; Yoseph — Insurance & Liability; Deborah — Legal; Dan — Owner/Asset Management. These names reserve future responsibilities only: no placeholder agents exist, and the implemented canonical roles stay Michael (finance), Uriel (outreach), and Priscilla (conversion tracking). Future execution agents follow the same boundary as outreach — demo dispatch is labeled simulation only, and live mode alone grants no spending, sending, contract, filing, or construction authority.
+
+**Successor processing (bounded, implemented):** admitted DCAD evidence is assessed on the same property, dossier, and custody lineage: the successor run references its parent, replays retained evidence without a new acquisition, appends the next custody version under an enrolled authorizer, and routes a fresh Raphael decision. Identical retries replay; original history is never rewritten and pilot counts replay without new credit. Broader successor sources remain planned, not built.
 
 ---
 
@@ -133,7 +137,7 @@ python -m app.migrate           # apply SQL migrations in filename order
 uvicorn app.main:app --port 8001
 ```
 
-Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for Michael-stage-and-later external behavior, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), and `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window.
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for simulated external execution, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window, and `DCAD_COLLECTION_ENABLED` / `DCAD_ALLOWED_ACCOUNTS` for bounded DCAD collection (both default closed).
 
 Run the local suite with `python -m pytest -q tests` (PostgreSQL-gated tests skip without `GROWUP_PG_INTEGRATION=1`).
 
@@ -2029,6 +2033,101 @@ itself: street tokens are never consumed as part of the city
 forms, and unknown-when-ambiguous fields are preserved. No city
 is hardcoded or inferred from the query or a neighboring property.
 
+Bounded DCAD evidence admission covers exactly one approved
+source: a Dallas Central Appraisal District commercial-account
+page (`AcctDetailCom.aspx?ID=<account>`). Collection refuses
+before claiming or transmitting unless explicitly approved,
+enabled (`DCAD_COLLECTION_ENABLED=1`), and allowlisted
+(`DCAD_ALLOWED_ACCOUNTS`); the URL is server-constructed, so
+callers supply no URL and uploads cannot impersonate the minted
+`adapter_collected` provenance. A committed exclusive claim
+serializes transmission per attempt-scoped run key: concurrent
+identical calls permit at most one HTTPS GET (12-second
+timeout, 256 KiB cap, no redirects, no retries, no secondary
+fetches, no proxy environment, TLS verified, destination
+resolved and refused unless public), completed evidence replays
+without a request, and an uncertain started claim cannot
+silently retransmit — recovery is a separately approved new
+attempt (`attempt="2"`). No business
+transaction stays open during HTTP. The bounded response bytes
+are retained with their SHA-256, URL, timestamp, account,
+collector revision, and the authenticated principal before
+parsing, so a parser/assessment refusal is recorded as an
+inspectable refusal record without erasing the bytes; the
+digest proves byte integrity, not truth or authenticity. Known
+limits: a crash between transmit and retention loses the bytes
+(the key stays uncertain), and resolve-then-connect is not IP
+pinning (documented TOCTOU).
+
+Parsing reads the labeled structure with the standard library
+and stays inside it: the account binds to the unique
+`lblPageTitle` title with exact account matching (a
+nearby-account link, unlabeled text, or any other element alone
+does not satisfy identity), and improvement entries come only
+from rows in the `lblMainImp` section (after the heading, before
+the next DCAD section header, `span.DtlSectionHdr` — the Land
+marker terminates the section) whose cells carry the inline
+`Desc` label. Ordinary `FieldTitle`/`FieldValue` spans, nested
+labels, and `h1`–`h4` tags are never section boundaries.
+Each entry keeps its description, Total Area, and Year Built
+from that same row with raw values and locator; rows containing
+a nested table are never entries themselves, so ancestor
+aggregation cannot duplicate them, and unrelated matching rows
+outside the section are ignored. The Total Area label never
+matches foundation, lease, or land areas. Empty or repeated
+labels skip the row (counted); missing or unparseable areas and
+years stay unknown with raw values retained. Period labels
+("Current 2027", "Certified ... 2026") stay literal — never
+effective dates, use assertions, occupancy, or financial
+inputs. The title, heading, and inline labeled-row structure
+are source-derived from observed markup, and the offline
+fixture reproduces them as labeled test material — that covers
+parser acceptance against the observed structure, not live
+collector acceptance, which still requires separately approved
+owner-executed retrieval; surrounding page layout beyond the
+confirmed anchors remains representative, and unexpected
+structure fails closed. Alignment is supported only on exact street-address
+agreement with the property record, scoped to the account
+claim — street agreement never marks retained Brave voices
+aligned (Phase 2A keeps them unaligned), never a building or
+suite; improvement descriptions are never mapped to operating
+use. The shared policy stays the sole category engine with
+unchanged thresholds; DCAD evidence carries no defining use
+facts, so DCAD alone cannot verify, and scope conflicts are
+preserved rather than resolved by favorable picks. No registry
+enrollment, blanket host trust, or publisher authentication is
+added; the production registry stays empty.
+
+A successor preview shows the intended qualification, Raphael
+decision, material content changes, and per-voice alignment —
+not just the DCAD-only outcome. A successor commit re-verifies
+every approval binding against recomputed stored digests
+(parent version/digest, collection/assessment digests and
+cross-bindings, supported collector/parser revisions, custody
+chain, gabriel holder, expected version), replays retained
+Brave evidence without a new acquisition, evaluates cumulative
+evidence through the shared policy, and persists the successor
+dossier rebuilt from that same processing (with content
+changes and voice alignment) — never the unevaluated prior
+content. Amendment authority resolves from the
+backend-authenticated principal against the enrolled-amender
+allowlist (no caller-supplied name, no auto-enrollment), and
+the whole amend/snapshot/receipt/audit commit runs under the
+per-dossier custody serialization lock, so concurrent
+identical commits append exactly one version while stale or
+conflicting attempts fail safely. Identical retries replay
+stored outputs only after their operation bindings validate;
+original history is never rewritten and pilot counts replay
+without new credit. No schema migration is needed: the new
+record kinds (`dcad_collection`, `dcad_assessment`,
+`dcad_claim`, `dcad_refusal`) ride the schemaless workflow
+store. Wondrue: `preview_dcad_collection` (with `attempt`) /
+`preview_successor` (read-only, no network or writes),
+`collect_dcad_evidence` / `commit_successor` (operator grant,
+ask-mode tokens bind exact args). Live retrieval is
+owner-executed after separate approval and is not proven by
+fixture tests.
+
 The initial owner-run evaluation is a configurable single-request
 bound rather than the ordinary nine-attempt allowance:
 `brave_attempt_limit=1`, 12-second provider timeout, no automatic
@@ -2068,19 +2167,28 @@ skip without `GROWUP_PG_INTEGRATION=1`):
 ```bash
 python -m pytest -q tests/test_coordinator_attribution.py tests/test_extractor.py tests/test_grouping_identity.py tests/test_ranking.py tests/test_dossier.py tests/test_verification_producer.py tests/test_mvp_flow.py
 python -m pytest -q tests/test_acquisition_budget.py tests/test_mvp_flow.py tests/test_raphael.py
+python -m pytest -q tests/test_dcad_admission.py
 python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **1,993 passed, 140 skipped** (133
-pre-existing skips plus 7 PG-gated acquisition checks), 17
+Local suite in this tree: **2,065 passed, 143 skipped** (133
+pre-existing skips plus 10 PG-gated checks), 17
 warnings, with legacy-helper coverage preserved on the supported
 owned entry point, plus the 16-check sanitized attribution suite
 (`tests/test_coordinator_attribution.py`, derived from the
 retained real snippets: TX/Texas identity, per-address ZIPs,
 directory-city attribution, coordinator verification
 persistence, shared-policy success contract, fail-closed
-association).
+association) and the 72-check DCAD admission suite
+(`tests/test_dcad_admission.py`: source-derived nested parser
+with title binding, labeled-row association, and the actual
+`span.DtlSectionHdr` section boundary, section/account
+isolation, collector claim/retention/refusal boundaries,
+public-destination refusal, admission honesty, claim-scoped
+alignment, successor rebuilt content/idempotency/binding
+validation/history, custody lock behavior, principal-resolved
+amendment authority, Wondrue approvals).
 Pending owner execution on the disposable database
 (`growup_mvp_gate`) after `python -m app.migrate`: the seven
 `GROWUP_PG_INTEGRATION`-gated tests in
@@ -2088,8 +2196,14 @@ Pending owner execution on the disposable database
 invisibility demonstration, committed fresh-run acquisition,
 monthly exhaustion blocks transmit, single-request bound across
 assignment ids, two-connection race with one charge, recheck under
-a held lock, started-marker blocks uncertain replay), plus a
-full regression and health checks. Mocked success is not proof of
+a held lock, started-marker blocks uncertain replay), the three
+PG-gated tests in `tests/test_dcad_admission.py`
+(successor-commit end-to-end amendment with replay, history
+preservation, single-count pilot credit, and rollback atomicity;
+two-thread collect race asserting one mocked transmission; and
+two-thread successor race asserting exactly one v2), plus a
+full regression and health checks. Separately approved live DCAD
+retrieval is not executed here. Mocked success is not proof of
 PostgreSQL behavior, and skipped PG tests are not acceptance.
 
 Real-data boundary: the original first real run, its artifacts,
@@ -2371,6 +2485,8 @@ live calls. Credentials stay server-side.
   `inspect_discovery`, `start_discovery`, `resume_discovery`,
   `stop_discovery`, `assist_explain`, `analyze_evidence`,
   `explain_economics`, `draft_outreach`, `inspect_inference_usage`,
+  `preview_dcad_collection`, `collect_dcad_evidence`,
+  `preview_successor`, `commit_successor`,
   `help`; plus `start_demo` for the synthetic target.
 - `POST /wondrue/assist/extract` — extract unverified claims from
   caller-supplied pages (`doc_id`, `source_ref`, `pages` with inline
@@ -2400,12 +2516,15 @@ calls, and no external calls; **ask** returns a concrete preview
 (operations, inputs, effects, cost bounds) plus a single-use approval
 token before anything consequential executes; **full** executes
 permitted operations within explicit scopes and limits. Read-only
-intents (`inspect_*`, `preview_simulation`, `explain_decision`,
-`help`) never mutate records or issue metered calls; consequential
-intents (`start_*`, `resume_discovery`, `stop*`, `run_simulation`,
+intents (`inspect_*`, `preview_simulation`, `preview_dcad_collection`,
+`preview_successor`, `explain_decision`, `help`) never mutate
+records or issue metered calls; consequential intents (`start_*`,
+`resume_discovery`, `stop*`, `run_simulation`,
 `compare_scenarios`, `assist_explain`, `analyze_evidence`,
-`explain_economics`, `draft_outreach`, `extract_document`) need
-ask-with-token or full. Discovery bursts
+`explain_economics`, `draft_outreach`, `extract_document`,
+`collect_dcad_evidence`, `commit_successor`) need ask-with-token
+or full, and the DCAD/successor pair additionally requires the
+operator grant. Discovery bursts
 through Wondrue are request-safe (at most 5 passes / 900 seconds);
 longer campaigns use repeated bursts or the runner CLI. Bursts run
 free OSM discovery only unless `acquire: true` is passed: acquisition
@@ -3239,10 +3358,14 @@ sending, and only Priscilla may record explicitly simulated events.
 `DEMO_MODE=no` additionally forbids simulated events; it still cannot
 send anything, because no sender is implemented. Unset or blank means
 `yes`; any other value is rejected loudly. The switch affects
-Michael-stage and later external behavior only — upstream agents behave
-identically in both modes (covered by acceptance tests), and the
-synthetic upstream harness remains a separately selected diagnostic
-fallback (restricted after the first evidenced pilot; see above).
+simulated external execution only — Gabriel, Raphael, Onesimus, and
+Michael behave identically in both modes (covered by acceptance
+tests), and live mode alone grants no spending, sending, or execution
+authority. The synthetic upstream harness remains a separately
+selected diagnostic fallback (restricted after the first evidenced
+pilot; see above). Retiring demo entry points is a future
+owner-authorized release decision; historical simulation labels,
+audit records, and regression fixtures are preserved.
 
 ### MVP limitations
 

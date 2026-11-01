@@ -1,8 +1,7 @@
 """Global run-mode switches.
 
 ``DEMO_MODE=yes`` means prepare and analyze using real data, but
-simulate downstream external execution. It affects Michael-stage and
-later external behavior only:
+simulate downstream external execution:
 
 - Gabriel, Raphael, and Onesimus use genuine evidence and unchanged
   verification rules in both modes; they never read this switch.

@@ -151,6 +151,10 @@ INTENTS = frozenset(
         "explain_economics",
         "draft_outreach",
         "inspect_inference_usage",
+        "preview_dcad_collection",
+        "collect_dcad_evidence",
+        "preview_successor",
+        "commit_successor",
     }
 )
 

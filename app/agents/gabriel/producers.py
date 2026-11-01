@@ -138,6 +138,15 @@ def _voice_attribution(item) -> str | None:
     return next(iter(claimed))
 
 
+def phase2a_default_note(basis: str, disputes: int) -> str:
+    """Conservative unaligned-identity note shared by Brave-path callers."""
+    return (
+        "Phase 2A conservative rule: grouping basis "
+        f"{basis!r} organizes evidence but does not verify that members "
+        f"describe one physical building (observed identity disputes: {disputes})."
+    )
+
+
 def build_candidate_verification(
     candidate: RankedCandidate,
     members: list[int],
@@ -145,6 +154,8 @@ def build_candidate_verification(
     *,
     basis: str,
     registry: SourceRegistry | None = None,
+    extra_voices: list[VoiceInput] | None = None,
+    attestation: IdentityAttestation | None = None,
 ) -> CategoryVerification:
     """Evaluate one ranked candidate against the verification policy.
 
@@ -158,6 +169,14 @@ def build_candidate_verification(
     the contradiction itself is evaluated rather than misreported as
     absent evidence; else empty (no recognized claim). Identity stays
     unaligned.
+
+    ``extra_voices`` and ``attestation`` exist solely for the
+    authenticated admission path (a validated collector-minted
+    collection assessed over the same lineage): they append
+    scope-bound voices and replace the default unaligned
+    attestation with a supported one. Ordinary Brave-path callers
+    leave both unset, which preserves the Phase 2A behavior
+    byte for byte.
     """
     active = PRODUCTION_REGISTRY if registry is None else registry
     mechanical = evaluate_category_evidence(_member_observations(members, items))
@@ -179,16 +198,17 @@ def build_candidate_verification(
                 defining_facts=facts,
             )
         )
-    disputes = len(candidate.identity_disputes)
-    note = (
-        "Phase 2A conservative rule: grouping basis "
-        f"{basis!r} organizes evidence but does not verify that members "
-        f"describe one physical building (observed identity disputes: {disputes})."
-    )
+    voices.extend(extra_voices or [])
+    if attestation is None:
+        attestation = IdentityAttestation(
+            group_key=candidate.key,
+            aligned=False,
+            note=phase2a_default_note(basis, len(candidate.identity_disputes)),
+        )
     request = VerificationRequest(
         claim=claim,
         voices=voices,
-        identity=IdentityAttestation(group_key=candidate.key, aligned=False, note=note),
+        identity=attestation,
         material_contradiction=(
             mechanical.status is CategoryEvidenceStatus.CONTRADICTORY or fact_conflict
         ),

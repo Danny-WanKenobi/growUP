@@ -1,7 +1,8 @@
 """DEMO_MODE parsing and upstream mode-invariance acceptance.
 
-DEMO_MODE governs Michael-stage and later external behavior only.
-Gabriel, Raphael, and Onesimus must behave identically in both modes.
+DEMO_MODE governs simulated external execution only.
+Gabriel, Raphael, and Onesimus must behave identically in both modes
+(Michael is pinned the same way in test_michael.py).
 """
 
 from __future__ import annotations
