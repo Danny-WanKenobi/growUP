@@ -462,6 +462,7 @@ def test_route_demo_reset() -> None:
 
 def test_route_real_start_without_database_is_503(monkeypatch) -> None:
     import app.routes.wondrue as wondrue_routes
+    from app.config import DatabaseConfig
     from app.db import DatabaseUnavailableError
 
     monkeypatch.setenv("MVP_WORKFLOW_ENABLED", "1")
@@ -472,13 +473,28 @@ def test_route_real_start_without_database_is_503(monkeypatch) -> None:
     def _boom(**kwargs: Any) -> Any:
         raise DatabaseUnavailableError("database_unavailable")
 
-    # Simulate database unavailability at the route's own connection
-    # boundary: without this, ambient PG configuration hands the
-    # command a real connection and a different execution path.
+    def _unconfigured() -> DatabaseConfig:
+        return DatabaseConfig(host="", port=0, name="", user="", password="")
+
+    def _no_transmit(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("database-unavailable test must not transmit")
+
+    # Simulate database unavailability at the owned-connection
+    # boundary used by the revised coordinator: every get_connection
+    # in this path consults app.properties_db.get_database_config,
+    # so one patch blocks the route, run creation, the artifact
+    # claim, monthly accounting, and the coordinated transaction
+    # alike -- regardless of ambient PostgreSQL configuration. No
+    # workflow rows are created and no budget is reserved.
     monkeypatch.setattr(wondrue_routes, "get_connection", _unavailable)
+    monkeypatch.setattr("app.properties_db.get_database_config", _unconfigured)
     monkeypatch.setattr(
         "app.observability.transactions.run_consequential_transaction", _boom
     )
+    # Explicit guards: fail loudly if the provider or monthly
+    # accounting is ever reached in this test.
+    monkeypatch.setattr("app.agents.raphael.acquire.execute_query", _no_transmit)
+    monkeypatch.setattr("app.agents.raphael.acquire.reserve_requests", _no_transmit)
     resp = client.post(
         "/wondrue/command",
         headers=_OPERATOR_HEADERS,
