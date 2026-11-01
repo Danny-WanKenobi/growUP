@@ -203,14 +203,21 @@ def find_by_address(
     """Return the ids matching a normalized address (at most two).
 
     Stored components are normalized in SQL exactly as callers
-    normalize inputs first (see gabriel dedup). Returns every match
-    up to two rows: zero (no match), one (unique match), or two (more
-    than one match exists -- ambiguous, never treated as unique).
-    Callers must not select among multiple matches.
+    normalize inputs first (see gabriel dedup): street/city/ZIP via
+    normalize_text, state via normalize_state (callers pass the
+    canonical spelling; stored "tx"/"texas" variants match it).
+    Returns every match up to two rows: zero (no match), one (unique
+    match), or two (more than one match exists -- ambiguous, never
+    treated as unique). Callers must not select among multiple
+    matches.
     """
     street_expr = _normalized_component_sql("street_address")
     city_expr = _normalized_component_sql("COALESCE(city, '')")
-    state_expr = _normalized_component_sql("COALESCE(state, '')")
+    # Texas-only state rule, mirroring gabriel normalize_state: stored
+    # "texas" and "tx" spellings match a canonical "tx" parameter.
+    # Every other value compares exactly as before.
+    state_norm = _normalized_component_sql("COALESCE(state, '')")
+    state_expr = f"CASE {state_norm} WHEN 'texas' THEN 'tx' ELSE {state_norm} END"
     zip_expr = _normalized_component_sql("COALESCE(zip_code, '')")
     sql = (
         "SELECT id FROM properties "

@@ -418,9 +418,11 @@ def _dossier_payload(prop: UUID) -> dict[str, Any]:
             "sources": ["https://broker-a.example/x", "https://broker-b.example/y"],
         },
         "candidate_verification": {
-            "outcome": "VERIFIED",
-            "pathway": "CREDIBLE_CORROBORATION",
+            "outcome": "verified",
+            "pathway": "credible_corroboration",
             "reasons": [],
+            "rationale": "two independent vetted voices agree on the category",
+            "voices": [{"host": "records-a.example"}, {"host": "records-b.example"}],
         },
     }
 

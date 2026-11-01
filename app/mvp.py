@@ -29,6 +29,7 @@ from app.agents.gabriel.persist import (
     persist_qualifications,
     persist_research_artifacts,
 )
+from app.agents.gabriel.producers import build_candidate_verifications
 from app.agents.gabriel.ranking import rank_intelligence
 from app.agents.gabriel.sources.brave import BraveSearchResult
 from app.agents.onesimus.crops import crop_profile
@@ -99,12 +100,12 @@ def _reconstruct_results(artifact: dict[str, Any]) -> list[BraveSearchResult]:
 
 def _dossier_address_signature(dossier: Any) -> tuple[str, str, str]:
     """Normalized (street, city, state) for one dossier ("" when missing)."""
-    from app.agents.gabriel.dedup import normalize_text
+    from app.agents.gabriel.dedup import normalize_state, normalize_text
 
     return (
         normalize_text(getattr(dossier, "street_address", None)),
         normalize_text(getattr(dossier, "city", None)),
-        normalize_text(getattr(dossier, "state", None)),
+        normalize_state(getattr(dossier, "state", None)),
     )
 
 
@@ -122,7 +123,7 @@ def associate_dossiers_with_property(
     genuine ambiguity additionally returns a review request so an
     operator can resolve it instead of the pipeline guessing.
     """
-    from app.agents.gabriel.dedup import normalize_text
+    from app.agents.gabriel.dedup import normalize_state, normalize_text
     from app.properties_db import find_by_address, get_property
 
     try:
@@ -134,7 +135,7 @@ def associate_dossiers_with_property(
     target_sig = (
         normalize_text(target_row.get("street_address")),
         normalize_text(target_row.get("city")),
-        normalize_text(target_row.get("state")),
+        normalize_state(target_row.get("state")),
     )
     if not all(target_sig):
         return {}, None
@@ -229,6 +230,12 @@ def _gabriel_stage(
         replayed = replay_artifact(conn, run_id, assignment_id)
     intelligence = extract_research_intelligence(_reconstruct_results(replayed))
     ranking = rank_intelligence(intelligence)
+    if str(replayed.get("collection_provenance", "")) == "adapter_collected":
+        # Shared verification policy, same as the research path: genuine
+        # adapter provenance only, never listing claims as facts.
+        annotations = build_candidate_verifications(ranking, intelligence)
+        for candidate in ranking.candidates:
+            candidate.category_verification = annotations.get(candidate.key)
     dossier_set = build_dossiers(DossierRequest(rounds=[intelligence]))
 
     class _Result:

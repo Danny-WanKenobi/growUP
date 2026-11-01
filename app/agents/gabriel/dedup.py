@@ -34,6 +34,25 @@ def normalize_text(value: object) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+_TEXAS_STATE_SPELLINGS = frozenset({"tx", "texas"})
+
+
+def normalize_state(value: object) -> str:
+    """Normalize a state name for identity comparison (Texas-only rule).
+
+    Equivalent Texas spellings ("TX", "Texas", any case/punctuation)
+    canonicalize to "tx"; every other value passes through
+    normalize_text unchanged. Raw source wording is preserved by
+    callers -- this feeds identity keys, grouping, dedup, and
+    operational-property association only. Suites, buildings, and
+    genuinely distinct addresses are never merged by this rule.
+    """
+    norm = normalize_text(value)
+    if norm in _TEXAS_STATE_SPELLINGS:
+        return "tx"
+    return norm
+
+
 def dedup_key(
     payload: dict[str, Any],
     *,
@@ -54,7 +73,7 @@ def dedup_key(
     street = normalize_text(payload.get("street_address"))
     if street:
         city = normalize_text(payload.get("city"))
-        state = normalize_text(payload.get("state"))
+        state = normalize_state(payload.get("state"))
         zip_code = normalize_text(payload.get("zip_code"))
         return f"addr:{street}|{city}|{state}|{zip_code}"
     element = str(external_id).strip() if external_id is not None else ""
@@ -101,7 +120,7 @@ def match_existing_address(payload: dict[str, Any]) -> AddressMatch:
     rows = find_by_address(
         street=normalize_text(payload.get("street_address")),
         city=normalize_text(payload.get("city")),
-        state=normalize_text(payload.get("state")),
+        state=normalize_state(payload.get("state")),
         zip_code=normalize_text(payload.get("zip_code")),
     )
     if not rows:
@@ -130,7 +149,7 @@ def intake_address_lock_key(
     parts = [
         normalize_text(street),
         normalize_text(city),
-        normalize_text(state),
+        normalize_state(state),
         normalize_text(zip_code),
     ]
     joined = "|".join(f"{len(part)}:{part}" for part in parts)

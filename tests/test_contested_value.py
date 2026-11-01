@@ -312,8 +312,12 @@ def test_13_portfolio_member_earns_no_corroboration() -> None:
         ),
         _result(
             "Portfolio asking",
-            "Asking price $50 million for the portfolio: 500 Commerce St and "
-            "900 Industrial Blvd, Dallas, TX.",
+            # Each address carries its own trailing location: membership
+            # must come from attributed context, never borrowed across
+            # addresses (a shared trailing location stays unknown for
+            # the non-adjacent address).
+            "Asking price $50 million for the portfolio: 500 Commerce St, "
+            "Dallas, TX and 900 Industrial Blvd, Dallas, TX.",
             url="https://other.org/portfolio",
         ),
     )

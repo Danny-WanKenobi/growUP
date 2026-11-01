@@ -884,6 +884,23 @@ HTML markup and entities in snippets are normalized to clean text
 without rendering. Conservative grouping by exact address or name+city
 flags ambiguous matches for review while keeping observations separate.
 
+Identity comparison uses one narrow Texas-only state rule
+(`normalize_state`): equivalent "TX"/"Texas" spellings canonicalize
+to `tx` in group keys, dossier identity, dedup keys, intake locks,
+dispute comparison, and operational-property association (including
+the SQL side of `find_by_address`); every other value passes
+through unchanged, raw source wording is preserved on the
+observations, and suites, buildings, and distinct addresses are
+never merged by it. Location fields are attributed only within a
+candidate's own reliable text context: an address match owns its
+trailing segment up to the next address (a lone address also admits
+bounded leading context), so a neighbor's ZIP, city, category, or
+designator is never borrowed — 8702 S Lancaster Rd keeps 75241
+even beside a 75212 neighbor. Shared or leading locations across
+several addresses are ambiguous and stay unknown, as do names
+beside other candidates; a lone name keeps combined-wide context.
+Money and occupancy stay result-level and unattributed, as before.
+
 ### API behavior
 
 `POST /discovery/research-runs` accepts `include_intelligence` (default
@@ -1983,6 +2000,27 @@ id is required, never a blind retry; a transmitted ambiguous
 attempt keeps its persisted artifact and is likewise terminal for
 that id.
 
+The coordinator annotates every ranked candidate with the existing
+shared verification policy before dossier persistence
+(`build_candidate_verifications`, the same producer the research
+path uses — no second verification engine): each persisted dossier
+version carries the policy's explicit `candidate_verification`
+result (`outcome`, `reasons`, `rationale`), including
+`not_verified` with its failure reasons where appropriate.
+Annotations attach only over genuinely adapter-collected evidence
+(the replayed artifact's own recorded collection provenance);
+anything else persists without the stamp, and Raphael still
+decides authorization from evidence alone — weak directory-style
+snippets yield `not_verified` and cannot authorize Onesimus.
+Raphael consumes that stamp through the shared verification model
+itself: only the policy's canonical serialized contract counts —
+lowercase `verified` with a `pathway`, a `rationale`, and
+qualifying voices. Legacy uppercase spellings fail validation as
+malformed and yield `needs_evidence`, never authorization, so a
+genuine policy success passes Raphael while weak evidence cannot.
+Listing claims and intake categories are never converted into
+authenticated facts by this wiring.
+
 The initial owner-run evaluation is a configurable single-request
 bound rather than the ordinary nine-attempt allowance:
 `brave_attempt_limit=1`, 12-second provider timeout, no automatic
@@ -2007,6 +2045,9 @@ coordinator only associates at most one dossier whose own
 normalized address uniquely supports the target
 (`associate_dossiers_with_property` + `find_by_address`; ambiguity
 records a pending `identity_review` and custody blocks honestly).
+State comparison uses the shared Texas-only rule, so a dossier
+saying "Texas" matches a stored "TX" (and vice versa) without
+guessing across genuinely different addresses.
 The runner derives a deterministic assignment
 (`runner:{scope}:{property_id}`) and query from the property's own
 stored address and skips address-less rows with reasons; a Wondrue
@@ -2017,16 +2058,20 @@ Focused checks (mocked providers, disposable data; PG-gated tests
 skip without `GROWUP_PG_INTEGRATION=1`):
 
 ```bash
+python -m pytest -q tests/test_coordinator_attribution.py tests/test_extractor.py tests/test_grouping_identity.py tests/test_ranking.py tests/test_dossier.py tests/test_verification_producer.py tests/test_mvp_flow.py
 python -m pytest -q tests/test_acquisition_budget.py tests/test_mvp_flow.py tests/test_raphael.py
 python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **1,976 passed, 140 skipped** (133
-pre-existing skips plus 7 new PG-gated acquisition checks), 17
-warnings, with the legacy-helper tests removed and their approval,
-budget, ambiguity, persistence, replay, demo-isolation, and
-stopped-run checks preserved on the supported owned entry point.
+Local suite in this tree: **1,991 passed, 140 skipped** (133
+pre-existing skips plus 7 PG-gated acquisition checks), 17
+warnings, with legacy-helper coverage preserved on the supported
+owned entry point, plus the 14-check sanitized attribution suite
+(`tests/test_coordinator_attribution.py`, derived from the
+retained real snippets: TX/Texas identity, per-address ZIPs,
+coordinator verification persistence, shared-policy success
+contract, fail-closed association).
 Pending owner execution on the disposable database
 (`growup_mvp_gate`) after `python -m app.migrate`: the seven
 `GROWUP_PG_INTEGRATION`-gated tests in
@@ -2037,6 +2082,16 @@ assignment ids, two-connection race with one charge, recheck under
 a held lock, started-marker blocks uncertain replay), plus a
 full regression and health checks. Mocked success is not proof of
 PostgreSQL behavior, and skipped PG tests are not acceptance.
+
+Real-data boundary: the original first real run, its artifacts,
+dossier versions, decisions, snapshots, and receipts are preserved
+unchanged — no keys rewritten, no records merged, no budgets
+reset, no automatic replay of the completed/stopped run. The
+sanitized fixture replays prove the corrected code paths only; a
+passing corrected replay must not be presented as proof of
+real-property qualification. Any future corrected reprocessing is
+a separately reviewed owner decision and must retain its
+relationship to the original evidence and history.
 
 ### Owner first-acquisition configuration (proposed, not executed)
 

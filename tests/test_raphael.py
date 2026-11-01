@@ -77,9 +77,11 @@ def _payload(**overrides: Any) -> dict[str, Any]:
             "sources": ["https://broker-a.example/x"],
         },
         "candidate_verification": {
-            "outcome": "VERIFIED",
-            "pathway": "CREDIBLE_CORROBORATION",
+            "outcome": "verified",
+            "pathway": "credible_corroboration",
             "reasons": [],
+            "rationale": "two independent vetted voices agree on the category",
+            "voices": [{"host": "records-a.example"}, {"host": "records-b.example"}],
         },
         "property_id": "",
     }
@@ -106,10 +108,34 @@ def test_evaluate_authorized_when_all_gates_pass() -> None:
 
 
 def test_evaluate_needs_evidence_for_failed_verification() -> None:
-    payload = _payload(candidate_verification={"outcome": "NOT_VERIFIED", "reasons": ["single_voice_only"]})
+    payload = _payload(
+        candidate_verification={
+            "outcome": "not_verified",
+            "reasons": ["single_voice_only"],
+            "rationale": "only one voice supports the claim",
+        }
+    )
     verdict = evaluate_dossier(payload)
     assert verdict["outcome"] == "needs_evidence"
     assert "single_voice_only" in verdict["basis"][0]
+
+
+def test_evaluate_rejects_legacy_uppercase_verification() -> None:
+    # Deliberate no-compat decision: Raphael consumes only the shared
+    # policy's canonical lowercase contract. A legacy uppercase payload
+    # is malformed, never authorized, even with an otherwise valid shape.
+    payload = _payload(
+        candidate_verification={
+            "outcome": "VERIFIED",
+            "pathway": "CREDIBLE_CORROBORATION",
+            "reasons": [],
+            "rationale": "two independent vetted voices agree on the category",
+            "voices": [{"host": "records-a.example"}, {"host": "records-b.example"}],
+        }
+    )
+    verdict = evaluate_dossier(payload)
+    assert verdict["outcome"] == "needs_evidence"
+    assert "malformed" in verdict["basis"][0]
 
 
 def test_evaluate_needs_evidence_for_missing_verification() -> None:
@@ -231,7 +257,11 @@ def test_authorize_is_idempotent_per_digest() -> None:
     from app.agents.raphael.service import LIMITATIONS, SCOPE
 
     payload = _payload(
-        candidate_verification={"outcome": "NOT_VERIFIED", "reasons": ["single_voice_only"]}
+        candidate_verification={
+            "outcome": "not_verified",
+            "reasons": ["single_voice_only"],
+            "rationale": "only one voice supports the claim",
+        }
     )
     verdict = evaluate_dossier(payload)
     assert verdict["outcome"] == "needs_evidence"
@@ -340,8 +370,9 @@ def test_live_authorize_is_idempotent_per_digest() -> None:
             created.append(str(run.run_id))
             payload = _payload(
                 candidate_verification={
-                    "outcome": "NOT_VERIFIED",
+                    "outcome": "not_verified",
                     "reasons": ["single_voice_only"],
+                    "rationale": "only one voice supports the claim",
                 }
             )
             put_record_in_transaction(

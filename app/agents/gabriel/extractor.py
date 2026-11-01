@@ -24,6 +24,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.agents.gabriel.dedup import normalize_state
 from app.agents.gabriel.sources.brave import BraveSearchResult
 from app.properties import PropertyCategory
 
@@ -374,47 +375,126 @@ def _guess_category(text: str) -> PropertyCategory | None:
     return None
 
 
+_LOCATION_LEAD_CHARS = 120
+_LOCATION_TRAIL_CHARS = 200
+
+
+def _locate_in(text: str) -> tuple[str | None, str | None, str | None, PropertyCategory | None, str | None]:
+    """Attribute location fields within one text context only.
+
+    Returns (city, state, zip_code, category, unit_designator); every
+    field comes from the given context and stays None when the
+    context does not carry it. Never borrows from another property's
+    text.
+    """
+    city_state = _CITY_STATE_RE.search(text)
+    city = city_state.group(1) if city_state else None
+    state_match = city_state.group(2) if city_state else (_STATE_RE.search(text) or [None, None])[1]
+    state = state_match if state_match in ("TX", "Texas") else None
+    zip_match = _ZIP_RE.search(text)
+    zip_code = zip_match.group(1) if zip_match else None
+    return city, state, zip_code, _guess_category(text), _extract_designator(text)
+
+
+def _address_segment(combined: str, spans: list[tuple[int, int]], index: int) -> str:
+    """One address match's own text context (never another address's).
+
+    With several addresses, only trailing context up to the next
+    address belongs to a match: locations grammatically follow their
+    address ("1601 Road, Dallas, TX 75212"), while anything before it
+    may be the previous address's trailing location -- shared or
+    leading locations are ambiguous and stay unknown. With a single
+    address there is no neighbor to borrow from, so bounded leading
+    context is also admitted ("Dallas, TX: 1601 Road"). Trail caps
+    keep distant mentions unattributed. The match itself is always
+    included.
+    """
+    start, end = spans[index]
+    next_start = spans[index + 1][0] if index + 1 < len(spans) else len(combined)
+    if len(spans) > 1:
+        lo = start
+    else:
+        lo = max(0, start - _LOCATION_LEAD_CHARS)
+    hi = min(next_start, end + _LOCATION_TRAIL_CHARS)
+    return combined[lo:hi]
+
+
 def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
-    """Extract identity candidates; each stays separate (never merged)."""
+    """Extract identity candidates; each stays separate (never merged).
+
+    City/state/ZIP/category/designator are attributed only within a
+    candidate's own reliable text context: an address match owns its
+    trailing segment up to the next address (a lone address also
+    admits bounded leading context, since no neighbor exists to
+    borrow from). A lone name with no address in the text keeps
+    combined-wide context (the sole candidate cannot borrow from
+    another property); names beside other candidates carry unknown
+    location rather than a neighbor's. Absent or ambiguous fields
+    stay unknown and are never fabricated.
+    """
     combined = f"{title}. {snippet}" if snippet else title
     names = [match.group(1) for match in _NAME_RE.finditer(combined)]
-    addresses = [match.group(1) for match in _ADDRESS_RE.finditer(combined)]
-    city_state = _CITY_STATE_RE.search(combined)
-    city = city_state.group(1) if city_state else None
-    state_match = city_state.group(2) if city_state else (_STATE_RE.search(combined) or [None, None])[1]
-    state = state_match if state_match in ("TX", "Texas") else None
-    zip_match = _ZIP_RE.search(combined)
-    zip_code = zip_match.group(1) if zip_match else None
-    category = _guess_category(combined)
+    address_hits: list[tuple[int, int, str]] = []
+    seen_addresses: set[str] = set()
+    for match in _ADDRESS_RE.finditer(combined):
+        cleaned = match.group(1)
+        if cleaned in seen_addresses:
+            continue
+        seen_addresses.add(cleaned)
+        address_hits.append((match.start(1), match.end(1), cleaned))
+    spans = [(start, end) for start, end, _ in address_hits]
+    addresses = [cleaned for _, _, cleaned in address_hits]
 
     unique_names = list(dict.fromkeys(names))
-    unique_addresses = list(dict.fromkeys(addresses))
+    unique_addresses = addresses
     # Exactly one name and at most one address describe a single building
     # and merge; anything else stays separate so attribution stays safe.
     if len(unique_names) == 1 and len(unique_addresses) <= 1:
         address = unique_addresses[0] if unique_addresses else None
+        if address is not None:
+            city, state, zip_code, category, designator = _locate_in(
+                _address_segment(combined, spans, 0)
+            )
+        else:
+            city, state, zip_code, category, designator = _locate_in(combined)
         return [
             ExtractedProperty(
                 name=unique_names[0], street_address=address, city=city,
                 state=state, zip_code=zip_code, category=category,
-                unit_designator=_extract_designator(combined),
+                unit_designator=designator,
                 evidence=f"named building '{unique_names[0]}'"
                 + (f" at '{address}'" if address else ""),
+            )
+        ]
+    if not unique_names and len(unique_addresses) == 1:
+        city, state, zip_code, category, designator = _locate_in(
+            _address_segment(combined, spans, 0)
+        )
+        return [
+            ExtractedProperty(
+                street_address=unique_addresses[0], city=city, state=state,
+                zip_code=zip_code, category=category,
+                unit_designator=designator,
+                evidence=f"street address '{unique_addresses[0]}'",
             )
         ]
     properties: list[ExtractedProperty] = []
     for name in unique_names:
         properties.append(
             ExtractedProperty(
-                name=name, city=city, state=state, zip_code=zip_code,
-                category=category, evidence=f"named building '{name}'",
+                name=name, city=None, state=None, zip_code=None,
+                category=None, evidence=f"named building '{name}'",
             )
         )
-    for address in unique_addresses:
+    for index, address in enumerate(unique_addresses):
+        city, state, zip_code, category, designator = _locate_in(
+            _address_segment(combined, spans, index)
+        )
         properties.append(
             ExtractedProperty(
                 street_address=address, city=city, state=state, zip_code=zip_code,
-                category=category, evidence=f"street address '{address}'",
+                category=category, unit_designator=designator,
+                evidence=f"street address '{address}'",
             )
         )
     return properties
@@ -1149,7 +1229,7 @@ def _address_key(prop: ExtractedProperty) -> str | None:
     if not street:
         return None
     city = _normalize_identity(prop.city)
-    state = _normalize_identity(prop.state)
+    state = normalize_state(prop.state)
     zip_code = _normalize_identity(prop.zip_code)
     return f"addr:{street}|{city}|{state}|{zip_code}"
 
@@ -1161,7 +1241,7 @@ def _identity_signature(item: ResultIntelligence) -> tuple[tuple[str, str, str, 
         part = (
             _normalize_identity(prop.name),
             _normalize_identity(prop.city),
-            _normalize_identity(prop.state),
+            normalize_state(prop.state),
             _normalize_identity(prop.zip_code),
             _normalize_identity(prop.unit_designator),
         )
@@ -1212,7 +1292,10 @@ def identity_disputes(
                 raw = getattr(prop, field)
                 if not raw:
                     continue
-                norm = _normalize_identity(raw)
+                if field == "state":
+                    norm = normalize_state(raw)
+                else:
+                    norm = _normalize_identity(raw)
                 if not norm:
                     continue
                 by_field[field].setdefault(norm, raw)

@@ -1,15 +1,17 @@
-"""Explainable category-verification policy (isolated, pure, unwired).
+"""Explainable category-verification policy (isolated, pure).
 
 Decides whether supplied property-category evidence satisfies the
 AUTHORITY or CREDIBLE_CORROBORATION pathway and explains why the claim
-is VERIFIED or NOT VERIFIED. Deterministic; no I/O; no network.
+is verified or not verified. Deterministic; no I/O; no network.
 
 TRUST BOUNDARY: this module evaluates supplied facts and metadata. It
 does not retrieve, authenticate, or independently verify source
 artifacts, and a successful evaluation here is NOT a trusted production
 verification. Trusted verification additionally requires evidence built
-by executed source adapters within authorized wiring -- which does not
-exist yet. There are no production callers; tests only.
+by executed source adapters within authorized wiring, which only the
+trusted evidence producer (producers.py) may assert. The production
+source registry is empty, so no production evaluation can currently
+verify.
 """
 
 from __future__ import annotations

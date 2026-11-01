@@ -14,8 +14,9 @@ profitability; those limits are recorded on every decision.
 
 Gates for `authorized` (all required):
 1. The dossier version's stored digest matches its recomputed digest.
-2. The persisted candidate verification says VERIFIED with a pathway
-   and no failure reasons.
+2. The persisted candidate verification validates against the shared
+   category-verification model and says verified with a pathway
+   and no failure reasons. Any other spelling is malformed.
 3. No identity disputes on the dossier.
 4. No unresolved conflicts on the dossier.
 5. Category attribution is not contradictory.
@@ -32,7 +33,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from app.agents.raphael import RAPHAEL_POLICY_VERSION
+from app.agents.gabriel.verification import CategoryVerification, VerificationOutcome
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.properties_db import get_connection
 from app.workflow import KIND_RAPHAEL_DECISION, digest_payload, is_demo_id
@@ -62,13 +66,17 @@ def _dossier_digest(payload: dict[str, Any]) -> str:
 def _verification_blockers(verification: Any) -> list[str]:
     if not isinstance(verification, dict):
         return ["no persisted category verification on the dossier version"]
-    if verification.get("outcome") != "VERIFIED":
-        reasons = verification.get("reasons") or ["unexplained"]
-        return [f"category verification {verification.get('outcome')}: {', '.join(map(str, reasons))}"]
-    if not verification.get("pathway"):
+    try:
+        parsed = CategoryVerification.model_validate(verification)
+    except ValidationError:
+        return ["persisted category verification is malformed"]
+    if parsed.outcome is not VerificationOutcome.VERIFIED:
+        reasons = [reason.value for reason in parsed.reasons] or ["unexplained"]
+        return [f"category verification {parsed.outcome.value}: {', '.join(reasons)}"]
+    if parsed.pathway is None:
         return ["verified category lacks a verification pathway"]
-    if verification.get("reasons"):
-        return [f"verified category carries failure reasons: {verification.get('reasons')}"]
+    if parsed.reasons:
+        return [f"verified category carries failure reasons: {parsed.reasons}"]
     return []
 
 

@@ -5,13 +5,15 @@ server-executed Brave adapter. This module establishes collection
 provenance -- "these bytes came from an adapter call this server made" --
 not verified property facts.
 
-TRUST BOUNDARY: ``adapter_collected`` is stamped here only because the
-sole production caller (``run_research``) invokes this builder over
-results returned by ``execute_query`` in the same request. The builder
-itself cannot authenticate its inputs: any other caller (dossiers,
-investigations, tests over fabricated intelligence) must supply its own
-provenance, and nothing here may be reused to launder caller-submitted
-data into adapter-collected evidence.
+TRUST BOUNDARY: ``adapter_collected`` is stamped here only because
+each production caller invokes this builder over adapter-collected
+evidence: ``run_research`` over results returned by ``execute_query``
+in the same request, and the coordinator over a persisted artifact
+whose own recorded collection provenance is "adapter_collected".
+The builder itself cannot authenticate its inputs: any other caller
+(dossiers, investigations, tests over fabricated intelligence) must
+supply its own provenance, and nothing here may be reused to
+launder caller-submitted data into adapter-collected evidence.
 
 Phase 2A is deliberately fail-closed:
 

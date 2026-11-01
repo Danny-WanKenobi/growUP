@@ -159,7 +159,7 @@ def _stub_dossier(key: str = "k1") -> SimpleNamespace:
 
 def _stub_ranking() -> SimpleNamespace:
     verification = SimpleNamespace(
-        model_dump=lambda mode=None: {"outcome": "NOT_VERIFIED", "reasons": ["x"]}
+        model_dump=lambda mode=None: {"outcome": "not_verified", "reasons": ["x"]}
     )
     return SimpleNamespace(
         candidates=[SimpleNamespace(key="k1", category_verification=verification)]
@@ -172,7 +172,7 @@ def test_persist_dossier_versions_binds_verification() -> None:
     digests = persist_dossier_versions(conn, uuid4(), dossier_set, _stub_ranking(), ["a1"])
     assert len(digests) == 1 and len(digests[0]) == 64
     payload = __import__("json").loads(conn._cursor.executed[0][1]["payload"])
-    assert payload["candidate_verification"] == {"outcome": "NOT_VERIFIED", "reasons": ["x"]}
+    assert payload["candidate_verification"] == {"outcome": "not_verified", "reasons": ["x"]}
     assert payload["artifact_refs"] == ["a1"]
     assert payload["builder_version"] == "004B"
     assert payload["digest"] == digests[0]

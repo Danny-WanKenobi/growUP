@@ -131,7 +131,9 @@ class _FakeCursor:
             # Faithful to app.properties_db.find_by_address: stored parts
             # normalized exactly like incoming values (shared normalize_text
             # is idempotent, so re-normalizing the stored side mirrors SQL),
+            # state via the shared Texas-only rule on both sides, and
             # returning every match up to two rows (LIMIT 2).
+            from app.agents.gabriel.dedup import normalize_state as _norm_state
             from app.agents.gabriel.dedup import normalize_text as _norm
 
             matches = []
@@ -141,7 +143,7 @@ class _FakeCursor:
                 if (
                     _norm(row.get("street_address")) == params["street"]
                     and _norm(row.get("city")) == params["city"]
-                    and _norm(row.get("state")) == params["state"]
+                    and _norm_state(row.get("state")) == params["state"]
                     and _norm(row.get("zip_code")) == params["zip"]
                 ):
                     matches.append({"id": pid})
