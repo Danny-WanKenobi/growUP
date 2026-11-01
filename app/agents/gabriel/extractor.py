@@ -378,16 +378,31 @@ def _guess_category(text: str) -> PropertyCategory | None:
 _LOCATION_LEAD_CHARS = 120
 _LOCATION_TRAIL_CHARS = 200
 
+# Masks one span from word matching without shifting offsets. Neither
+# a word character nor whitespace, so matches can neither include
+# masked characters nor bridge across them.
+_SPAN_MASK = "|"
 
-def _locate_in(text: str) -> tuple[str | None, str | None, str | None, PropertyCategory | None, str | None]:
+
+def _mask_span(text: str, span: tuple[int, int] | None) -> str:
+    if span is None:
+        return text
+    start, end = span
+    return text[:start] + _SPAN_MASK * (end - start) + text[end:]
+
+
+def _locate_in(
+    text: str, city_span: tuple[int, int] | None = None
+) -> tuple[str | None, str | None, str | None, PropertyCategory | None, str | None]:
     """Attribute location fields within one text context only.
 
     Returns (city, state, zip_code, category, unit_designator); every
     field comes from the given context and stays None when the
     context does not carry it. Never borrows from another property's
-    text.
+    text. The city match additionally never overlaps the address
+    span, so street tokens cannot be consumed as part of the city.
     """
-    city_state = _CITY_STATE_RE.search(text)
+    city_state = _CITY_STATE_RE.search(_mask_span(text, city_span))
     city = city_state.group(1) if city_state else None
     state_match = city_state.group(2) if city_state else (_STATE_RE.search(text) or [None, None])[1]
     state = state_match if state_match in ("TX", "Texas") else None
@@ -396,7 +411,9 @@ def _locate_in(text: str) -> tuple[str | None, str | None, str | None, PropertyC
     return city, state, zip_code, _guess_category(text), _extract_designator(text)
 
 
-def _address_segment(combined: str, spans: list[tuple[int, int]], index: int) -> str:
+def _address_segment(
+    combined: str, spans: list[tuple[int, int]], index: int
+) -> tuple[str, tuple[int, int]]:
     """One address match's own text context (never another address's).
 
     With several addresses, only trailing context up to the next
@@ -407,7 +424,8 @@ def _address_segment(combined: str, spans: list[tuple[int, int]], index: int) ->
     address there is no neighbor to borrow from, so bounded leading
     context is also admitted ("Dallas, TX: 1601 Road"). Trail caps
     keep distant mentions unattributed. The match itself is always
-    included.
+    included. Returns the segment plus the match span within it, so
+    the city search can exclude the street tokens.
     """
     start, end = spans[index]
     next_start = spans[index + 1][0] if index + 1 < len(spans) else len(combined)
@@ -416,7 +434,7 @@ def _address_segment(combined: str, spans: list[tuple[int, int]], index: int) ->
     else:
         lo = max(0, start - _LOCATION_LEAD_CHARS)
     hi = min(next_start, end + _LOCATION_TRAIL_CHARS)
-    return combined[lo:hi]
+    return combined[lo:hi], (start - lo, end - lo)
 
 
 def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
@@ -452,9 +470,8 @@ def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
     if len(unique_names) == 1 and len(unique_addresses) <= 1:
         address = unique_addresses[0] if unique_addresses else None
         if address is not None:
-            city, state, zip_code, category, designator = _locate_in(
-                _address_segment(combined, spans, 0)
-            )
+            segment, span = _address_segment(combined, spans, 0)
+            city, state, zip_code, category, designator = _locate_in(segment, span)
         else:
             city, state, zip_code, category, designator = _locate_in(combined)
         return [
@@ -467,9 +484,8 @@ def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
             )
         ]
     if not unique_names and len(unique_addresses) == 1:
-        city, state, zip_code, category, designator = _locate_in(
-            _address_segment(combined, spans, 0)
-        )
+        segment, span = _address_segment(combined, spans, 0)
+        city, state, zip_code, category, designator = _locate_in(segment, span)
         return [
             ExtractedProperty(
                 street_address=unique_addresses[0], city=city, state=state,
@@ -487,9 +503,8 @@ def extract_properties(title: str, snippet: str) -> list[ExtractedProperty]:
             )
         )
     for index, address in enumerate(unique_addresses):
-        city, state, zip_code, category, designator = _locate_in(
-            _address_segment(combined, spans, index)
-        )
+        segment, span = _address_segment(combined, spans, index)
+        city, state, zip_code, category, designator = _locate_in(segment, span)
         properties.append(
             ExtractedProperty(
                 street_address=address, city=city, state=state, zip_code=zip_code,

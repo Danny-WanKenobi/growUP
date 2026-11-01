@@ -45,6 +45,11 @@ TWO_ADDRESS_SNIPPET = (
     "Available listings include 1601 Chalk Hill Road \u2014 Dallas, TX 75212 "
     "and 8702 S Lancaster Rd \u2014 Dallas, TX 75241."
 )
+SPOKEO_SHAPED_SNIPPET = (
+    "2310 Chalk Hill Rd Dallas, TX 75212 \u00b7 27,028 sqft Warehouse, Storage "
+    "Built in 1952 \u00b7 2323 Chalk Hill Rd Dallas, TX 75212 \u00b7 20,880 sqft "
+    "Warehouse, Storage Built in 1968 \u00b7 2407 Chalk Hill Rd Dallas, TX 75212"
+)
 CHALK_HILL_KEY = "addr:1601 chalk hill road|dallas|tx|75212"
 LANCASTER_KEY = "addr:8702 s lancaster rd|dallas|tx|75241"
 
@@ -258,6 +263,32 @@ def test_shared_trailing_location_stays_unknown_for_nonadjacent_address() -> Non
     assert by_street["500 Commerce St"].city is None
     assert by_street["500 Commerce St"].state is None
     assert by_street["500 Commerce St"].zip_code is None
+
+
+def test_directory_cities_exclude_street_tokens() -> None:
+    props = extract_properties("Spokeo listings", SPOKEO_SHAPED_SNIPPET)
+    by_street = {prop.street_address: prop for prop in props}
+    assert set(by_street) == {
+        "2310 Chalk Hill Rd",
+        "2323 Chalk Hill Rd",
+        "2407 Chalk Hill Rd",
+    }
+    for street, prop in by_street.items():
+        assert prop.city == "Dallas", street
+        assert prop.state == "TX", street
+        assert prop.zip_code == "75212", street
+
+
+def test_directory_dossier_keys_carry_city_only() -> None:
+    item = extract_intelligence(
+        _result("Spokeo listings", SPOKEO_SHAPED_SNIPPET, "https://spokeo.example.com/x")
+    )
+    groups = group_by_property([item])
+    assert sorted(group.key for group in groups) == [
+        "addr:2310 chalk hill rd|dallas|tx|75212",
+        "addr:2323 chalk hill rd|dallas|tx|75212",
+        "addr:2407 chalk hill rd|dallas|tx|75212",
+    ]
 
 
 def test_dossier_zip_matches_own_address() -> None:

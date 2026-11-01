@@ -2021,6 +2021,14 @@ genuine policy success passes Raphael while weak evidence cannot.
 Listing claims and intake categories are never converted into
 authenticated facts by this wiring.
 
+Extraction attributes location only within each address's own
+segment, and the city match excludes the matched address span
+itself: street tokens are never consumed as part of the city
+("2310 Chalk Hill Rd Dallas, TX" yields city Dallas, not
+"Hill Rd Dallas"), while genuine multiword cities, unpunctuated
+forms, and unknown-when-ambiguous fields are preserved. No city
+is hardcoded or inferred from the query or a neighboring property.
+
 The initial owner-run evaluation is a configurable single-request
 bound rather than the ordinary nine-attempt allowance:
 `brave_attempt_limit=1`, 12-second provider timeout, no automatic
@@ -2064,14 +2072,15 @@ python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **1,991 passed, 140 skipped** (133
+Local suite in this tree: **1,993 passed, 140 skipped** (133
 pre-existing skips plus 7 PG-gated acquisition checks), 17
 warnings, with legacy-helper coverage preserved on the supported
-owned entry point, plus the 14-check sanitized attribution suite
+owned entry point, plus the 16-check sanitized attribution suite
 (`tests/test_coordinator_attribution.py`, derived from the
 retained real snippets: TX/Texas identity, per-address ZIPs,
-coordinator verification persistence, shared-policy success
-contract, fail-closed association).
+directory-city attribution, coordinator verification
+persistence, shared-policy success contract, fail-closed
+association).
 Pending owner execution on the disposable database
 (`growup_mvp_gate`) after `python -m app.migrate`: the seven
 `GROWUP_PG_INTEGRATION`-gated tests in
