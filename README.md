@@ -2299,6 +2299,61 @@ stored address and skips address-less rows with reasons; a Wondrue
 evaluation without a resolvable target stops at the custody block
 instead of guessing.
 
+### Discovery source precedence (owner-directed)
+
+Gabriel discovers property in every new geographic jurisdiction
+in this order, recorded as a validated configuration contract
+(`config/discovery_sources.example.json`, loader/validator
+`app/agents/gabriel/sources/precedence.py`):
+
+1. **P1 — official government data.** Appraisal/assessor
+   districts, parcel and GIS datasets, local open-data portals,
+   tax/property records, zoning (direct official downloads,
+   published APIs, legally permitted bulk data only; no paid
+   APIs, paywalls, unauthorized scraping, or bypassed access).
+   Status: `catalog_required` — no DFW discovery dataset is
+   cataloged yet; cataloging (authority, coverage, access,
+   licensing, update frequency, provenance, reliability) is a
+   prerequisite, not an integration. The existing Census
+   geocoder and DCAD account-page adapters are official
+   *evidence* adapters used after discovery, not listing
+   discovery.
+2. **P2 — SearXNG.** An approved instance for supplemental web
+   discovery and evidence enrichment, integrated into the
+   existing engine with budgets, deduplication, provenance, and
+   structured output preserved. Status: `planned`, not
+   integrated.
+3. **P3 — Brave Search API.** The existing integration,
+   demoted to third-priority fallback
+   (`existing_fallback`). No automatic paid usage without
+   standing budget authorization; free discovery is exhausted
+   first.
+
+Qwen is excluded from Gabriel entirely (reserved for Wondrue
+and Uriel); any declaration naming it is refused. The current
+Overpass/OSM geographic index is retained for the DFW pilot
+window only; new jurisdictions follow the tier order. All
+sources feed the one canonical property pipeline — no separate
+agent workflows. This contract authorizes no live collection,
+spending, or provider integration by itself.
+
+GUADE status: the engineering loop (Muse Wonder implements →
+deterministic tests validate → supervisor reviews → corrections
+return) exists structurally: bounded task envelopes, AARs,
+isolated PG gates, and this contract. The Baseten Super-Coach
+(`meta-models/muse-spark-open-1026`) is designated but **not
+activated** — no trial, budget, or billable exchange is
+authorized yet, and no GUADE artifact in this tree calls it.
+M03A (the first 144-dossier cohort) prerequisites still open:
+an owner-approved exact first acquisition envelope (the Dallas
+units and envelope file are design-approved, not launched), a
+cataloged P1 discovery dataset for DFW counties, per-property
+Census collection authority at cohort scale, cohort identity
+tracking (the per-cell pilot ledger exists; cohort ids do
+not), and re-verified Brave monthly headroom at launch. These
+are launch prerequisites, not implementation gaps in accepted
+functionality.
+
 Focused checks (mocked providers, disposable data; PG-gated tests
 skip without `GROWUP_PG_INTEGRATION=1`):
 
@@ -2311,7 +2366,7 @@ python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **2,176 passed, 146 skipped** (133
+Local suite in this tree: **2,184 passed, 146 skipped** (133
 pre-existing skips plus 13 PG-gated checks), 17
 warnings, with legacy-helper coverage preserved on the supported
 owned entry point, plus the 16-check sanitized attribution suite
@@ -3674,7 +3729,7 @@ opening units, enforced opening envelope, plus the six-finding
 correction pass: dossier-address binding, crash-safe claim
 charging, creation-accounting recovery, successor lineage,
 claim/evidence preservation, complete envelope — full offline
-suite green at 2,176 passed / 146 skipped / 17 warnings, owner
+suite green at 2,184 passed / 146 skipped / 17 warnings, owner
 PostgreSQL/Ubuntu validation pending including the three
 Census PG checks).
 

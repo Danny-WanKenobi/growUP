@@ -1,0 +1,75 @@
+{
+  "contract": "gabriel-discovery-source-precedence-1",
+  "description": "Owner-directed discovery-source precedence for every new geographic jurisdiction. All sources feed the one canonical property pipeline; no separate agent workflows. Official records establish property facts where supported; vacancy, availability, and agricultural suitability still require independent verification. Design contract only: registering a tier here does not authorize live collection, spending, or a new provider integration.",
+  "tiers": [
+    {
+      "tier": 1,
+      "id": "official_government",
+      "sources": [
+        {
+          "name": "official_datasets",
+          "kind": "official_dataset",
+          "status": "catalog_required",
+          "requires_credentials": false,
+          "requires_budget_authorization": false,
+          "notes": "Appraisal/assessor districts, parcel and GIS datasets, local open-data portals, tax/property records, zoning. No DFW discovery dataset is cataloged yet; cataloging (authority, coverage, access, licensing, update frequency, provenance, reliability) is a prerequisite, not an integration."
+        }
+      ]
+    },
+    {
+      "tier": 2,
+      "id": "searxng",
+      "sources": [
+        {
+          "name": "searxng",
+          "kind": "meta_search",
+          "status": "planned",
+          "requires_credentials": false,
+          "requires_budget_authorization": false,
+          "notes": "Approved SearXNG instance for supplemental web discovery and evidence enrichment. Not integrated; integration must preserve budgets, deduplication, provenance, and structured output."
+        }
+      ]
+    },
+    {
+      "tier": 3,
+      "id": "brave",
+      "sources": [
+        {
+          "name": "brave",
+          "kind": "paid_search",
+          "status": "existing_fallback",
+          "requires_credentials": true,
+          "requires_budget_authorization": true,
+          "notes": "Existing Brave Search integration, demoted to third-priority fallback. No automatic paid usage without standing budget authorization; free discovery opportunities are exhausted first."
+        }
+      ]
+    }
+  ],
+  "existing_geographic_index": [
+    {
+      "name": "overpass",
+      "kind": "geographic_index",
+      "status": "existing",
+      "notes": "Retained for the current DFW pilot window only; new jurisdictions follow the tier order above."
+    },
+    {
+      "name": "osm_api",
+      "kind": "geographic_index",
+      "status": "existing",
+      "notes": "Official OSM API building lookup (small boxes); same retention as overpass."
+    }
+  ],
+  "official_evidence_adapters": [
+    {
+      "name": "census_geocoder",
+      "status": "existing",
+      "notes": "Post-discovery county-of-matched-address admission evidence; not a listing-discovery source."
+    },
+    {
+      "name": "dcad_account_page",
+      "status": "existing",
+      "notes": "Post-discovery official account evidence for one approved account format; not bulk discovery."
+    }
+  ],
+  "excluded_from_gabriel": ["qwen"]
+}
