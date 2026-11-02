@@ -1920,6 +1920,7 @@ def test_census_collect_single_request_pg_race(monkeypatch: pytest.MonkeyPatch) 
     prop = create_property(
         {
             "name": "census-pg-race-property",
+            "category": "warehouse_industrial",
             "street_address": STREET,
             "city": CITY,
             "state": STATE,
@@ -2018,6 +2019,7 @@ def test_census_successor_commit_pg(monkeypatch: pytest.MonkeyPatch) -> None:
     prop = create_property(
         {
             "name": "census-pg-successor-property",
+            "category": "warehouse_industrial",
             "street_address": STREET,
             "city": CITY,
             "state": STATE,
@@ -2195,6 +2197,7 @@ def test_census_evaluation_county_credit_pg(monkeypatch: pytest.MonkeyPatch) -> 
     prop = create_property(
         {
             "name": "census-pg-evaluation-property",
+            "category": "warehouse_industrial",
             "street_address": STREET,
             "city": CITY,
             "state": STATE,
