@@ -542,11 +542,19 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
 
 
 def build_selection_event(decision: dict[str, Any], *, run_id: str):
-    """Build the permanent workflow/event-store record for a decision."""
+    """Build the permanent workflow/event-store record for a decision.
+
+    The event is a per-run audit occurrence, so it takes the canonical
+    unique event ID (``AgentEvent`` default). Decision identity lives
+    in ``details.digest`` and in the durable workflow store; deriving
+    the event ID from the content digest made every independent run
+    with the same decision collide on the ``agent_events`` primary
+    key under real PostgreSQL.
+    """
     from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
     digest = str(decision.get("digest", ""))
     return AgentEvent(
-        event_id=digest[:32] or None, agent=AgentId.GABRIEL, run_id=run_id,
+        agent=AgentId.GABRIEL, run_id=run_id,
         event_type="gabriel.source_selection",
         summary=f"source selection: {decision.get('status')} ({decision.get('selected_adapter') or 'none'})",
         severity=Severity.INFO if decision.get("status") == SELECTED else Severity.WARNING,

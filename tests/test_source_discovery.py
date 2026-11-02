@@ -282,6 +282,27 @@ def test_brave_fallback_reserves_before_transmit():
     assert order == ["reserve", "transmit"] and found == []
 
 
+def test_selection_events_from_same_decision_have_unique_ids():
+    # Regression (live PostgreSQL, 2026-11-02): the audit event ID was
+    # derived from the decision digest, so independent runs sharing a
+    # decision collided on the agent_events primary key.
+    from app.agents.gabriel.sources.source_selection import (
+        build_selection_event,
+    )
+
+    decision = {
+        "digest": "a" * 64, "status": "selected",
+        "selected_adapter": "stub", "selected_candidate": "Stub",
+        "mission": {"jurisdiction": "Example County"},
+        "ranked": [], "blockers": [],
+    }
+    first = build_selection_event(decision, run_id="run-1")
+    second = build_selection_event(decision, run_id="run-2")
+    assert first.event_id != second.event_id
+    assert first.details["digest"] == "a" * 64
+    assert second.details["digest"] == "a" * 64
+
+
 def test_pilot_plan_annotation_matches_discovery():
     from app.pilot import source_note_for
 
