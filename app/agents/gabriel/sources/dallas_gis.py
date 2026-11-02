@@ -68,7 +68,8 @@ def parse_zoning_response(payload: dict, *, latitude: float,
         if not isinstance(attrs, dict):
             continue
         attributes.append(attrs)
-        for key in ("ZONING", "ZONE", "BASE_ZONING", "ZONECLASS"):
+        for key in ("ZONE_DIST", "LONG_ZONE_DIST", "ZONING", "ZONE",
+                    "BASE_ZONING", "ZONECLASS"):
             value = attrs.get(key)
             if isinstance(value, str) and value.strip():
                 labels.append(value.strip())

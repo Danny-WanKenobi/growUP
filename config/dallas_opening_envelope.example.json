@@ -1,6 +1,6 @@
 {
   "envelope": "dallas-opening-1",
-  "description": "Bounded Dallas opening probe: three units sharing the downtown window, equal priority. Design only — collection requires a separately approved exact request envelope and operator launch. Not complete Dallas coverage; warehouse results may legitimately be absent.",
+  "description": "Bounded Dallas opening probe: three units sharing the downtown window, equal priority. Primary discovery source is dcad_bulk (P1 official DCAD bulk data, staged lawful downloads; requires DCAD_BULK_DATA_DIR). Overpass remains supplemental only and never overrides P1 records. Design only — collection requires a separately approved exact request envelope and operator launch. Not complete Dallas coverage; warehouse results may legitimately be absent.",
   "policy": "pilot",
   "units": [
     {
@@ -8,21 +8,21 @@
       "county": "dallas county",
       "category": "high_rise",
       "bbox": [32.77, -96.81, 32.79, -96.785],
-      "source": "overpass"
+      "source": "dcad_bulk"
     },
     {
       "id": "DFW-DAL-001-C",
       "county": "dallas county",
       "category": "commercial_property",
       "bbox": [32.77, -96.81, 32.79, -96.785],
-      "source": "overpass"
+      "source": "dcad_bulk"
     },
     {
       "id": "DFW-DAL-001-W",
       "county": "dallas county",
       "category": "warehouse_industrial",
       "bbox": [32.77, -96.81, 32.79, -96.785],
-      "source": "overpass"
+      "source": "dcad_bulk"
     }
   ],
   "max_passes": 3,

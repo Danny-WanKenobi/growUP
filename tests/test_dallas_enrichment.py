@@ -30,6 +30,16 @@ def test_zoning_point_query_builds_bounded_request():
     assert "vacancy" in claim["scope"]
 
 
+def test_zoning_real_field_names_are_labels():
+    """The live Base Zoning layer reports ZONE_DIST/LONG_ZONE_DIST."""
+    payload = {"features": [{"attributes": {
+        "ZONE_DIST": "CA-1(A)", "LONG_ZONE_DIST": "CA-1(A)"}}]}
+    claim = parse_zoning_response(payload, latitude=32.77, longitude=-96.80,
+                                  retrieved_at="t")
+    assert claim["zoning_labels"] == ["CA-1(A)"]
+    assert claim["ambiguous"] is False
+
+
 def test_zoning_multiple_districts_are_ambiguous():
     payload = {"features": [{"attributes": {"ZONING": "IR"}},
                             {"attributes": {"ZONING": "MU-2"}}]}

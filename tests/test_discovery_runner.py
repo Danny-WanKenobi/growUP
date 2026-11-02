@@ -2590,7 +2590,7 @@ def test_dallas_opening_units_example_loads() -> None:
         "high_rise", "commercial_property", "warehouse_industrial",
     }
     assert {cell.county for cell in cells} == {"dallas county"}
-    assert {cell.source for cell in cells} == {"overpass"}
+    assert {cell.source for cell in cells} == {"dcad_bulk"}
     for cell in cells:
         assert cell.bbox == (32.770, -96.810, 32.790, -96.785)
     RunnerConfig(scope="t", policy="pilot", cells=cells, max_passes=3,
@@ -2618,7 +2618,7 @@ def test_dallas_opening_envelope_example_loads() -> None:
         "high_rise", "commercial_property", "warehouse_industrial",
     }
     assert {cell.county for cell in config.cells} == {"dallas county"}
-    assert {cell.source for cell in config.cells} == {"overpass"}
+    assert {cell.source for cell in config.cells} == {"dcad_bulk"}
     for cell in config.cells:
         assert cell.bbox == (32.770, -96.810, 32.790, -96.785)
     assert config.max_passes == 3
