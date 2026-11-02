@@ -1,45 +1,39 @@
-# GUADE operating envelope — proposal for owner approval
+# GUADE operating envelope — owner-approved 2026-11-02
 
-Status: **PROPOSED, not active.** The activation envelope
-(`guade/config.example.json`, ledger in `guade/state/`) is exhausted
-(3/3 dispatches, 6/6 coach calls, 7,066 tokens) and is retained as
-read-only activation evidence. It must never be reset or reused.
+Status: **APPROVED with limits below; no billable run yet executed
+under it.** The activation envelope (`guade/config.example.json`,
+ledger in `guade/state/`) is exhausted (3/3 dispatches, 6/6 coach
+calls, 7,066 tokens) and is retained as read-only activation
+evidence. It must never be reset or reused. The earlier proposed
+$50/month configuration was **not** activated.
 
-## Proposed structure
+## Approved operating ceiling (owner, 2026-11-02)
 
-- **Separate ledger:** operating runs use `guade/state-operating/`
-  (already git-ignored), initialized only after owner approval.
-- **Coach (Baseten `meta-models/muse-spark-open-1026`):** proposed
-  20 calls/day, 200/month; 150k tokens/day, 1.5M/month; per-call cap
-  unchanged at 1,024 tokens.
-- **Engineer (Muse Wonder via `muse exec`):** proposed 10
-  dispatches/day, 100/month; 20 steps/task; 1 correction retry/task.
-- **Spending:** a $50/month planning figure is included in
-  `config.operating.example.json` as an *estimate only*. The Baseten
-  price for this model is **unverified**; the binding controls are
-  the call/token/dispatch ceilings. Observed activation usage:
-  7,066 coach tokens across 6 calls (927–1,419 per call).
-- **Fail-closed:** counters reserve before every provider call;
-  any exhausted daily or cumulative limit stops work with a recorded
-  reason. No automatic replenishment.
-- **Boundaries:** development only; no production access; Git writes
-  only as separately authorized; live property acquisition (M03A)
-  always needs its own collection envelope.
+- **Separate ledger:** `guade/state-operating/` (git-ignored),
+  configured by `guade/config.operating.example.json`.
+- **Baseten Super-Coach:** maximum **$10** additional spend,
+  maximum **10 calls**, 100k token ceiling, 1,024 tokens/call.
+- **Muse Wonder:** maximum **5 dispatches**, 20 steps/task,
+  1 correction retry/task.
+- **Scope:** Dallas P1 integration and Gabriel → Raphael
+  engineering. Development only.
 
-## Runtime work required before activation (not yet built)
+## Dollar enforceability
 
-1. Daily-window counters in `Ledger` (UTC day buckets, durable
-   across restarts) enforcing the per-day ceilings.
-2. A read-only `report` CLI command summarizing tasks completed,
-   coach/dispatch usage, and remaining headroom per period.
-3. Offline tests for daily/cumulative exhaustion and restart
-   durability.
+Published Baseten pricing for `meta-models/muse-spark-open-1026`
+($1.25 per 1M input tokens, $4.25 per 1M output; multiply
+corroborated on 2026-11-02, not confirmed on a Baseten invoice)
+bounds worst-case spend under these ceilings to a few cents:
+10 calls × 1,024 output tokens ≈ $0.05 of output, plus bounded
+prompt input. The call/token ceilings are therefore the binding
+controls and keep usage reliably within $10. Usage is still
+reserved before every call and reconciled from response usage.
 
-## Owner decisions required
+## Not built (deferred unless separately tasked)
 
-1. Approve or amend the proposed call/token/dispatch ceilings.
-2. Confirm an acceptable Baseten dollar cap and, if possible, the
-   actual per-token price or grant balance so the dollar figure can
-   be verified rather than estimated.
-3. Authorize the runtime work item above as the first operating
-   task once the envelope is approved.
+Daily-window counters and a `report` CLI command were proposed
+earlier and remain unbuilt; the approved envelope above does not
+include daily limits. Engineering under this ceiling currently
+proceeds directly (no billable GUADE dispatch is required to do
+the work), and every billable run must state its ledger headroom
+before starting.
