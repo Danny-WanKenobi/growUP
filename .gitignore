@@ -49,3 +49,7 @@ htmlcov/
 # Local planning notes and original Muse instructions
 /documentation/
 /AGENTS_original.md
+
+# GUADE local runtime state (ledgers, audit logs, prompt files)
+guade/state/
+guade/state-operating/

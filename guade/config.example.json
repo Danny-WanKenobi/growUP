@@ -1,0 +1,12 @@
+{
+  "comment": "Owner-authorized GUADE activation-trial envelope (2026-11-02). Development only. The Baseten dollar cap is enforced conservatively through call and token ceilings; actual dollar cost depends on provider pricing, which the runtime records from response usage but cannot guarantee.",
+  "max_wonder_dispatches": 3,
+  "max_steps_per_task": 20,
+  "max_correction_retries": 1,
+  "max_coach_calls": 6,
+  "max_coach_total_tokens": 60000,
+  "coach_max_tokens_per_call": 1024,
+  "baseten_budget_usd_cap": 10.0,
+  "dispatch_timeout_seconds": 900,
+  "coach_timeout_seconds": 60
+}
