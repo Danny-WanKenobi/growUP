@@ -631,6 +631,18 @@ def test_live_pilot_roundtrip_rolls_back() -> None:
         ensure_ledger_in_transaction(conn)
         state = get_state_in_transaction(conn)
         assert state["status"] == "stopped"
+        # Scoped assertions: the gate ledger is shared across runs, so
+        # absolute global totals are not this test's to assert. Capture
+        # the baseline, assert this test's exact deltas, and prove
+        # rollback restores the baseline exactly.
+        baseline = pilot_report_in_transaction(conn, budget=dict(_FAKE_BUDGET))
+        base_qualified = baseline["totals"]["qualified"]
+        base_shortfall = baseline["shortfall"]
+        base_open = sum(1 for row in baseline["rows"] if row["shortfall"] > 0)
+        cell_before = next(
+            row for row in baseline["rows"]
+            if row["county"] == "dallas county" and row["category"] == "high_rise"
+        )
         dossier = uuid4()
         assert record_transition_in_transaction(
             conn, county="Dallas County", category="high_rise",
@@ -648,10 +660,28 @@ def test_live_pilot_roundtrip_rolls_back() -> None:
             plan_next_in_transaction(conn, budget=dict(_FAKE_BUDGET))
         resume_pilot_in_transaction(conn)
         plan = plan_next_in_transaction(conn, max_actions=36, budget=dict(_FAKE_BUDGET))
-        assert plan["open_cells"] == 36  # one qualified does not close a cell
+        closes_cell = (
+            cell_before["qualified"]
+            < cell_before["target_qualified"]
+            <= cell_before["qualified"] + 1
+        )
+        assert plan["open_cells"] == base_open - (1 if closes_cell else 0)
         report = pilot_report_in_transaction(conn, budget=dict(_FAKE_BUDGET))
-        assert report["totals"]["qualified"] == 1
-        assert report["shortfall"] == 143
+        assert report["totals"]["qualified"] == base_qualified + 1
+        assert report["shortfall"] == base_shortfall - (
+            1 if cell_before["qualified"] < cell_before["target_qualified"] else 0
+        )
+        cell_after = next(
+            row for row in report["rows"]
+            if row["county"] == "dallas county" and row["category"] == "high_rise"
+        )
+        assert cell_after["qualified"] == cell_before["qualified"] + 1
     finally:
         conn.rollback()
         conn.close()
+    with get_connection() as verify_conn:
+        restored = pilot_report_in_transaction(
+            verify_conn, budget=dict(_FAKE_BUDGET)
+        )
+        assert restored["totals"]["qualified"] == base_qualified
+        assert restored["shortfall"] == base_shortfall

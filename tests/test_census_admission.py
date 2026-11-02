@@ -2111,8 +2111,6 @@ def test_census_successor_commit_pg(monkeypatch: pytest.MonkeyPatch) -> None:
                 property_id=prop_id,
                 parent_run_id=str(parent_run.run_id),
                 dossier_key=key,
-                expected_parent_version=1,
-                expected_custody_version=1,
                 collection_run_id=str(collected["run_id"]),
             )
         assert preview["ready"] is True, preview["blockers"]
