@@ -112,6 +112,10 @@ class RunnerConfig:
     evaluation_attempt_limit: int = 9
     evaluation_timeout_seconds: float | None = None
     max_overpass_requests: int | None = None
+    max_created_per_unit: int | None = None
+    max_discovery_attempts_per_unit: int | None = None
+    max_census_requests: int | None = None
+    census_attempt_limit: int = 1
 
     @property
     def overpass_request_bound(self) -> int:
@@ -119,6 +123,18 @@ class RunnerConfig:
         if self.max_overpass_requests is None:
             return self.max_passes
         return self.max_overpass_requests
+
+    @property
+    def census_request_bound(self) -> int:
+        """Burst Census request budget (disabled unless explicitly set).
+
+        Unlike Overpass, Census has no per-pass default: county
+        admission transmits only inside an explicitly bounded
+        envelope.
+        """
+        if self.max_census_requests is None:
+            return 0
+        return self.max_census_requests
 
     def validate(self) -> None:
         from app.pilot import normalize_category, normalize_county
@@ -185,6 +201,33 @@ class RunnerConfig:
             or self.max_overpass_requests < 1
         ):
             raise RunnerError("max_overpass_requests must be an integer >= 1")
+        if self.max_created_per_unit is not None and (
+            isinstance(self.max_created_per_unit, bool)
+            or not isinstance(self.max_created_per_unit, int)
+            or self.max_created_per_unit < 1
+        ):
+            raise RunnerError("max_created_per_unit must be an integer >= 1")
+        if self.max_discovery_attempts_per_unit is not None and (
+            isinstance(self.max_discovery_attempts_per_unit, bool)
+            or not isinstance(self.max_discovery_attempts_per_unit, int)
+            or self.max_discovery_attempts_per_unit < 1
+        ):
+            raise RunnerError(
+                "max_discovery_attempts_per_unit must be an integer >= 1"
+            )
+        if self.max_census_requests is not None and (
+            isinstance(self.max_census_requests, bool)
+            or not isinstance(self.max_census_requests, int)
+            or self.max_census_requests < 1
+        ):
+            raise RunnerError("max_census_requests must be an integer >= 1")
+        if (
+            isinstance(self.census_attempt_limit, bool)
+            or not isinstance(self.census_attempt_limit, int)
+            or self.census_attempt_limit < 0
+            or self.census_attempt_limit > 1
+        ):
+            raise RunnerError("census_attempt_limit must be an integer 0..1")
 
     @property
     def evaluation_timeout(self) -> float:
@@ -556,6 +599,7 @@ def _fresh_checkpoint(cells: list[RunnerCell]) -> dict[str, Any]:
         "cell_state": {},
         "overpass_requests": 0,
         "brave_requests": 0,
+        "census_requests": 0,
         "evaluations": {},
         "backlog": [],
         "discovery_runs": [],
@@ -604,8 +648,12 @@ def burst_request_bounds(config: RunnerConfig) -> dict[str, int]:
     which may exceed the configured figure for that one run, so
     the worker enforces the bound by halting further evaluations
     once burst spend reaches it rather than assuming per-attempt
-    exactness. In-flight requests run to their own timeout and
-    may land just past a bound.
+    exactness. Census: at most ``census_request_bound`` address
+    requests per burst (0 unless explicitly set) and at most
+    ``census_attempt_limit`` per evaluated property; evaluations
+    past the burst budget run without county admission rather
+    than transmitting. In-flight requests run to their own
+    timeout and may land just past a bound.
     """
     return {
         "overpass_requests": config.overpass_request_bound,
@@ -614,6 +662,7 @@ def burst_request_bounds(config: RunnerConfig) -> dict[str, int]:
             * config.max_evaluations_per_pass
             * config.evaluation_attempt_limit
         ),
+        "census_requests": config.census_request_bound,
     }
 
 
@@ -645,20 +694,35 @@ def _unit_runnable(
     counts: dict[tuple[str, str], int],
     policy: str,
     effective_limit: int,
+    max_created_per_unit: int | None = None,
+    max_discovery_attempts_per_unit: int | None = None,
 ) -> bool:
     """Whether a search unit may take another discovery pass.
 
-    Exhausted units stay skipped unless a wider window reopens them
-    (a larger pass limit sees provider results beyond the exhausted
-    head). Under the pilot policy, fulfilled cells are skipped;
-    timed reassessment continues past quota by design.
+    The per-unit attempt cap is absolute: no wider window,
+    exhaustion reset, or unmet quota reopens a unit whose
+    recorded attempts reached it. Exhausted units otherwise stay
+    skipped unless a wider window reopens them (a larger pass
+    limit sees provider results beyond the exhausted head).
+    Under the pilot policy, fulfilled cells are skipped; timed
+    reassessment continues past quota by design. Units that
+    reached their per-unit creation cap are skipped under every
+    policy.
     """
     from app.pilot import TARGET_QUALIFIED_PER_CELL
 
+    if max_discovery_attempts_per_unit is not None and (
+        int(state.get("passes", 0)) >= int(max_discovery_attempts_per_unit)
+    ):
+        return False
     if state.get("exhausted") and int(effective_limit) <= int(state.get("limit", 0)):
         return False
     if policy == "pilot" and (
         counts.get(_canonical_cell_key(cell), 0) >= TARGET_QUALIFIED_PER_CELL
+    ):
+        return False
+    if max_created_per_unit is not None and (
+        int(state.get("created", 0)) >= int(max_created_per_unit)
     ):
         return False
     return True
@@ -716,16 +780,34 @@ def _no_runnable_reason(
 ) -> str:
     """Honest completion reason when no search unit may run.
 
-    Mirrors :func:`_unit_runnable` branch order so every unit lands
-    in exactly one bucket.
+    Mirrors the selection loop (creation-cap skip, then
+    :func:`_unit_runnable` branches) so every unit lands in
+    exactly one bucket.
     """
     from app.pilot import TARGET_QUALIFIED_PER_CELL
 
     exhausted = 0
     fulfilled = 0
+    capped = 0
+    attempts_spent = 0
     for cell in config.cells:
         state = _unit_state(checkpoint, cell.unit_key)
-        if state.get("exhausted") and int(effective_limit) <= int(state.get("limit", 0)):
+        clamped = int(effective_limit)
+        if config.max_created_per_unit is not None:
+            clamped = min(
+                clamped,
+                int(config.max_created_per_unit) - int(state.get("created", 0)),
+            )
+        if config.max_discovery_attempts_per_unit is not None and (
+            int(state.get("passes", 0))
+            >= int(config.max_discovery_attempts_per_unit)
+        ):
+            attempts_spent += 1
+        elif config.max_created_per_unit is not None and (
+            int(state.get("created", 0)) >= int(config.max_created_per_unit)
+        ):
+            capped += 1
+        elif state.get("exhausted") and clamped <= int(state.get("limit", 0)):
             exhausted += 1
         elif (
             config.policy == "pilot"
@@ -735,11 +817,19 @@ def _no_runnable_reason(
         else:  # pragma: no cover - unreachable when no unit is runnable
             exhausted += 1
     total = len(config.cells)
-    if exhausted == total and fulfilled == 0:
+    if exhausted == total and fulfilled == 0 and capped == 0 and attempts_spent == 0:
         return "all configured work units exhausted"
-    if fulfilled == total and exhausted == 0:
+    if fulfilled == total and exhausted == 0 and capped == 0 and attempts_spent == 0:
         return "all configured work units fulfilled"
-    return f"no runnable discovery units ({exhausted} exhausted, {fulfilled} fulfilled)"
+    if capped == total and exhausted == 0 and fulfilled == 0 and attempts_spent == 0:
+        return "all configured work units at creation cap"
+    if attempts_spent == total and exhausted == 0 and fulfilled == 0 and capped == 0:
+        return "all configured work units spent their discovery attempts"
+    return (
+        f"no runnable discovery units ({exhausted} exhausted, "
+        f"{fulfilled} fulfilled, {capped} at creation cap, "
+        f"{attempts_spent} attempts spent)"
+    )
 
 
 def _cell_order_timed(
@@ -782,6 +872,10 @@ def _config_bounds(config: RunnerConfig) -> dict[str, Any]:
         "max_evaluations_per_pass": config.max_evaluations_per_pass,
         "evaluation_attempt_limit": config.evaluation_attempt_limit,
         "evaluation_timeout_seconds": config.evaluation_timeout,
+        "max_created_per_unit": config.max_created_per_unit,
+        "max_discovery_attempts_per_unit": config.max_discovery_attempts_per_unit,
+        "max_census_requests": config.max_census_requests,
+        "census_attempt_limit": config.census_attempt_limit,
     }
 
 
@@ -810,6 +904,7 @@ def _merge_saved_checkpoint(
             }
     checkpoint["overpass_requests"] = int(saved.get("overpass_requests", 0))
     checkpoint["brave_requests"] = int(saved.get("brave_requests", 0))
+    checkpoint["census_requests"] = int(saved.get("census_requests", 0))
     saved_evals = saved.get("evaluations") or {}
     if isinstance(saved_evals, dict):
         checkpoint["evaluations"] = {
@@ -836,6 +931,7 @@ def _merge_saved_checkpoint(
             "seq": pending.get("seq", 0),
             "discovery_run_id": str(pending["discovery_run_id"]),
             "cell": str(pending.get("cell", "") or ""),
+            "unit": str(pending.get("unit", "") or ""),
         }
     return checkpoint
 
@@ -957,34 +1053,62 @@ def _backlog_depth(checkpoint: dict[str, Any]) -> int:
     )
 
 
-def _recover_pending_pass(
-    checkpoint: dict[str, Any],
-    *,
-    events_fn: Callable[[str], list[Any]] | None = None,
-) -> dict[str, Any]:
-    """Fold an interrupted pass's committed candidates into the backlog.
+def _unit_key_for_cell(checkpoint: dict[str, Any], cell_key: str) -> str:
+    """Derive the search-unit key for a cell key, when unambiguous.
 
-    Reads the exact discovery run's permanent decision events
-    (database reads only — no provider calls, no property creation)
-    and enqueues committed creations. Only ``created`` outcomes with
-    a COMMITTED mutation and a valid property UUID count; skips,
+    Rebuilds unit keys from the checkpoint's own stored cell
+    definitions (same county/category/bbox/source shape the
+    runner wrote). Returns "" when the cell key matches zero or
+    several configured units: callers then restore only totals
+    they can attribute exactly, never a guessed unit.
+    """
+    matches: list[str] = []
+    for entry in checkpoint.get("cells") or []:
+        if not isinstance(entry, dict):
+            continue
+        if f"{entry.get('county')}||{entry.get('category')}" != cell_key:
+            continue
+        bbox = entry.get("bbox") or []
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        try:
+            south, west, north, east = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        matches.append(
+            f"{entry.get('county')}||{entry.get('category')}||"
+            f"{south!r},{west!r},{north!r},{east!r}||{entry.get('source')}"
+        )
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _fold_pass_events(
+    checkpoint: dict[str, Any],
+    run_id: str,
+    cell_key: str,
+    unit_key: str,
+    *,
+    events_fn: Callable[[str], list[Any]],
+) -> dict[str, Any]:
+    """Fold one pass's committed creations plus its accounting.
+
+    Shared by crash recovery and the in-burst failure path: reads
+    the exact discovery run's permanent decision events (reads
+    only — no provider calls, no property creation), enqueues
+    committed creations, and restores the pass's total, per-cell,
+    and per-unit creation counts plus its pass sequence and
+    request accounting. Only ``created`` outcomes with a
+    COMMITTED mutation and a valid property UUID count; skips,
     summaries, and malformed rows are ignored, never adopted.
-    Raises DatabaseUnavailableError when the event store cannot be
-    read (the caller must abort rather than proceed blind).
+    Only newly enqueued ids restore creation counts, so a
+    re-fold after a crash during recovery cannot double-count.
+    An unresolvable unit restores totals but attributes no unit.
     """
     from app.agents.gabriel.service import (
         DECISION_EVENT_TYPE,
         MUTATION_COMMITTED,
     )
 
-    pending = checkpoint.get("pending_pass") or {}
-    run_id = str(pending.get("discovery_run_id", "") or "")
-    folded = checkpoint.get("discovery_runs") or []
-    if not run_id or run_id in folded:
-        checkpoint["pending_pass"] = None
-        return {"discovery_run_id": run_id, "enqueued": 0, "already_folded": True}
-    if events_fn is None:
-        from app.observability.store import by_run as events_fn
     created_ids: list[str] = []
     seen: set[str] = set()
     for event in events_fn(run_id) or []:
@@ -1009,10 +1133,84 @@ def _recover_pending_pass(
             continue
         seen.add(pid)
         created_ids.append(pid)
+    backlog = checkpoint.get("backlog") or []
+    if not isinstance(backlog, list):
+        backlog = []
+    evaluations = checkpoint.get("evaluations") or {}
+    terminal = set()
+    if isinstance(evaluations, dict):
+        terminal = {
+            str(pid)
+            for pid, outcome in evaluations.items()
+            if _is_terminal_outcome(outcome)
+        }
+    settled = {str(pid) for pid in backlog} | terminal
+    added = [pid for pid in created_ids if pid not in settled]
     _enqueue_backlog(checkpoint, created_ids, run_id)
+    checkpoint["created_total"] = int(checkpoint.get("created_total", 0)) + len(added)
+    checkpoint["passes"] = int(checkpoint.get("passes", 0)) + 1
+    checkpoint["overpass_requests"] = (
+        int(checkpoint.get("overpass_requests", 0)) + 1
+    )
+    per_cell = checkpoint.get("per_cell")
+    if isinstance(per_cell, dict) and cell_key in per_cell:
+        per_cell[cell_key] = int(per_cell[cell_key]) + len(added)
+    attributed = ""
+    if unit_key:
+        state = _unit_state(checkpoint, unit_key)
+        state["passes"] = int(state.get("passes", 0)) + 1
+        state["created"] = int(state.get("created", 0)) + len(added)
+        if added:
+            state["exhausted"] = False
+            state["reason"] = ""
+        attributed = unit_key
+    return {
+        "enqueued": len(created_ids),
+        "restored_created": len(added),
+        "restored_pass": True,
+        "restored_request": True,
+        "unit_key": attributed,
+    }
+
+
+def _recover_pending_pass(
+    checkpoint: dict[str, Any],
+    *,
+    events_fn: Callable[[str], list[Any]] | None = None,
+) -> dict[str, Any]:
+    """Fold an interrupted pass's committed candidates into the backlog.
+
+    Reads the exact discovery run's permanent decision events
+    (database reads only — no provider calls, no property creation)
+    and enqueues committed creations, restoring the pass's total,
+    per-cell, and per-unit creation counts plus its pass sequence
+    and request accounting. Only ``created`` outcomes with
+    a COMMITTED mutation and a valid property UUID count; skips,
+    summaries, and malformed rows are ignored, never adopted.
+    Raises DatabaseUnavailableError when the event store cannot be
+    read (the caller must abort rather than proceed blind).
+    """
+    pending = checkpoint.get("pending_pass") or {}
+    run_id = str(pending.get("discovery_run_id", "") or "")
+    folded = checkpoint.get("discovery_runs") or []
+    if not run_id or run_id in folded:
+        checkpoint["pending_pass"] = None
+        return {"discovery_run_id": run_id, "enqueued": 0, "already_folded": True}
+    if events_fn is None:
+        from app.observability.store import by_run as events_fn
+    cell_key = str(pending.get("cell", "") or "")
+    unit_key = str(pending.get("unit", "") or "")
+    if not unit_key:
+        unit_key = _unit_key_for_cell(checkpoint, cell_key)
+    folded_note = _fold_pass_events(
+        checkpoint, run_id, cell_key, unit_key, events_fn=events_fn
+    )
     checkpoint["pending_pass"] = None
-    return {"discovery_run_id": run_id, "enqueued": len(created_ids),
-            "already_folded": False}
+    return {
+        "discovery_run_id": run_id,
+        "already_folded": False,
+        **folded_note,
+    }
 
 
 def _enqueue_backlog(
@@ -1102,6 +1300,55 @@ def _brave_used_for(assignment_id: str, query: str) -> int:
         return 0
 
 
+def _census_used_for(assignment_id: str, query: str) -> int:
+    """Census attempts charged to one evaluation run (0 when absent).
+
+    Reads the run's durable usage counter, which the claim
+    commit reserves before transmission — replays, resumes, and
+    pre-claim refusals add nothing, and no crash can undercount
+    or double-count it. Zero when the database is unconfigured
+    (scripted doubles) or the run does not exist yet; real
+    outages propagate so the burst aborts loudly.
+    """
+    from app.db import DatabaseNotConfiguredError
+    from app.mvp import evaluation_key
+    from app.properties_db import get_connection
+    from app.workflow_db import get_run_by_key_in_transaction
+
+    try:
+        conn = get_connection()
+    except DatabaseNotConfiguredError:
+        return 0
+    try:
+        run = get_run_by_key_in_transaction(conn, evaluation_key(assignment_id, query))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if run is None:
+        return 0
+    try:
+        return max(0, int((run.usage or {}).get("census_attempts", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _census_allowed_for_eval(config: RunnerConfig, burst_spent: int) -> bool:
+    """Whether one more evaluation may attempt Census admission.
+
+    Pure gate over the configured envelope: Census transmits only
+    with an explicit burst budget that still has room and a
+    nonzero per-property limit. Past the budget, evaluations run
+    without county admission rather than transmitting.
+    """
+    return (
+        config.census_request_bound > 0
+        and int(burst_spent) < config.census_request_bound
+        and config.census_attempt_limit > 0
+    )
+
+
 def evaluate_property(
     scope: str,
     property_id: str,
@@ -1109,6 +1356,8 @@ def evaluate_property(
     approved: bool,
     timeout_seconds: float,
     brave_attempt_limit: int = 9,
+    census_attempt_limit: int = 0,
+    census_principal: str | None = None,
 ) -> dict[str, Any]:
     """Drive one discovered property through the existing coordinator.
 
@@ -1117,7 +1366,10 @@ def evaluate_property(
     acquisition through the coordinator's budget/ambiguity guards,
     dossier persistence, qualification, and Raphael review.
     ``brave_attempt_limit`` bounds Brave attempts for a newly created
-    run (a resumed run keeps its persisted limit). Outcomes:
+    run (a resumed run keeps its persisted limit).
+    ``census_attempt_limit`` (0..1, default disabled) allows at most
+    one Census county-admission request for the property; enabling
+    it requires ``census_principal`` attribution. Outcomes:
 
     - ``evaluated``: coordinator summary with decision + qualified count.
     - ``blocked``: coordinator refused (ambiguous prior attempt or
@@ -1126,9 +1378,11 @@ def evaluate_property(
       address, invalid identity); terminal.
     - ``error``: anything else went wrong; re-driven on resume.
 
-    Every post-coordinator outcome carries ``brave_attempts``: the
-    durable usage delta for this call (transmitted attempts count,
-    replays and refusals do not).
+    Every post-coordinator outcome carries ``brave_attempts`` and
+    ``census_attempts``: the durable usage deltas for this call.
+    Brave counts transmitted attempts; Census counts claimed
+    attempts (reserved at claim time, before transmission).
+    Replays and refusals add nothing to either.
 
     Database outages propagate so the burst aborts loudly.
     """
@@ -1150,20 +1404,31 @@ def evaluate_property(
     if query is None:
         return {"outcome": "skipped", "reason": "no usable address"}
     assignment_id = f"runner:{scope}:{pid}"
-    spent_before = _brave_used_for(assignment_id, query)
+    brave_before = _brave_used_for(assignment_id, query)
+    census_before = _census_used_for(assignment_id, query)
     try:
         summary = start_evaluation_audited(
             assignment_id, query,
             approved=True, timeout_seconds=timeout_seconds, property_id=pid,
             brave_attempt_limit=brave_attempt_limit,
+            census_attempt_limit=census_attempt_limit,
+            census_principal=census_principal,
         )
     except WorkflowError as exc:
-        spent = max(0, _brave_used_for(assignment_id, query) - spent_before)
+        spent = max(0, _brave_used_for(assignment_id, query) - brave_before)
+        census_spent = max(0, _census_used_for(assignment_id, query) - census_before)
         message = str(exc)
         if any(marker in message for marker in _NO_RETRY_MARKERS):
-            return {"outcome": "blocked", "reason": message, "brave_attempts": spent}
-        return {"outcome": "error", "reason": message, "brave_attempts": spent}
-    spent = max(0, _brave_used_for(assignment_id, query) - spent_before)
+            return {
+                "outcome": "blocked", "reason": message,
+                "brave_attempts": spent, "census_attempts": census_spent,
+            }
+        return {
+            "outcome": "error", "reason": message,
+            "brave_attempts": spent, "census_attempts": census_spent,
+        }
+    spent = max(0, _brave_used_for(assignment_id, query) - brave_before)
+    census_spent = max(0, _census_used_for(assignment_id, query) - census_before)
     qualification = summary.get("qualification") or {}
     dossiers = len(qualification) if isinstance(qualification, dict) else 0
     qualified = (
@@ -1171,6 +1436,7 @@ def evaluate_property(
         if isinstance(qualification, dict)
         else 0
     )
+    census_block = summary.get("census") or {}
     return {
         "outcome": "evaluated",
         "run_id": str(summary.get("run_id", "")),
@@ -1178,6 +1444,8 @@ def evaluate_property(
         "dossiers": dossiers,
         "qualified": qualified,
         "brave_attempts": spent,
+        "census_attempts": census_spent,
+        "census": str(census_block.get("outcome", "") or "skipped"),
     }
 
 
@@ -1206,10 +1474,10 @@ def _drive_evaluations(
     refuses an ambiguous attempt — never blindly re-running a
     possibly-charged call. ``preempt_fn`` is consulted between
     evaluations; a non-empty return stops the drive with that
-    reason recorded. Brave spend accrues monotonically per outcome
-    (retried pids re-add, never overwrite past spend). Returns
-    (evaluated, qualified) or None on database outage (backlog
-    intact for the finish-path re-save).
+    reason recorded. Brave and Census spend accrue monotonically
+    per outcome (retried pids re-add, never overwrite past
+    spend). Returns (evaluated, qualified) or None on database
+    outage (backlog intact for the finish-path re-save).
     """
     backlog = checkpoint.setdefault("backlog", [])
     if not isinstance(backlog, list):
@@ -1246,6 +1514,13 @@ def _drive_evaluations(
         except (TypeError, ValueError):
             spent = 0
         checkpoint["brave_requests"] = int(checkpoint.get("brave_requests", 0)) + max(0, spent)
+        try:
+            census_spent = int(outcome.get("census_attempts", 0) or 0)
+        except (TypeError, ValueError):
+            census_spent = 0
+        checkpoint["census_requests"] = (
+            int(checkpoint.get("census_requests", 0)) + max(0, census_spent)
+        )
         if outcome.get("outcome") in TERMINAL_EVAL_OUTCOMES:
             try:
                 backlog.remove(pid)
@@ -1271,6 +1546,7 @@ def run_worker(
     clock_fn: Callable[[], float] | None = None,
     now_fn: Callable[[], datetime] | None = None,
     evaluate_fn: Callable[[str, str], dict[str, Any]] | None = None,
+    events_fn: Callable[[str], list[Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded worker burst, checkpointing every pass.
 
@@ -1299,16 +1575,26 @@ def run_worker(
     and a pass interrupted between discovery's commit and the
     checkpoint save is recovered exactly from its permanent
     decision events (see :func:`_recover_pending_pass`).
-    Discovery limits (creation ceiling, pilot quota) stop new
-    discovery only: a pending backlog keeps draining in bounded
-    rounds under the same duration/stop/evaluation limits.
-    Reported ``created`` counts property records; only coordinator
-    ``qualified`` outcomes count toward dossier qualification —
-    the two are never substituted.
+    A discovery call that raises folds its partial committed
+    creations through the same accounting (see
+    :func:`_fold_pass_events`) and consumes its sequence, so the
+    next pass never reuses the failed run id. Discovery limits
+    (creation ceiling, pilot quota) stop new discovery only: a
+    pending backlog keeps draining in bounded rounds under the
+    same duration/stop/evaluation limits. Reported ``created``
+    counts property records; only coordinator ``qualified``
+    outcomes count toward dossier qualification — the two are
+    never substituted.
     """
     config.validate()
     sleep = sleep_fn or time.sleep
     clock = clock_fn or time.monotonic
+    if events_fn is None:
+        from app.observability.store import by_run as _default_events_fn
+
+        _pass_events_fn = _default_events_fn
+    else:
+        _pass_events_fn = events_fn
     bounds = burst_request_bounds(config)
     if discovery_fn is None:
         from app.agents.gabriel.schemas import BoundingBoxInput, DiscoveryRunRequest
@@ -1368,10 +1654,19 @@ def run_worker(
             attempt_limit = config.evaluation_attempt_limit
 
             def _default_evaluate(scope: str, pid: str) -> dict[str, Any]:
+                burst_spent = int(checkpoint.get("census_requests", 0)) - census_baseline
+                if _census_allowed_for_eval(config, burst_spent):
+                    census_limit = config.census_attempt_limit
+                else:
+                    census_limit = 0
+                    if config.census_request_bound > 0:
+                        report["census_preempted"] = "census request bound reached"
                 return evaluate_property(
                     scope, pid, approved=approved,
                     timeout_seconds=timeout,
                     brave_attempt_limit=attempt_limit,
+                    census_attempt_limit=census_limit,
+                    census_principal=f"runner:{scope}",
                 )
 
             evaluate_fn = _default_evaluate
@@ -1389,6 +1684,8 @@ def run_worker(
         "request_bounds": dict(bounds),
         "overpass_requests": 0,
         "brave_requests": 0,
+        "census_requests": 0,
+        "census_preempted": None,
         "cells": [],
         "credited_new": 0,
         "remaining_quota": None,
@@ -1463,6 +1760,7 @@ def run_worker(
     burst_qualified = 0
     overpass_baseline = int(checkpoint.get("overpass_requests", 0))
     brave_baseline = int(checkpoint.get("brave_requests", 0))
+    census_baseline = int(checkpoint.get("census_requests", 0))
     counts_before: dict[tuple[str, str], int] | None = None
     counts_last: dict[tuple[str, str], int] | None = None
     evaluations_halted: str | None = None
@@ -1491,6 +1789,9 @@ def run_worker(
             ),
             "brave_requests": (
                 int(checkpoint.get("brave_requests", 0)) - brave_baseline
+            ),
+            "census_requests": (
+                int(checkpoint.get("census_requests", 0)) - census_baseline
             ),
         }
 
@@ -1568,6 +1869,22 @@ def run_worker(
             for key, state in (checkpoint.get("cell_state") or {}).items()
             if isinstance(state, dict) and state.get("exhausted")
         )
+        report["units"] = [
+            {
+                "unit_key": cell.unit_key,
+                "cell": cell.key,
+                "county": cell.county,
+                "category": cell.category,
+                "attempts": int(state.get("passes", 0)),
+                "created": int(state.get("created", 0)),
+                "exhausted": bool(state.get("exhausted", False)),
+                "reason": str(state.get("reason", "") or ""),
+            }
+            for cell in config.cells
+            for state in [
+                (checkpoint.get("cell_state") or {}).get(cell.unit_key) or {}
+            ]
+        ]
 
     def _tally() -> None:
         report["passes"] = burst_passes
@@ -1579,6 +1896,9 @@ def run_worker(
         )
         report["brave_requests"] = (
             int(checkpoint.get("brave_requests", 0)) - brave_baseline
+        )
+        report["census_requests"] = (
+            int(checkpoint.get("census_requests", 0)) - census_baseline
         )
         _tally_cells()
         _tally_outcomes()
@@ -1701,7 +2021,9 @@ def run_worker(
         # Crash recovery: fold the interrupted pass's committed
         # candidates (exact run-id match; event-store reads only).
         try:
-            recovered = _recover_pending_pass(checkpoint)
+            recovered = _recover_pending_pass(
+                checkpoint, events_fn=_pass_events_fn
+            )
         except (DatabaseUnavailableError, DatabaseNotConfiguredError):
             return _finish("aborted", "pending-pass recovery unavailable")
         report["recovered_pending_pass"] = recovered
@@ -1763,14 +2085,29 @@ def run_worker(
         remaining = config.max_created_total - int(checkpoint["created_total"])
         effective_limit = min(config.pass_limit, max(remaining, 1))
         cell = None
+        selected_effective = effective_limit
         for step in range(len(ordered)):
             candidate = ordered[(int(checkpoint["cursor"]) + step) % len(ordered)]
             state = _unit_state(checkpoint, candidate.unit_key)
+            if config.max_created_per_unit is not None:
+                unit_remaining = int(config.max_created_per_unit) - int(
+                    state.get("created", 0)
+                )
+                if unit_remaining <= 0:
+                    continue
+                unit_effective = min(effective_limit, unit_remaining)
+            else:
+                unit_effective = effective_limit
             if _unit_runnable(
                 candidate, state, counts=counts,
-                policy=config.policy, effective_limit=effective_limit,
+                policy=config.policy, effective_limit=unit_effective,
+                max_created_per_unit=config.max_created_per_unit,
+                max_discovery_attempts_per_unit=(
+                    config.max_discovery_attempts_per_unit
+                ),
             ):
                 cell = candidate
+                selected_effective = unit_effective
                 checkpoint["cursor"] = int(checkpoint["cursor"]) + step + 1
                 break
         if cell is None:
@@ -1783,20 +2120,39 @@ def run_worker(
             "seq": checkpoint["passes"],
             "discovery_run_id": pending_id,
             "cell": cell.key,
+            "unit": cell.unit_key,
         }
         if not _persist_checkpoint():
             return report
         try:
-            result = discovery_fn(cell, pending_id, effective_limit)
+            result = discovery_fn(cell, pending_id, selected_effective)
             created = int(getattr(result.counts, "created", 0))
         except Exception as exc:
             # Attempts count even when they fail: a transmitted
             # request was spent. Pure pre-transmit validation
             # failures are fail-fast at burst start, so anything
             # reaching here conservatively counts as one request.
-            checkpoint["overpass_requests"] = (
-                int(checkpoint.get("overpass_requests", 0)) + 1
-            )
+            # Partial committed creations fold exactly like crash
+            # recovery (same helper, same accounting): the attempt
+            # records against the unit and the sequence is consumed
+            # so the next pass never reuses this run id.
+            try:
+                _fold_pass_events(
+                    checkpoint, pending_id, cell.key, cell.unit_key,
+                    events_fn=_pass_events_fn,
+                )
+            except DatabaseNotConfiguredError:
+                # No database: nothing could have committed, but
+                # the attempt itself still counts.
+                checkpoint["overpass_requests"] = (
+                    int(checkpoint.get("overpass_requests", 0)) + 1
+                )
+                checkpoint["passes"] = int(checkpoint.get("passes", 0)) + 1
+                failed_state = _unit_state(checkpoint, cell.unit_key)
+                failed_state["passes"] = int(failed_state.get("passes", 0)) + 1
+            except DatabaseUnavailableError:
+                return _finish("aborted", "failed-pass event fold unavailable")
+            checkpoint["pending_pass"] = None
             consecutive_failures += 1
             if _is_auth_error(exc) or type(exc).__name__ in (
                 "DatabaseNotConfiguredError",
@@ -1822,7 +2178,7 @@ def run_worker(
         checkpoint["passes"] = int(checkpoint["passes"]) + 1
         checkpoint["created_total"] = int(checkpoint["created_total"]) + created
         checkpoint["per_cell"][cell.key] = int(checkpoint["per_cell"][cell.key]) + created
-        _record_unit_progress(checkpoint, cell.unit_key, result, effective_limit)
+        _record_unit_progress(checkpoint, cell.unit_key, result, selected_effective)
         try:
             pass_ids = [str(i) for i in (getattr(result, "created_ids", None) or [])]
         except TypeError:
@@ -1876,19 +2232,173 @@ def _cells_from_json(path: str) -> list[RunnerCell]:
     return cells
 
 
+_ENVELOPE_KEYS = frozenset({
+    "envelope",
+    "description",
+    "policy",
+    "units",
+    "max_passes",
+    "max_duration_seconds",
+    "max_created_total",
+    "max_created_per_unit",
+    "max_discovery_attempts_per_unit",
+    "pass_limit",
+    "pass_timeout_seconds",
+    "max_evaluations_per_pass",
+    "evaluation_attempt_limit",
+    "evaluation_timeout_seconds",
+    "max_overpass_requests",
+    "max_census_requests",
+    "census_attempt_limit",
+    "max_consecutive_failures",
+    "pacing_seconds",
+    "backoff_cap_seconds",
+    "claim_lease_seconds",
+    "meta_calls",
+    "outreach",
+})
+
+
+def envelope_config_from_json(
+    path: str,
+    *,
+    scope: str,
+    resume: bool = False,
+    created_by: str = "envelope",
+    acquire_approved: bool = False,
+) -> RunnerConfig:
+    """Build one complete burst config from an envelope file (strict).
+
+    The envelope pins every bound preview and execution share;
+    only operational identity (scope/created-by), resume, and the
+    acquisition grant ride the command line. Unknown keys,
+    missing units, non-numeric bounds, nonzero Meta calls, or
+    anything but ``"disabled"`` outreach refuse loudly: preview
+    and execution load through this same function, so the shown
+    envelope is the enforced envelope.
+    """
+    with open(path, encoding="utf-8") as handle:
+        raw = json.load(handle)
+    if not isinstance(raw, dict):
+        raise RunnerError("envelope file must hold one JSON object")
+    for key in raw:
+        if key not in _ENVELOPE_KEYS:
+            raise RunnerError(f"unknown envelope key: {key!r}")
+    units = raw.get("units")
+    if not isinstance(units, list) or not units:
+        raise RunnerError("envelope units must be a non-empty list")
+    cells = []
+    for item in units:
+        if not isinstance(item, dict):
+            raise RunnerError("each envelope unit must be an object")
+        bbox = item.get("bbox")
+        if (
+            not isinstance(bbox, list)
+            or len(bbox) != 4
+            or not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in bbox
+            )
+        ):
+            raise RunnerError("each envelope unit needs bbox [south, west, north, east]")
+        cells.append(
+            RunnerCell(
+                county=str(item.get("county", "")),
+                category=str(item.get("category", "")),
+                bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+                source=str(item.get("source", "overpass") or "overpass"),
+            )
+        )
+
+    def _int(name: str, default: int | None) -> int | None:
+        value = raw.get(name, default)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RunnerError(f"envelope {name} must be numeric")
+        if float(value) != int(value):
+            raise RunnerError(f"envelope {name} must be an integer")
+        return int(value)
+
+    def _float(name: str, default: float | None) -> float | None:
+        value = raw.get(name, default)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RunnerError(f"envelope {name} must be numeric")
+        return float(value)
+
+    if raw.get("meta_calls", 0) != 0:
+        raise RunnerError("envelope meta_calls must be 0 (no Meta execution)")
+    if raw.get("outreach", "disabled") != "disabled":
+        raise RunnerError('envelope outreach must be "disabled"')
+
+    def _req(value: int | float | None, default: int | float) -> Any:
+        # Explicit null falls back to the default; explicit zero
+        # passes through to RunnerConfig.validate, which accepts
+        # or rejects it per field (never silently replaced).
+        return default if value is None else value
+
+    config = RunnerConfig(
+        scope=scope,
+        policy=str(raw.get("policy", "pilot") or "pilot"),
+        cells=cells,
+        max_passes=_req(_int("max_passes", 1), 1),
+        max_duration_seconds=_req(_float("max_duration_seconds", 600.0), 600.0
+        ),
+        max_created_total=_req(_int("max_created_total", 50), 50
+        ),
+        pass_limit=_req(_int("pass_limit", 10), 10),
+        pass_timeout_seconds=_req(_float("pass_timeout_seconds", 15.0), 15.0
+        ),
+        pacing_seconds=_req(_float("pacing_seconds", DEFAULT_PACING_SECONDS),
+            DEFAULT_PACING_SECONDS,
+        ),
+        backoff_cap_seconds=_req(_float("backoff_cap_seconds", DEFAULT_BACKOFF_CAP_SECONDS),
+            DEFAULT_BACKOFF_CAP_SECONDS,
+        ),
+        max_consecutive_failures=_req(_int("max_consecutive_failures", 3), 3
+        ),
+        claim_lease_seconds=_req(_float("claim_lease_seconds", DEFAULT_CLAIM_LEASE_SECONDS),
+            DEFAULT_CLAIM_LEASE_SECONDS,
+        ),
+        resume=resume,
+        created_by=created_by,
+        acquire_approved=acquire_approved,
+        max_evaluations_per_pass=_req(_int("max_evaluations_per_pass", 5), 5
+        ),
+        evaluation_attempt_limit=_req(_int("evaluation_attempt_limit", 9), 9
+        ),
+        evaluation_timeout_seconds=_float("evaluation_timeout_seconds", None),
+        max_overpass_requests=_int("max_overpass_requests", None),
+        max_created_per_unit=_int("max_created_per_unit", None),
+        max_discovery_attempts_per_unit=_int(
+            "max_discovery_attempts_per_unit", None
+        ),
+        max_census_requests=_int("max_census_requests", None),
+        census_attempt_limit=_req(_int("census_attempt_limit", 1), 1
+        ),
+    )
+    config.validate()
+    return config
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI: run|status|stop. ``run`` executes one bounded burst only."""
+    """CLI: run|status|stop|preview. ``run`` executes one bounded burst only."""
     import sys
 
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in ("run", "status", "stop"):
+    if not args or args[0] not in ("run", "status", "stop", "preview"):
         print(
-            "usage: python -m app.discovery_runner run|status|stop "
+            "usage: python -m app.discovery_runner run|status|stop|preview "
             "--scope SCOPE [--policy pilot|timed] [--cells FILE] "
             "[--max-passes N] [--max-duration SECONDS] [--max-created N] "
             "[--resume] [--created-by LABEL] [--acquire-approved] "
             "[--max-evaluations N] [--evaluation-attempt-limit 1..18] "
-            "[--evaluation-timeout SECONDS] [--max-overpass-requests N]",
+            "[--evaluation-timeout SECONDS] [--max-overpass-requests N] "
+            "[--max-created-per-unit N] [--max-discovery-attempts-per-unit N] "
+            "[--max-census-requests N] [--envelope FILE] "
+            "[--census-attempt-limit 0..1]",
             file=sys.stderr,
         )
         return 1
@@ -1934,29 +2444,103 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"scope": scope, "stop_requested": stopped}))
             return 0
         cells_path = _opt("--cells") or ""
-        if not scope or not cells_path:
-            raise RunnerError("--scope and --cells are required for run")
-        raw_eval_timeout = _opt("--evaluation-timeout")
-        raw_overpass = _opt("--max-overpass-requests")
-        config = RunnerConfig(
-            scope=scope,
-            policy=_opt("--policy", "pilot") or "pilot",
-            cells=_cells_from_json(cells_path),
-            max_passes=int(_opt("--max-passes", "1") or "1"),
-            max_duration_seconds=float(_opt("--max-duration", "600") or "600"),
-            max_created_total=int(_opt("--max-created", "50") or "50"),
-            resume="--resume" in opts,
-            created_by=_opt("--created-by", "cli") or "cli",
-            acquire_approved="--acquire-approved" in opts,
-            max_evaluations_per_pass=int(_opt("--max-evaluations", "5") or "5"),
-            evaluation_attempt_limit=int(_opt("--evaluation-attempt-limit", "9") or "9"),
-            evaluation_timeout_seconds=(
-                float(raw_eval_timeout) if raw_eval_timeout is not None else None
-            ),
-            max_overpass_requests=(
-                int(raw_overpass) if raw_overpass is not None else None
-            ),
-        )
+        envelope_path = _opt("--envelope") or ""
+        if envelope_path:
+            for flag in (
+                "--cells", "--policy", "--max-passes", "--max-duration",
+                "--max-created", "--max-evaluations",
+                "--evaluation-attempt-limit", "--evaluation-timeout",
+                "--max-overpass-requests", "--max-created-per-unit",
+                "--max-discovery-attempts-per-unit", "--max-census-requests",
+                "--census-attempt-limit",
+            ):
+                if flag in opts:
+                    raise RunnerError(
+                        f"{flag} cannot be combined with --envelope "
+                        "(the envelope pins every bound)"
+                    )
+            if not scope:
+                raise RunnerError(
+                    f"--scope and --envelope are required for {command}"
+                )
+            config = envelope_config_from_json(
+                envelope_path,
+                scope=scope,
+                resume="--resume" in opts,
+                created_by=_opt("--created-by", "cli") or "cli",
+                acquire_approved="--acquire-approved" in opts,
+            )
+        else:
+            if not scope or not cells_path:
+                raise RunnerError(
+                    f"--scope and --cells are required for {command}"
+                )
+            raw_eval_timeout = _opt("--evaluation-timeout")
+            raw_overpass = _opt("--max-overpass-requests")
+            raw_per_unit = _opt("--max-created-per-unit")
+            raw_attempts = _opt("--max-discovery-attempts-per-unit")
+            raw_census = _opt("--max-census-requests")
+            config = RunnerConfig(
+                scope=scope,
+                policy=_opt("--policy", "pilot") or "pilot",
+                cells=_cells_from_json(cells_path),
+                max_passes=int(_opt("--max-passes", "1") or "1"),
+                max_duration_seconds=float(_opt("--max-duration", "600") or "600"),
+                max_created_total=int(_opt("--max-created", "50") or "50"),
+                resume="--resume" in opts,
+                created_by=_opt("--created-by", "cli") or "cli",
+                acquire_approved="--acquire-approved" in opts,
+                max_evaluations_per_pass=int(_opt("--max-evaluations", "5") or "5"),
+                evaluation_attempt_limit=int(_opt("--evaluation-attempt-limit", "9") or "9"),
+                evaluation_timeout_seconds=(
+                    float(raw_eval_timeout) if raw_eval_timeout is not None else None
+                ),
+                max_overpass_requests=(
+                    int(raw_overpass) if raw_overpass is not None else None
+                ),
+                max_created_per_unit=(
+                    int(raw_per_unit) if raw_per_unit is not None else None
+                ),
+                max_discovery_attempts_per_unit=(
+                    int(raw_attempts) if raw_attempts is not None else None
+                ),
+                max_census_requests=(
+                    int(raw_census) if raw_census is not None else None
+                ),
+                census_attempt_limit=int(_opt("--census-attempt-limit", "1") or "1"),
+            )
+            config.validate()
+        if command == "preview":
+            print(json.dumps({
+                "scope": config.scope,
+                "policy": config.policy,
+                "units": [
+                    {
+                        "county": cell.county,
+                        "category": cell.category,
+                        "bbox": list(cell.bbox),
+                        "source": cell.source,
+                    }
+                    for cell in config.cells
+                ],
+                "request_bounds": burst_request_bounds(config),
+                "max_created_total": config.max_created_total,
+                "max_created_per_unit": config.max_created_per_unit,
+                "max_discovery_attempts_per_unit": (
+                    config.max_discovery_attempts_per_unit
+                ),
+                "max_evaluations_per_pass": config.max_evaluations_per_pass,
+                "evaluation_attempt_limit": config.evaluation_attempt_limit,
+                "census_attempt_limit": config.census_attempt_limit,
+                "pass_timeout_seconds": config.pass_timeout_seconds,
+                "evaluation_timeout_seconds": config.evaluation_timeout,
+                "meta_calls": 0,
+                "outreach": "disabled",
+                "acquire_approved": config.acquire_approved,
+                "max_passes": config.max_passes,
+                "max_duration_seconds": config.max_duration_seconds,
+            }, default=str))
+            return 0
         report = run_worker(_connect, config)
         print(json.dumps(report, default=str))
         return 0 if report.get("outcome") in ("completed", "paused", "busy") else 1

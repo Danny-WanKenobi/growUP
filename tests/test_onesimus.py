@@ -256,7 +256,14 @@ def test_run_scenario_records_engineering_and_financial_stages() -> None:
     current = _record_row(
         "dossier_version", "main",
         {"property_id": str(uuid4()), "dossier": {
-            "county_attribution": {"evidence_status": "verified", "value": "Dallas County"},
+            "county_attribution": {
+                "evidence_status": "verified", "value": "dallas county",
+                "claims": [{
+                    "original": "Dallas County", "normalized": "dallas county",
+                    "source_url": "https://geocoding.geo.census.gov/geocoder/geographies/address",
+                    "authority": "census_geocoder",
+                }],
+            },
             "category_attribution": {"status": "observed", "observed": "high_rise"},
         }},
         "D",

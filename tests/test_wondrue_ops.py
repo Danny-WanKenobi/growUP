@@ -418,7 +418,8 @@ def test_start_discovery_acquire_ask_preview_then_execute(
     assert preview["outcome"] == "preview"
     assert preview["preview"]["inputs"]["acquire"] is True
     assert preview["preview"]["cost_bounds"] == {
-        "overpass_requests": "<= 2", "brave_attempts": "<= 54", "meta_calls": 0
+        "overpass_requests": "<= 2", "brave_attempts": "<= 54",
+        "census_requests": 0, "meta_calls": 0,
     }
     assert "acquisition" in preview["preview"]["effects"]
     assert captured == {}  # preview performs no work
@@ -430,6 +431,70 @@ def test_start_discovery_acquire_ask_preview_then_execute(
     assert executed["data"]["burst"]["outcome"] == "completed"
     assert captured["config"].acquire_approved is True
     assert captured["config"].max_evaluations_per_pass == 3
+
+
+def test_start_discovery_census_envelope_preview_then_execute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _burst(get_conn: Any, config: Any) -> dict[str, Any]:
+        captured["config"] = config
+        return {"outcome": "completed", "passes": 1}
+
+    monkeypatch.setattr(runner_module, "run_worker", _burst)
+    override = _override(
+        "start_discovery",
+        {"scope": "pilot", "cells": _cells_arg(), "acquire": True,
+         "max_census_requests": 6, "census_attempt_limit": 1,
+         "max_created_per_unit": 2, "max_discovery_attempts_per_unit": 1},
+    )
+    preview = handle_command(
+        mode="ask", max_mode="full", text="", target="real",
+        intent_override=override, conn=_CONN,
+    )
+    assert preview["preview"]["cost_bounds"]["census_requests"] == "<= 6"
+    assert "Census county-admission" in preview["preview"]["effects"]
+    assert preview["preview"]["inputs"]["max_created_per_unit"] == 2
+    assert preview["preview"]["inputs"]["max_discovery_attempts_per_unit"] == 1
+    executed = handle_command(
+        mode="ask", max_mode="full", text="", target="real",
+        approval_token=preview["approval_token"],
+        intent_override=override, conn=_CONN,
+    )
+    assert executed["data"]["burst"]["outcome"] == "completed"
+    assert captured["config"].max_census_requests == 6
+    assert captured["config"].census_attempt_limit == 1
+    assert captured["config"].max_created_per_unit == 2
+    assert captured["config"].max_discovery_attempts_per_unit == 1
+
+
+def test_start_discovery_envelope_bounds_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.wondrue import WondrueError
+
+    def _boom(get_conn: Any, config: Any) -> dict[str, Any]:
+        raise AssertionError("invalid burst must not execute")
+
+    monkeypatch.setattr(runner_module, "run_worker", _boom)
+    for extra, match in (
+        ({"max_census_requests": 26}, "max_census_requests"),
+        ({"max_census_requests": 0}, "max_census_requests"),
+        ({"max_created_per_unit": 0}, "max_created_per_unit"),
+        ({"max_discovery_attempts_per_unit": 0}, "max_discovery_attempts_per_unit"),
+        ({"census_attempt_limit": 2}, "census_attempt_limit"),
+        ({"census_attempt_limit": -1}, "census_attempt_limit"),
+    ):
+        with pytest.raises(WondrueError, match=match):
+            handle_command(
+                mode="full", max_mode="full", text="", target="real",
+                intent_override=_override(
+                    "start_discovery",
+                    {"scope": "pilot", "cells": _cells_arg(), **extra},
+                ),
+                conn=_CONN,
+            )
 
 
 def test_start_discovery_acquire_refused_without_operator_grant(

@@ -246,9 +246,16 @@ def qualify_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
     county = dossier.get("county_attribution") or {}
     verified_county = ""
     if str(county.get("evidence_status", "")).lower() == "verified":
+        from app.agents.gabriel.sources.census import has_collector_county_claim
+
         value = str(county.get("value", "") or "")
         claims = county.get("claims") or []
-        if value and claims and normalize_county_claim(value) is not None:
+        if (
+            value
+            and claims
+            and normalize_county_claim(value) is not None
+            and has_collector_county_claim(county)
+        ):
             verified_county = value
     return {
         "outcome": "qualified",

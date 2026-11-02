@@ -52,6 +52,10 @@ from app.priscilla import run_simulation_in_transaction
 from app.uriel import prepare_package_in_transaction
 from app.workflow import (
     DEMO_ID_PREFIX,
+    KIND_CENSUS_CLAIM,
+    KIND_CENSUS_COLLECTION,
+    KIND_CENSUS_COUNTY,
+    KIND_CENSUS_REFUSAL,
     KIND_CUSTODY_LINK,
     KIND_DCAD_ASSESSMENT,
     KIND_DCAD_CLAIM,
@@ -66,7 +70,9 @@ from app.workflow import (
 )
 from app.workflow_db import (
     WorkflowError,
+    add_usage_in_transaction,
     advance_stage_in_transaction,
+    append_error_in_transaction,
     get_record_in_transaction,
     get_run_in_transaction,
     list_records_in_transaction,
@@ -178,6 +184,213 @@ def associate_dossiers_with_property(
     return {supporters[0]: target_id}, None
 
 
+def _apply_census_in_stage(
+    conn: Any,
+    run_id: UUID,
+    dossier_set: Any,
+    association: dict[str, str],
+    target: str,
+    census: dict[str, Any],
+) -> None:
+    """Apply retained Census county evidence to the associated dossier.
+
+    Reads only (no transmit): loads the bound admission run's
+    collection and county records, verifies integrity and
+    digest/binding matches, and applies the admitted county to
+    the one dossier associated with the targeted property. A
+    successful application also persists the Census evidence
+    locator (admission run, record keys, digests) on the
+    dossier; without a valid locator the attribution is
+    restored to its prior state. A refused application
+    (conflicts, changed address, binding mismatch) is recorded
+    as a run error entry and the dossier stays
+    county-unresolved; tampered rows raise loudly like every
+    other stored record. Never aborts the evaluation for
+    a data-level refusal.
+    """
+    from uuid import UUID as _UUID
+
+    from app.agents.gabriel.attribution import CountyAttribution
+    from app.agents.gabriel.sources import census as census_module
+    from app.properties_db import get_property
+
+    try:
+        admission_run = _UUID(str(census.get("collection_run_id", "") or ""))
+    except (ValueError, AttributeError, TypeError):
+        append_error_in_transaction(
+            conn, run_id,
+            {"census_county": "not_applied", "reason": "admission run id is invalid"},
+        )
+        return
+    collection_record = None
+    county_record = None
+    for record in list_records_in_transaction(
+        conn, admission_run, KIND_CENSUS_COLLECTION
+    ):
+        collection_record = record
+        break
+    for record in list_records_in_transaction(conn, admission_run, KIND_CENSUS_COUNTY):
+        county_record = record
+        break
+    if collection_record is None or county_record is None:
+        append_error_in_transaction(
+            conn, run_id,
+            {
+                "census_county": "not_applied",
+                "reason": "admission run carries no collection/county pair",
+            },
+        )
+        return
+    _require_record_integrity(collection_record, "Census collection")
+    _require_record_integrity(county_record, "Census county result")
+    if str(collection_record.digest or "") != str(
+        census.get("collection_digest", "") or ""
+    ) or str(county_record.digest or "") != str(census.get("county_digest", "") or ""):
+        append_error_in_transaction(
+            conn, run_id,
+            {
+                "census_county": "not_applied",
+                "reason": "admission digests do not match the evaluation bindings",
+            },
+        )
+        return
+    try:
+        target_uuid = _UUID(target)
+    except (ValueError, AttributeError, TypeError):
+        append_error_in_transaction(
+            conn, run_id,
+            {"census_county": "not_applied", "reason": "target is not an identity"},
+        )
+        return
+    target_row = get_property(target_uuid)
+    if target_row is None:
+        append_error_in_transaction(
+            conn, run_id,
+            {"census_county": "not_applied", "reason": "target property row missing"},
+        )
+        return
+    current_address = {
+        "street": str(target_row.get("street_address", "") or ""),
+        "city": str(target_row.get("city", "") or ""),
+        "state": str(target_row.get("state", "") or ""),
+        "zip": str(target_row.get("zip_code", "") or ""),
+    }
+    county_payload = dict(county_record.payload or {})
+    for dossier in getattr(dossier_set, "dossiers", []) or []:
+        if association.get(getattr(dossier, "key", ""), "") != target:
+            continue
+        outcome = census_module.apply_county_to_dossier(
+            dossier.model_dump(mode="json"),
+            county_payload,
+            collection_digest=str(collection_record.digest or ""),
+            property_id=target,
+            current_address=current_address,
+        )
+        if outcome.get("applied"):
+            prior_attribution = dossier.county_attribution
+            dossier.county_attribution = CountyAttribution.model_validate(
+                outcome["county_attribution"]
+            )
+            try:
+                dossier.census_evidence = census_module.census_evidence_refs(
+                    admission_run_id=str(admission_run),
+                    collection_record_key=str(collection_record.record_key or ""),
+                    county_record_key=str(county_record.record_key or ""),
+                    collection_digest=str(collection_record.digest or ""),
+                    county_digest=str(county_record.digest or ""),
+                    county_result=county_payload,
+                )
+            except census_module.CensusError as exc:
+                # No verified attribution without its locator: restore
+                # the prior attribution and record the refusal.
+                dossier.county_attribution = prior_attribution
+                dossier.census_evidence = None
+                append_error_in_transaction(
+                    conn, run_id,
+                    {
+                        "census_county": "not_applied",
+                        "dossier_key": str(getattr(dossier, "key", "") or ""),
+                        "reason": f"census evidence locator refused: {exc}",
+                    },
+                )
+        else:
+            append_error_in_transaction(
+                conn, run_id,
+                {
+                    "census_county": "not_applied",
+                    "dossier_key": str(getattr(dossier, "key", "") or ""),
+                    "reason": str(outcome.get("reason", "") or ""),
+                },
+            )
+
+
+def load_census_evidence_for_dossier(
+    conn: Any, dossier: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Load and verify a dossier's referenced Census evidence (read-only).
+
+    Follows only the dossier's persisted ``census_evidence``
+    locator (admission run id, record keys, digests) — never URL
+    text — then verifies stored-row integrity, digest equality,
+    collector revisions, and the collection/county cross-binding.
+    Raises WorkflowError when the locator is absent, malformed,
+    or disagrees with the stored rows.
+    """
+    from app.agents.gabriel.sources import census as census_module
+
+    refs = (dossier or {}).get("census_evidence") or {}
+    if not isinstance(refs, dict):
+        raise WorkflowError("dossier carries no census evidence locator")
+    try:
+        admission_run = UUID(str(refs.get("admission_run_id", "") or ""))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise WorkflowError("census evidence locator has no admission run") from exc
+    collection_key = str(refs.get("collection_record_key", "") or "")
+    county_key = str(refs.get("county_record_key", "") or "")
+    if not collection_key or not county_key:
+        raise WorkflowError("census evidence locator has no record keys")
+    collection_record = get_record_in_transaction(
+        conn, admission_run, KIND_CENSUS_COLLECTION, collection_key
+    )
+    county_record = get_record_in_transaction(
+        conn, admission_run, KIND_CENSUS_COUNTY, county_key
+    )
+    if collection_record is None or county_record is None:
+        raise WorkflowError("census evidence rows are missing for this dossier")
+    _require_record_integrity(collection_record, "Census collection")
+    _require_record_integrity(county_record, "Census county result")
+    if str(collection_record.digest or "") != str(
+        refs.get("collection_digest", "") or ""
+    ):
+        raise WorkflowError("census collection digest does not match the locator")
+    if str(county_record.digest or "") != str(refs.get("county_digest", "") or ""):
+        raise WorkflowError("census county digest does not match the locator")
+    county_payload = dict(county_record.payload or {})
+    if (
+        str(county_payload.get("collection_provenance", "") or "")
+        != census_module.CENSUS_PROVENANCE
+        or str(county_payload.get("collector_revision", "") or "")
+        != census_module.CENSUS_COLLECTOR_REVISION
+        or str(county_payload.get("assessment_version", "") or "")
+        != census_module.CENSUS_COUNTY_VERSION
+    ):
+        raise WorkflowError("census evidence is not a supported collector revision")
+    if str(county_payload.get("collection_digest", "") or "") != str(
+        collection_record.digest or ""
+    ):
+        raise WorkflowError("census county does not match the stored collection")
+    county_geo = county_payload.get("county", {}) or {}
+    return {
+        "admission_run_id": str(admission_run),
+        "collection_record_key": collection_key,
+        "county_record_key": county_key,
+        "collection_digest": str(collection_record.digest or ""),
+        "county_digest": str(county_record.digest or ""),
+        "county": str(county_geo.get("canonical", "") or ""),
+        "territory": str(county_geo.get("territory", "") or ""),
+    }
+
+
 def _gabriel_stage(
     conn: Any,
     run_id: UUID,
@@ -186,6 +399,7 @@ def _gabriel_stage(
     approved: bool,
     timeout_seconds: float,
     property_id: str | None = None,
+    census: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str], dict[str, Any] | None]:
     """Run acquisition/dossier/qualification; return keys, outcomes, review.
 
@@ -265,6 +479,10 @@ def _gabriel_stage(
     if target is not None:
         association, review = associate_dossiers_with_property(
             list(dossier_set.dossiers or []), target
+        )
+    if census is not None and target is not None and association:
+        _apply_census_in_stage(
+            conn, run_id, dossier_set, association, target, census
         )
     persist_dossier_versions(
         conn, run_id, dossier_set, ranking, keys, property_ids=association
@@ -396,6 +614,7 @@ def evaluate_real(
     run_simulation: bool = False,
     simulation_key: str | None = None,
     property_id: str | None = None,
+    census: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run or resume the real-property evaluation (caller owns commit).
 
@@ -424,7 +643,7 @@ def evaluate_real(
     if run.stage == "created":
         keys, outcomes, review = _gabriel_stage(
             conn, run_id, assignment_id, query, approved, timeout_seconds,
-            property_id=property_id,
+            property_id=property_id, census=census,
         )
         advance_stage_in_transaction(conn, run_id, "created", "gabriel")
         summary["dossier_keys"] = keys
@@ -715,6 +934,8 @@ def start_evaluation_audited(
     simulation_key: str | None = None,
     property_id: str | None = None,
     brave_attempt_limit: int = DEFAULT_ATTEMPT_LIMIT,
+    census_attempt_limit: int = 0,
+    census_principal: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate one assignment in committed phases plus an audited chain.
 
@@ -722,11 +943,20 @@ def start_evaluation_audited(
     connection accounts an attempt). Phase 2 commits the evidence
     artifact: budget charges and the started-marker commit before the
     provider transmits, and transmission happens with no business
-    transaction open. Phase 3 runs the remaining chain inside the
-    coordinated transaction, where the Gabriel stage replays the
-    committed artifact instead of transmitting. The permanent audit
-    event commits if and only if the coordinated chain commits, so
-    it always describes actually committed stages.
+    transaction open. Phase 2b optionally collects Census county
+    evidence for the targeted property (committed claim that
+    reserves per-run usage BEFORE transmission, transmit outside
+    any transaction, retained collection/county result); a
+    refused or ambiguous Census attempt never aborts the
+    evaluation and never triggers a replacement request. Only
+    the claim winner charges usage, exactly once, so burst
+    accounting reads durable deltas that no crash can undercount
+    and no recovery can double-count. Phase 3
+    runs the remaining chain inside the coordinated transaction,
+    where the Gabriel stage replays the committed artifacts
+    instead of transmitting. The permanent audit event commits if
+    and only if the coordinated chain commits, so it always
+    describes actually committed stages.
 
     ``brave_attempt_limit`` (default 9, ordinary allowance) bounds
     Brave attempts for a newly created run; a resumed run keeps its
@@ -734,6 +964,9 @@ def start_evaluation_audited(
     phases resumes losslessly: a completed artifact replays without a
     new charge, while a started-marker without an artifact (an
     uncertain provider request) refuses the same assignment id.
+    ``census_attempt_limit`` (default 0, disabled) allows at most
+    one Census address request for the targeted property; enabling
+    it requires ``census_principal`` attribution.
     """
     from app.observability.policy import OperationClass
     from app.observability.transactions import run_consequential_transaction
@@ -743,6 +976,9 @@ def start_evaluation_audited(
     if not assignment_id or not query:
         raise WorkflowError("assignment_id and query are required")
     limit = validate_attempt_limit(brave_attempt_limit)
+    census_limit = validate_census_attempt_limit(census_attempt_limit)
+    if census_limit > 0 and not str(census_principal or "").strip():
+        raise WorkflowError("census collection requires an authenticated principal")
     key = evaluation_key(assignment_id, query)
     event = _evaluation_event(assignment_id, query, key)
     run = create_run(idempotency_key=key, limits={"brave_attempts": limit})
@@ -750,6 +986,19 @@ def start_evaluation_audited(
         run.run_id, assignment_id, query,
         approved=approved, timeout_seconds=timeout_seconds,
     )
+    census_status: dict[str, Any] | None = None
+    census_bindings: dict[str, Any] | None = None
+    if census_limit > 0 and property_id is not None:
+        census_status = _collect_census_for_evaluation(
+            str(property_id), principal=str(census_principal).strip(),
+            spend_run_id=run.run_id,
+        )
+        if census_status["outcome"] in ("collected", "replayed"):
+            census_bindings = {
+                "collection_run_id": census_status["admission_run_id"],
+                "collection_digest": census_status["collection_digest"],
+                "county_digest": census_status["county_digest"],
+            }
 
     def _mutate(conn: Any) -> dict[str, Any]:
         return evaluate_real(
@@ -757,14 +1006,24 @@ def start_evaluation_audited(
             site_inputs=site_inputs, approved=approved,
             timeout_seconds=timeout_seconds, reviewed_by=reviewed_by,
             run_simulation=run_simulation, simulation_key=simulation_key,
-            property_id=property_id,
+            property_id=property_id, census=census_bindings,
         )
 
-    return run_consequential_transaction(
+    result = run_consequential_transaction(
         operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,
         event=event,
         mutate=_mutate,
     )
+    if census_status is not None:
+        result["census"] = {
+            name: census_status.get(name)
+            for name in (
+                "outcome", "charged", "county", "territory",
+                "reason", "admission_run_id",
+            )
+            if name in census_status
+        }
+    return result
 
 
 def stop_run_audited(run_id: UUID) -> None:
@@ -1320,6 +1579,518 @@ def collect_dcad_audited(
     )
 
 
+def validate_census_attempt_limit(value: Any) -> int:
+    """Validate an explicit per-run Census attempt bound (0..1).
+
+    One evaluation targets one property, so at most one Census
+    address request per run is structurally meaningful; 0 keeps
+    county admission disabled for the run.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WorkflowError("census_attempt_limit must be an integer 0..1")
+    if value < 0 or value > 1:
+        raise WorkflowError("census_attempt_limit must be an integer 0..1")
+    return value
+
+
+class _CensusChargedError(WorkflowError):
+    """A Census attempt failed after its allowance was consumed.
+
+    The claim commit reserves the attempt's allowance before
+    transmission, so every exit past the claim — ambiguous
+    transmit, assessment refusal, or a concurrent completion of
+    this caller's own claim — reports through this subclass.
+    ``charged`` tells whether THIS call consumed the allowance
+    (claim winners) as opposed to reusing an earlier claim
+    (resumes and replays). Subclasses WorkflowError so direct
+    callers see a uniform refusal; the evaluation phase catches
+    this subclass to record the outcome without aborting.
+    """
+
+    def __init__(self, message: str, *, charged: bool = True) -> None:
+        super().__init__(message)
+        self.charged = bool(charged)
+
+
+def _census_event(
+    verb: str,
+    property_id: str,
+    address: str,
+    attempt: str,
+    key: str,
+    extra: dict[str, Any] | None = None,
+) -> Any:
+    from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
+
+    summaries = {
+        "collected": f"Census address collected for property {property_id}",
+        "assessed": f"Census county assessed for property {property_id}",
+        "refused": f"Census county refused for property {property_id}",
+    }
+    return AgentEvent.model_validate(
+        {
+            "agent": AgentId.WONDRUE.value,
+            "run_id": key,
+            "event_type": f"wondrue.census.{verb}",
+            "severity": Severity.INFO.value,
+            "summary": summaries[verb],
+            "details": {
+                "property_id": property_id,
+                "address": address,
+                "attempt": attempt,
+                "idempotency_key": key,
+                **(extra or {}),
+            },
+            "evidence_refs": [],
+            "retention_class": RetentionClass.PERMANENT.value,
+        }
+    )
+
+
+def _census_collect_state(
+    conn: Any, run_id: UUID, record_key: str
+) -> dict[str, Any]:
+    """Read the durable collection state for one admission run."""
+    return {
+        "claim": get_record_in_transaction(
+            conn, run_id, KIND_CENSUS_CLAIM, f"{record_key}:claim"
+        ),
+        "collection": get_record_in_transaction(
+            conn, run_id, KIND_CENSUS_COLLECTION, record_key
+        ),
+        "county": get_record_in_transaction(
+            conn, run_id, KIND_CENSUS_COUNTY, record_key
+        ),
+        "refusal": get_record_in_transaction(
+            conn, run_id, KIND_CENSUS_REFUSAL, record_key
+        ),
+    }
+
+
+def _census_insert_claim(
+    conn: Any,
+    run_id: UUID,
+    record_key: str,
+    property_id: str,
+    principal: str,
+    revision: str,
+) -> bool:
+    """Insert the exclusive transmission claim; False when already held.
+
+    Exactly one caller per admission run wins the claim and may
+    transmit. Losers re-read the durable state and replay, surface
+    the stored refusal, or refuse on uncertainty -- they never
+    transmit. Insert-or-nothing (not put_record): racers carry
+    distinct timestamps, so a digest comparison would be meaningless.
+    """
+    from datetime import datetime, timezone
+
+    from app.workflow_db import insert_record_if_absent_in_transaction
+
+    payload = {
+        "state": "started",
+        "property_id": property_id,
+        "collector_revision": revision,
+        "principal": principal,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    return (
+        insert_record_if_absent_in_transaction(
+            conn, run_id, kind=KIND_CENSUS_CLAIM,
+            record_key=f"{record_key}:claim", version=1,
+            payload=payload, digest=digest_payload(payload),
+        )
+        is not None
+    )
+
+
+def _census_replay_summary(
+    run_id: UUID, state: dict[str, Any], *, charged: bool = False
+) -> dict[str, Any]:
+    _require_record_integrity(state["collection"], "Census collection")
+    _require_record_integrity(state["county"], "Census county result")
+    county = dict((state["county"].payload or {}).get("county", {}) or {})
+    return {
+        "run_id": str(run_id),
+        "replayed": True,
+        "charged": bool(charged),
+        "collection_digest": str(state["collection"].digest or ""),
+        "county_digest": str(state["county"].digest or ""),
+        "county": str(county.get("canonical", "") or ""),
+        "territory": str(county.get("territory", "") or ""),
+    }
+
+
+def _census_raise_stored_refusal(state: dict[str, Any]) -> Any:
+    _require_record_integrity(state["collection"], "Census collection")
+    _require_record_integrity(state["refusal"], "Census refusal")
+    refusal = dict(state["refusal"].payload or {})
+    raise WorkflowError(
+        f"prior collection refused at {refusal.get('stage', 'unknown')}: "
+        f"{refusal.get('reason', 'unknown')}"
+    )
+
+
+def collect_census_audited(
+    *,
+    property_id: str,
+    attempt: str = "1",
+    principal: str,
+    approved: bool = False,
+    config: Any = None,
+    spend_run_id: Any = None,
+) -> dict[str, Any]:
+    """Collect and assess one Census address in committed phases.
+
+    Validation (enabled adapter, explicit approval, authenticated
+    principal, operational property with a usable Texas street
+    address) refuses before any claim or transmission. A committed
+    exclusive claim then serializes transmission: concurrent
+    identical calls permit at most one request, completed
+    evidence replays without a request, and an uncertain
+    started claim cannot silently retransmit (recovery is an
+    explicit new attempt, approval-bound). The claim commit also
+    reserves the attempt's allowance on ``spend_run_id`` (when
+    given) BEFORE the request is sent, so interruption after
+    claiming, transmission, retention, or before runner
+    checkpointing can neither undercount the attempt nor reopen
+    the allowance; an uncertain transmitted attempt
+    conservatively consumes its allowance, and recovery never
+    double-counts the same attempt. The bounded response is
+    retained before assessment, so a parse/assessment refusal
+    is recorded inspectably without erasing the bytes. No
+    business transaction stays open during HTTP. Exits past the
+    claim (ambiguous transmit, assessment refusal) raise
+    :class:`_CensusChargedError`; pre-claim refusals raise
+    uncharged WorkflowError. Crash between transmit and
+    retention loses the bytes and stays uncertain for that key
+    (documented limitation); the allowance stays consumed.
+    """
+    import re
+
+    from app.agents.gabriel.sources import census as census_module
+    from app.observability.policy import OperationClass
+    from app.observability.transactions import run_consequential_transaction
+    from app.properties_db import get_connection, get_property
+    from app.workflow_db import create_run
+
+    _require_enabled()
+    if not approved:
+        raise WorkflowError("Census collection requires explicit approval")
+    if not str(principal or "").strip():
+        raise WorkflowError("Census collection requires an authenticated principal")
+    spend_uuid: UUID | None = None
+    if spend_run_id is not None:
+        try:
+            spend_uuid = (
+                spend_run_id
+                if isinstance(spend_run_id, UUID)
+                else UUID(str(spend_run_id))
+            )
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise WorkflowError("spend_run_id must be an operational UUID") from exc
+    try:
+        census_module.require_collection_allowed()
+    except census_module.CensusError as exc:
+        raise WorkflowError(str(exc)) from exc
+    prop_uuid = _require_operational_uuid(property_id, "property_id")
+    attempt_label = str(attempt or "").strip()
+    if not re.fullmatch(r"[1-9][0-9]{0,2}", attempt_label):
+        raise WorkflowError("attempt must be an integer 1..999")
+    target_row = get_property(prop_uuid)
+    if target_row is None:
+        raise WorkflowError("unknown operational property")
+    street = str(target_row.get("street_address", "") or "")
+    city = str(target_row.get("city", "") or "")
+    state = str(target_row.get("state", "") or "")
+    zip_code = str(target_row.get("zip_code", "") or "")
+    try:
+        census_module.census_request_url(street, city, state, zip_code)
+    except census_module.CensusError as exc:
+        raise WorkflowError(f"no usable Texas street address: {exc}") from exc
+    key = census_module.census_admission_run_key(
+        property_id=str(prop_uuid),
+        street=street,
+        city=city,
+        state=state,
+        zip_code=zip_code,
+        revision=census_module.CENSUS_COLLECTOR_REVISION,
+        attempt=attempt_label,
+    )
+    record_key = census_module.census_record_key(
+        street=street, city=city, state=state, zip_code=zip_code
+    )
+    run = create_run(idempotency_key=key, config=config)
+    address_label = ", ".join(part for part in (street, city, state, zip_code) if part)
+    conn = get_connection(config)
+    try:
+        collect_state = _census_collect_state(conn, run.run_id, record_key)
+        if collect_state["collection"] is not None and collect_state["county"] is not None:
+            return _census_replay_summary(run.run_id, collect_state)
+        if collect_state["refusal"] is not None and collect_state["collection"] is not None:
+            _census_raise_stored_refusal(collect_state)
+        if collect_state["collection"] is not None:
+            _require_record_integrity(collect_state["collection"], "Census collection")
+            resume_collection = collect_state["collection"]
+        else:
+            if collect_state["claim"] is not None:
+                raise WorkflowError(
+                    "uncertain prior collection attempt for this key; "
+                    "approve an explicit new attempt to retry"
+                )
+            resume_collection = None
+        charged_here = False
+        if resume_collection is None:
+            if spend_uuid is not None and get_run_in_transaction(conn, spend_uuid) is None:
+                raise WorkflowError("spend run is unknown; refusing uncounted claim")
+            claimed = _census_insert_claim(
+                conn, run.run_id, record_key, str(prop_uuid),
+                str(principal).strip(), census_module.CENSUS_COLLECTOR_REVISION,
+            )
+            if claimed:
+                charged_here = True
+                if spend_uuid is not None:
+                    # Allowance reservation rides the claim commit:
+                    # only the winner charges, exactly once, before
+                    # any transmission. No refund path reopens it.
+                    add_usage_in_transaction(
+                        conn, spend_uuid, "census_attempts", 1
+                    )
+            conn.commit()
+            if not claimed:
+                collect_state = _census_collect_state(conn, run.run_id, record_key)
+                if (
+                    collect_state["collection"] is not None
+                    and collect_state["county"] is not None
+                ):
+                    return _census_replay_summary(run.run_id, collect_state)
+                if (
+                    collect_state["refusal"] is not None
+                    and collect_state["collection"] is not None
+                ):
+                    _census_raise_stored_refusal(collect_state)
+                raise WorkflowError(
+                    "another caller holds the collection claim for this key"
+                )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if resume_collection is None:
+        try:
+            collected = census_module.collect_address(
+                street, city, state, zip_code, principal=str(principal).strip()
+            )
+        except census_module.CensusFetchError as exc:
+            if not exc.transmitted:
+                raise WorkflowError(
+                    f"census collection unreachable: {exc}"
+                ) from exc
+            try:
+                err_conn = get_connection(config)
+            except Exception:
+                err_conn = None
+            if err_conn is not None:
+                try:
+                    append_error_in_transaction(
+                        err_conn, run.run_id,
+                        {"census_attempt": "ambiguous", "error": str(exc)},
+                    )
+                    err_conn.commit()
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        err_conn.close()
+                    except Exception:
+                        pass
+            raise _CensusChargedError(
+                f"census collection ambiguous: {exc}", charged=charged_here
+            ) from exc
+        except census_module.CensusError as exc:
+            raise WorkflowError(str(exc)) from exc
+        collected_payload = collected.model_dump(mode="json")
+        collect_event = _census_event(
+            "collected", str(prop_uuid), address_label, attempt_label, key
+        )
+
+        def _retain(mutate_conn: Any) -> dict[str, Any]:
+            live = get_run_in_transaction(mutate_conn, run.run_id)
+            if live is None:
+                raise WorkflowError(f"unknown workflow run {run.run_id}")
+            if live.status == "stopped":
+                raise WorkflowError("run is stopped")
+            stored = put_record_in_transaction(
+                mutate_conn, run.run_id, kind=KIND_CENSUS_COLLECTION,
+                record_key=record_key, version=1,
+                payload=collected_payload, digest=digest_payload(collected_payload),
+            )
+            return {
+                "collection_digest": str(stored.digest or ""),
+                "collection": dict(stored.payload or {}),
+            }
+
+        retained = run_consequential_transaction(
+            operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,
+            event=collect_event,
+            mutate=_retain,
+        )
+    else:
+        retained = {
+            "collection_digest": str(resume_collection.digest or ""),
+            "collection": dict(resume_collection.payload or {}),
+        }
+    try:
+        county = census_module.assess_county(
+            collection=retained["collection"],
+            collection_digest=retained["collection_digest"],
+            property_record={"id": str(prop_uuid)},
+        )
+    except census_module.CensusError as exc:
+        refusal = {
+            "property_id": str(prop_uuid),
+            "address": address_label,
+            "attempt": attempt_label,
+            "collection_digest": retained["collection_digest"],
+            "stage": "assess",
+            "reason": str(exc),
+            "collector_revision": census_module.CENSUS_COLLECTOR_REVISION,
+            "principal": str(principal).strip(),
+        }
+        refuse_event = _census_event(
+            "refused", str(prop_uuid), address_label, attempt_label, key,
+            extra={"reason": str(exc)},
+        )
+
+        def _refuse(mutate_conn: Any) -> dict[str, Any]:
+            from app.workflow_db import WorkflowConflictError
+
+            live = get_run_in_transaction(mutate_conn, run.run_id)
+            if live is None:
+                raise WorkflowError(f"unknown workflow run {run.run_id}")
+            if live.stage == "done":
+                state = _census_collect_state(mutate_conn, run.run_id, record_key)
+                if (
+                    state["refusal"] is None
+                    or state["refusal"].digest != digest_payload(refusal)
+                ):
+                    raise WorkflowConflictError(
+                        "admission run finished with different evidence"
+                    )
+                try:
+                    _census_raise_stored_refusal(state)
+                except WorkflowError as exc:
+                    raise _CensusChargedError(
+                        str(exc), charged=charged_here
+                    ) from exc
+            put_record_in_transaction(
+                mutate_conn, run.run_id, kind=KIND_CENSUS_REFUSAL,
+                record_key=record_key, version=1,
+                payload=refusal, digest=digest_payload(refusal),
+            )
+            advance_stage_in_transaction(
+                mutate_conn, run.run_id, "created", "done", status="complete_stopped"
+            )
+            return {"refused": True}
+
+        run_consequential_transaction(
+            operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,
+            event=refuse_event,
+            mutate=_refuse,
+        )
+        raise _CensusChargedError(
+            f"census assessment refused: {exc}", charged=charged_here
+        ) from exc
+    assess_event = _census_event(
+        "assessed", str(prop_uuid), address_label, attempt_label, key
+    )
+
+    def _assess(mutate_conn: Any) -> dict[str, Any]:
+        from app.workflow_db import WorkflowConflictError
+
+        live = get_run_in_transaction(mutate_conn, run.run_id)
+        if live is None:
+            raise WorkflowError(f"unknown workflow run {run.run_id}")
+        if live.stage == "done":
+            state = _census_collect_state(mutate_conn, run.run_id, record_key)
+            if (
+                state["county"] is None
+                or state["county"].digest != digest_payload(county)
+            ):
+                raise WorkflowConflictError(
+                    "admission run finished with different evidence"
+                )
+            return _census_replay_summary(run.run_id, state, charged=charged_here)
+        stored_county = put_record_in_transaction(
+            mutate_conn, run.run_id, kind=KIND_CENSUS_COUNTY,
+            record_key=record_key, version=1,
+            payload=county, digest=digest_payload(county),
+        )
+        advance_stage_in_transaction(
+            mutate_conn, run.run_id, "created", "done", status="complete"
+        )
+        county_geo = county.get("county", {}) or {}
+        return {
+            "run_id": str(run.run_id),
+            "replayed": False,
+            "charged": charged_here,
+            "collection_digest": retained["collection_digest"],
+            "county_digest": str(stored_county.digest or ""),
+            "county": str(county_geo.get("canonical", "") or ""),
+            "territory": str(county_geo.get("territory", "") or ""),
+        }
+
+    return run_consequential_transaction(
+        operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,
+        event=assess_event,
+        mutate=_assess,
+    )
+
+
+def _collect_census_for_evaluation(
+    property_id: str,
+    *,
+    principal: str,
+    config: Any = None,
+    spend_run_id: Any = None,
+) -> dict[str, Any]:
+    """Collect county evidence for one evaluation (never raises).
+
+    Attempt 1 only: a refused or ambiguous attempt never causes a
+    replacement request under a new identifier. Returns a status
+    dict with ``charged`` telling whether this call newly consumed
+    Census allowance (claim winners only; replays, resumes, and
+    pre-claim refusals consume nothing new). The allowance itself
+    is reserved inside the claim commit on ``spend_run_id``,
+    before transmission — never marked after the fact.
+    """
+    try:
+        summary = collect_census_audited(
+            property_id=property_id, attempt="1",
+            principal=principal, approved=True, config=config,
+            spend_run_id=spend_run_id,
+        )
+    except _CensusChargedError as exc:
+        return {
+            "outcome": "ambiguous",
+            "charged": bool(exc.charged),
+            "reason": str(exc),
+        }
+    except WorkflowError as exc:
+        return {"outcome": "refused", "charged": False, "reason": str(exc)}
+    replayed = bool(summary.get("replayed"))
+    return {
+        "outcome": "replayed" if replayed else "collected",
+        "charged": bool(summary.get("charged", False)),
+        "admission_run_id": str(summary.get("run_id", "")),
+        "collection_digest": str(summary.get("collection_digest", "") or ""),
+        "county_digest": str(summary.get("county_digest", "") or ""),
+        "county": str(summary.get("county", "") or ""),
+        "territory": str(summary.get("territory", "") or ""),
+    }
+
+
 def successor_run_key(
     *,
     parent_run_id: str,
@@ -1355,11 +2126,26 @@ def _dcad_assessment_for_successor(conn: Any, run_id: UUID) -> Any:
     return None
 
 
+def _census_collection_for_successor(conn: Any, run_id: UUID) -> Any:
+    """The single Census collection record in a collection run, if present."""
+    for record in list_records_in_transaction(conn, run_id, KIND_CENSUS_COLLECTION):
+        return record
+    return None
+
+
+def _census_county_for_successor(conn: Any, run_id: UUID) -> Any:
+    """The single Census county record in a collection run, if present."""
+    for record in list_records_in_transaction(conn, run_id, KIND_CENSUS_COUNTY):
+        return record
+    return None
+
+
 def _dossier_content_changes(prior: dict[str, Any], rebuilt: dict[str, Any]) -> list[dict[str, Any]]:
     """Material field diffs between parent and rebuilt dossier content."""
     changes: list[dict[str, Any]] = []
     for field in (
         "name", "street_address", "city", "state", "zip_code", "unit_designator",
+        "census_evidence",
     ):
         old, new = prior.get(field), rebuilt.get(field)
         if old != new:
@@ -1392,6 +2178,34 @@ def _dossier_content_changes(prior: dict[str, Any], rebuilt: dict[str, Any]) -> 
             }
         )
     return changes
+
+
+def _successor_artifact_lineage(
+    parent_payload: dict[str, Any]
+) -> dict[str, dict[str, str]]:
+    """Explicit run/key/digest lineage from a committed successor block.
+
+    Returns record-key -> {run_id, digest} for well-formed
+    entries; malformed entries are ignored (a ref that then
+    resolves nowhere becomes an ordinary missing-artifact
+    blocker, never a guess).
+    """
+    lineage: dict[str, dict[str, str]] = {}
+    successor = parent_payload.get("successor") or {}
+    if not isinstance(successor, dict):
+        return lineage
+    entries = successor.get("retained_artifacts") or []
+    if not isinstance(entries, list):
+        return lineage
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("record_key", "") or "")
+        run_id = str(entry.get("run_id", "") or "")
+        digest = str(entry.get("digest", "") or "")
+        if key and run_id and digest and key not in lineage:
+            lineage[key] = {"run_id": run_id, "digest": digest}
+    return lineage
 
 
 def _load_verified_successor_inputs(
@@ -1430,11 +2244,32 @@ def _load_verified_successor_inputs(
     _require_record_integrity(parent, "parent dossier version")
     parent_payload = dict(parent.payload or {})
     prior_dossier = dict(parent_payload.get("dossier", {}) or {})
+    lineage = _successor_artifact_lineage(parent_payload)
     retained: list[dict[str, Any]] = []
     for ref in parent_payload.get("artifact_refs", []) or []:
         artifact = get_record_in_transaction(
             conn, parent_run_id, KIND_RESEARCH_ARTIFACT, str(ref)
         )
+        source_run = parent_run_id
+        if artifact is None and str(ref) in lineage:
+            # Successor-of-successor: the parent run references
+            # artifacts it does not hold. Resolve through the
+            # parent's own explicit run/key/digest lineage and
+            # verify the digest; the committed successor block
+            # already carries these entries.
+            entry = lineage[str(ref)]
+            try:
+                source_run = UUID(str(entry.get("run_id", "") or ""))
+            except (ValueError, AttributeError, TypeError):
+                blockers.append(f"retained artifact lineage invalid: {ref}")
+                continue
+            artifact = get_record_in_transaction(
+                conn, source_run, KIND_RESEARCH_ARTIFACT, str(ref)
+            )
+            if artifact is not None and str(artifact.digest or "") != str(
+                entry.get("digest", "") or ""
+            ):
+                raise WorkflowError(f"retained artifact digest mismatch: {ref}")
         if artifact is None:
             blockers.append(f"retained artifact missing: {ref}")
             continue
@@ -1444,6 +2279,7 @@ def _load_verified_successor_inputs(
         _require_record_integrity(artifact, f"retained artifact {ref}")
         retained.append(
             {
+                "run_id": str(source_run),
                 "record_key": str(ref),
                 "digest": str(artifact.digest or ""),
                 "payload": dict(artifact.payload or {}),
@@ -1453,11 +2289,71 @@ def _load_verified_successor_inputs(
         blockers.append("parent dossier references no retained artifact")
     collection_record = _dcad_collection_for_assessment(conn, collection_run_id)
     assessment_record = _dcad_assessment_for_successor(conn, collection_run_id)
+    evidence_source = "dcad"
+    census_collection = _census_collection_for_successor(conn, collection_run_id)
+    census_county = _census_county_for_successor(conn, collection_run_id)
     collection_payload: dict[str, Any] = {}
     assessment_payload: dict[str, Any] = {}
     collection_digest = ""
     assessment_digest = ""
-    if collection_record is None or assessment_record is None:
+    collection_record_key = ""
+    assessment_record_key = ""
+    current_address: dict[str, Any] = {}
+    if (
+        collection_record is None
+        and assessment_record is None
+        and census_collection is not None
+        and census_county is not None
+    ):
+        evidence_source = "census"
+        from app.agents.gabriel.sources import census as census_module
+        from app.properties_db import get_property
+
+        _require_record_integrity(census_collection, "Census collection")
+        _require_record_integrity(census_county, "Census county result")
+        collection_digest = str(census_collection.digest or "")
+        assessment_digest = str(census_county.digest or "")
+        collection_payload = dict(census_collection.payload or {})
+        assessment_payload = dict(census_county.payload or {})
+        collection_record_key = str(census_collection.record_key or "")
+        assessment_record_key = str(census_county.record_key or "")
+        if str(assessment_payload.get("property_id", "") or "") != str(property_id):
+            blockers.append("county result binds a different property")
+        if str(assessment_payload.get("collection_digest", "") or "") != collection_digest:
+            blockers.append("county result does not match the stored collection")
+        try:
+            expected_url = census_module.census_request_url(
+                str(collection_payload.get("submitted_street", "") or ""),
+                str(collection_payload.get("submitted_city", "") or ""),
+                str(collection_payload.get("submitted_state", "") or ""),
+                str(collection_payload.get("submitted_zip", "") or ""),
+            )
+        except census_module.CensusError:
+            expected_url = ""
+        if not expected_url or str(collection_payload.get("url", "") or "") != expected_url:
+            blockers.append("stored collection URL does not match its submitted address")
+        if (
+            str(collection_payload.get("collector_revision", "") or "")
+            != census_module.CENSUS_COLLECTOR_REVISION
+            or str(assessment_payload.get("collector_revision", "") or "")
+            != census_module.CENSUS_COLLECTOR_REVISION
+            or str(assessment_payload.get("assessment_version", "") or "")
+            != census_module.CENSUS_COUNTY_VERSION
+            or str(assessment_payload.get("collection_provenance", "") or "")
+            != census_module.CENSUS_PROVENANCE
+        ):
+            blockers.append("evidence was not admitted under supported revisions")
+        target_row = get_property(property_id)
+        if target_row is None:
+            blockers.append("operational property row is missing")
+        else:
+            current_address = {
+                "street": str(target_row.get("street_address", "") or ""),
+                "city": str(target_row.get("city", "") or ""),
+                "state": str(target_row.get("state", "") or ""),
+                "zip": str(target_row.get("zip_code", "") or ""),
+            }
+    elif collection_record is None or assessment_record is None:
         blockers.append("collection run carries no DCAD collection/assessment pair")
     else:
         _require_record_integrity(collection_record, "DCAD collection")
@@ -1511,10 +2407,14 @@ def _load_verified_successor_inputs(
             "parent_payload": parent_payload,
             "prior_dossier": prior_dossier,
             "retained": retained,
+            "evidence_source": evidence_source,
+            "current_address": current_address,
             "collection": collection_payload,
             "collection_digest": collection_digest,
+            "collection_record_key": collection_record_key,
             "assessment": assessment_payload,
             "assessment_digest": assessment_digest,
+            "assessment_record_key": assessment_record_key,
             "dossier_id": dossier_uuid,
             "latest": latest,
             "custody_version": custody_version,
@@ -1532,14 +2432,26 @@ def _evaluate_successor_evidence(
     assessment: dict[str, Any],
     collection_url: str,
     dossier_key: str,
+    evidence_source: str = "dcad",
+    collection_digest: str = "",
+    property_id: str = "",
+    current_address: dict[str, Any] | None = None,
+    collection_run_id: str = "",
+    collection_record_key: str = "",
+    assessment_record_key: str = "",
+    assessment_digest: str = "",
 ) -> dict[str, Any]:
-    """Evaluate cumulative retained-plus-DCAD evidence (pure, shared).
+    """Evaluate cumulative retained-plus-admission evidence (pure, shared).
 
-    Rebuilds retained intelligence deterministically, composes
-    claim-scoped alignment (no inherited alignment), evaluates
-    through the shared policy, rebuilds the dossier from the SAME
-    processing, and derives the intended qualification and Raphael
-    outcome. Preview and commit run this identical function over
+    Rebuilds retained intelligence deterministically, folds in the
+    admitted evidence through the SAME processing the rebuilt
+    dossier uses, and derives the intended qualification and
+    Raphael outcome. DCAD evidence composes claim-scoped
+    alignment (no inherited alignment) and evaluates through the
+    shared policy; Census evidence applies county-only
+    attribution with the ordinary fail-closed category verdict
+    (county admission never authorizes category verification).
+    Preview and commit run this identical function over
     identically verified inputs.
     """
     from app.agents.gabriel.extractor import group_by_property
@@ -1558,27 +2470,40 @@ def _evaluate_successor_evidence(
     group = groups.get(dossier_key)
     if candidate is None or group is None:
         raise WorkflowError("retained evidence does not reproduce the dossier")
-    alignment = assessment.get("alignment", {}) or {}
-    attestation, voice_alignment = dcad_module.cumulative_attestation(
-        dossier_key=dossier_key,
-        brave_voice_urls=[str(item.result_url or "") for item in intel.results],
-        dcad_voice_url=str(collection_url or ""),
-        dcad_aligned=bool(alignment.get("aligned")),
-        dcad_basis=str(alignment.get("basis", "") or ""),
-        dcad_scope=str(alignment.get("scope", "") or ""),
-        basis=group.basis,
-        disputes=len(candidate.identity_disputes),
-    )
-    voice = dcad_module.build_dcad_voice(str(collection_url or ""))
-    verdict = build_candidate_verification(
-        candidate,
-        list(group.members),
-        intel.results,
-        basis=group.basis,
-        registry=None,
-        extra_voices=[voice],
-        attestation=attestation,
-    ).model_dump(mode="json")
+    county_application: dict[str, Any] = {}
+    if evidence_source == "census":
+        from app.agents.gabriel.sources import census as census_module
+
+        verdict = build_candidate_verification(
+            candidate,
+            list(group.members),
+            intel.results,
+            basis=group.basis,
+            registry=None,
+        ).model_dump(mode="json")
+        voice_alignment: dict[str, Any] = {}
+    else:
+        alignment = assessment.get("alignment", {}) or {}
+        attestation, voice_alignment = dcad_module.cumulative_attestation(
+            dossier_key=dossier_key,
+            brave_voice_urls=[str(item.result_url or "") for item in intel.results],
+            dcad_voice_url=str(collection_url or ""),
+            dcad_aligned=bool(alignment.get("aligned")),
+            dcad_basis=str(alignment.get("basis", "") or ""),
+            dcad_scope=str(alignment.get("scope", "") or ""),
+            basis=group.basis,
+            disputes=len(candidate.identity_disputes),
+        )
+        voice = dcad_module.build_dcad_voice(str(collection_url or ""))
+        verdict = build_candidate_verification(
+            candidate,
+            list(group.members),
+            intel.results,
+            basis=group.basis,
+            registry=None,
+            extra_voices=[voice],
+            attestation=attestation,
+        ).model_dump(mode="json")
     rebuilt_set = build_dossiers(DossierRequest(rounds=[intel]))
     rebuilt = next(
         (item.model_dump(mode="json") for item in rebuilt_set.dossiers if item.key == dossier_key),
@@ -1586,6 +2511,41 @@ def _evaluate_successor_evidence(
     )
     if rebuilt is None:
         raise WorkflowError("retained evidence does not reproduce the dossier")
+    if evidence_source == "census":
+        application = census_module.apply_county_to_dossier(
+            rebuilt,
+            assessment,
+            collection_digest=collection_digest,
+            property_id=property_id,
+            current_address=current_address or {},
+        )
+        if not application.get("applied"):
+            raise WorkflowError(
+                "census county not applicable to the rebuilt dossier: "
+                f"{application.get('reason', 'unknown')}"
+            )
+        rebuilt["county_attribution"] = application["county_attribution"]
+        try:
+            rebuilt["census_evidence"] = census_module.census_evidence_refs(
+                admission_run_id=collection_run_id,
+                collection_record_key=collection_record_key,
+                county_record_key=assessment_record_key,
+                collection_digest=collection_digest,
+                county_digest=assessment_digest,
+                county_result=assessment,
+            )
+        except census_module.CensusError as exc:
+            raise WorkflowError(
+                "census evidence locator refused for the rebuilt dossier: "
+                f"{exc}"
+            ) from exc
+        admitted = dict(assessment.get("county", {}) or {})
+        county_application = {
+            "applied": True,
+            "county": str(admitted.get("canonical", "") or ""),
+            "territory": str(admitted.get("territory", "") or ""),
+            "scope": str(assessment.get("scope_label", "") or ""),
+        }
     prior_dossier = dict(parent_payload.get("dossier", {}) or {})
     changes = _dossier_content_changes(prior_dossier, rebuilt)
     qualification = qualify_dossier(rebuilt)
@@ -1597,6 +2557,7 @@ def _evaluate_successor_evidence(
         "content_changes": changes,
         "verdict": verdict,
         "voice_alignment": voice_alignment,
+        "county_application": county_application,
         "qualification": qualification,
         "raphael": raphael,
     }
@@ -1630,6 +2591,7 @@ def preview_successor_in_transaction(
         raise WorkflowError(f"custody chain does not verify: {exc}") from exc
     parent = bundle["parent"]
     assessment_payload = bundle["assessment"]
+    evidence_source = str(bundle.get("evidence_source", "dcad") or "dcad")
     key = ""
     if parent.digest and bundle["collection_digest"] and bundle["assessment_digest"]:
         key = successor_run_key(
@@ -1639,6 +2601,26 @@ def preview_successor_in_transaction(
             collection_digest=bundle["collection_digest"],
             assessment_digest=bundle["assessment_digest"],
         )
+    assessment_view: dict[str, Any] = {
+        "run_id": str(collection_uuid),
+        "evidence_source": evidence_source,
+        "collection_digest": bundle["collection_digest"],
+        "assessment_digest": bundle["assessment_digest"],
+    }
+    if evidence_source == "census":
+        admitted = dict(assessment_payload.get("county", {}) or {})
+        assessment_view["county"] = str(admitted.get("canonical", "") or "")
+        assessment_view["territory"] = str(admitted.get("territory", "") or "")
+        assessment_view["scope"] = str(assessment_payload.get("scope_label", "") or "")
+        claim_scope = "county-only"
+    else:
+        assessment_view["aligned"] = bool(
+            assessment_payload.get("alignment", {}).get("aligned")
+        )
+        assessment_view["dcad_only_outcome"] = (
+            assessment_payload.get("dcad_only_verification", {}) or {}
+        ).get("outcome", "")
+        claim_scope = _dcad_claim_scope(bundle["prior_dossier"])
     base: dict[str, Any] = {
         "ready": not blockers,
         "blockers": blockers,
@@ -1647,21 +2629,17 @@ def preview_successor_in_transaction(
             "dossier_key": str(dossier_key),
             "version": parent.version,
             "digest": parent.digest,
-            "claim_scope": _dcad_claim_scope(bundle["prior_dossier"]),
+            "claim_scope": claim_scope,
         },
         "retained_artifacts": [
-            {"record_key": item["record_key"], "digest": item["digest"]}
+            {
+                "run_id": item["run_id"],
+                "record_key": item["record_key"],
+                "digest": item["digest"],
+            }
             for item in bundle["retained"]
         ],
-        "assessment": {
-            "run_id": str(collection_uuid),
-            "collection_digest": bundle["collection_digest"],
-            "assessment_digest": bundle["assessment_digest"],
-            "aligned": bool(assessment_payload.get("alignment", {}).get("aligned")),
-            "dcad_only_outcome": (
-                assessment_payload.get("dcad_only_verification", {}) or {}
-            ).get("outcome", ""),
-        },
+        "assessment": assessment_view,
         "custody": {
             "dossier_id": str(bundle["dossier_id"]),
             "latest_version": bundle["custody_version"],
@@ -1683,6 +2661,14 @@ def preview_successor_in_transaction(
             assessment=assessment_payload,
             collection_url=str(bundle["collection"].get("url", "") or ""),
             dossier_key=str(dossier_key),
+            evidence_source=evidence_source,
+            collection_digest=bundle["collection_digest"],
+            property_id=str(prop_uuid),
+            current_address=bundle.get("current_address") or {},
+            collection_run_id=str(collection_uuid),
+            collection_record_key=str(bundle.get("collection_record_key", "") or ""),
+            assessment_record_key=str(bundle.get("assessment_record_key", "") or ""),
+            assessment_digest=bundle["assessment_digest"],
         )
     except WorkflowError as exc:
         base["ready"] = False
@@ -1697,6 +2683,7 @@ def preview_successor_in_transaction(
     }
     base["content_changes"] = evaluated["content_changes"]
     base["voice_alignment"] = evaluated["voice_alignment"]
+    base["county_application"] = evaluated.get("county_application", {})
     return base
 
 
@@ -1722,16 +2709,19 @@ def _successor_summary_from_records(
     _require_record_integrity(decision, "Raphael decision")
     stored_payload = dict(dossier_record.payload or {})
     stored_successor = dict(stored_payload.get("successor", {}) or {})
+    stored_source = str(stored_successor.get("evidence_source", "dcad") or "dcad")
+    if stored_source == "census":
+        collection_ref = stored_successor.get("census_collection", {}) or {}
+        assessment_ref = stored_successor.get("census_county", {}) or {}
+    else:
+        collection_ref = stored_successor.get("dcad_collection", {}) or {}
+        assessment_ref = stored_successor.get("dcad_assessment", {}) or {}
     stored_bindings = {
         "property_id": str(stored_payload.get("property_id", "") or ""),
         "parent_run_id": str(stored_successor.get("parent_run_id", "") or ""),
         "parent_digest": str(stored_successor.get("parent_digest", "") or ""),
-        "collection_digest": str(
-            (stored_successor.get("dcad_collection", {}) or {}).get("digest", "") or ""
-        ),
-        "assessment_digest": str(
-            (stored_successor.get("dcad_assessment", {}) or {}).get("digest", "") or ""
-        ),
+        "collection_digest": str(collection_ref.get("digest", "") or ""),
+        "assessment_digest": str(assessment_ref.get("digest", "") or ""),
         "principal": str(stored_successor.get("actor", "") or ""),
     }
     for name, stored_value in stored_bindings.items():
@@ -1906,48 +2896,77 @@ def commit_successor_audited(
             raise WorkflowError("collection digest does not match the approval")
         if bundle["assessment_digest"] != str(assessment_digest or ""):
             raise WorkflowError("assessment digest does not match the approval")
+        commit_source = str(bundle.get("evidence_source", "dcad") or "dcad")
         evaluated = _evaluate_successor_evidence(
             parent_payload=bundle["parent_payload"],
             retained_payloads=[item["payload"] for item in bundle["retained"]],
             assessment=bundle["assessment"],
             collection_url=str(bundle["collection"].get("url", "") or ""),
             dossier_key=str(dossier_key),
+            evidence_source=commit_source,
+            collection_digest=bundle["collection_digest"],
+            property_id=str(prop_uuid),
+            current_address=bundle.get("current_address") or {},
+            collection_run_id=str(collection_uuid),
+            collection_record_key=str(bundle.get("collection_record_key", "") or ""),
+            assessment_record_key=str(bundle.get("assessment_record_key", "") or ""),
+            assessment_digest=bundle["assessment_digest"],
         )
         verdict = evaluated["verdict"]
         rebuilt_dossier = evaluated["rebuilt_dossier"]
         retained = [
             {
-                "run_id": str(parent_uuid),
+                "run_id": str(item["run_id"]),
                 "record_key": item["record_key"],
                 "digest": item["digest"],
             }
             for item in bundle["retained"]
         ]
-        collection_ref = _dcad_collection_for_assessment(mutate_conn, collection_uuid)
-        assessment_ref = _dcad_assessment_for_successor(mutate_conn, collection_uuid)
+        if commit_source == "census":
+            collection_ref = _census_collection_for_successor(mutate_conn, collection_uuid)
+            assessment_ref = _census_county_for_successor(mutate_conn, collection_uuid)
+        else:
+            collection_ref = _dcad_collection_for_assessment(mutate_conn, collection_uuid)
+            assessment_ref = _dcad_assessment_for_successor(mutate_conn, collection_uuid)
         if collection_ref is None or assessment_ref is None:
-            raise WorkflowError("collection run carries no DCAD collection/assessment pair")
+            raise WorkflowError(
+                "collection run carries no DCAD or Census evidence pair"
+            )
         successor_block = {
             "parent_run_id": str(parent_uuid),
             "parent_record_key": str(dossier_key),
             "parent_version": expected_parent_version,
             "parent_digest": str(parent_digest or ""),
             "retained_artifacts": retained,
-            "dcad_collection": {
-                "run_id": str(collection_uuid),
-                "record_key": str(collection_ref.record_key or ""),
-                "digest": bundle["collection_digest"],
-            },
-            "dcad_assessment": {
-                "run_id": str(collection_uuid),
-                "record_key": str(assessment_ref.record_key or ""),
-                "digest": bundle["assessment_digest"],
-            },
+            "evidence_source": commit_source,
             "voice_alignment": evaluated["voice_alignment"],
+            "county_application": evaluated.get("county_application", {}),
             "content_changes": evaluated["content_changes"],
             "processing_revision": SUCCESSOR_REVISION,
             "actor": str(principal).strip(),
         }
+        if commit_source == "census":
+            successor_block["census_collection"] = {
+                "run_id": str(collection_uuid),
+                "record_key": str(collection_ref.record_key or ""),
+                "digest": bundle["collection_digest"],
+            }
+            successor_block["census_county"] = {
+                "run_id": str(collection_uuid),
+                "record_key": str(assessment_ref.record_key or ""),
+                "digest": bundle["assessment_digest"],
+            }
+        else:
+            successor_block["dcad_collection"] = {
+                "run_id": str(collection_uuid),
+                "record_key": str(collection_ref.record_key or ""),
+                "digest": bundle["collection_digest"],
+            }
+            successor_block["dcad_assessment"] = {
+                "run_id": str(collection_uuid),
+                "record_key": str(assessment_ref.record_key or ""),
+                "digest": bundle["assessment_digest"],
+            }
         parent_payload = bundle["parent_payload"]
         payload = {
             "version": 1,

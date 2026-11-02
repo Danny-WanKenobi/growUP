@@ -195,7 +195,12 @@ def test_authorize_records_assessed_and_authorized_for_known_cell() -> None:
     payload = _payload()
     payload["property_id"] = str(uuid4())
     payload["dossier"]["county_attribution"] = {
-        "evidence_status": "verified", "value": "Dallas County",
+        "evidence_status": "verified", "value": "dallas county",
+        "claims": [{
+            "original": "Dallas County", "normalized": "dallas county",
+            "source_url": "https://geocoding.geo.census.gov/geocoder/geographies/address",
+            "authority": "census_geocoder",
+        }],
     }
     payload["dossier"]["category_attribution"] = {
         "status": "observed", "observed": "high_rise",
@@ -224,7 +229,12 @@ def test_authorize_records_assessed_and_authorized_for_known_cell() -> None:
 def test_authorize_skips_pilot_count_without_resolved_property() -> None:
     payload = _payload()
     payload["dossier"]["county_attribution"] = {
-        "evidence_status": "verified", "value": "Dallas County",
+        "evidence_status": "verified", "value": "dallas county",
+        "claims": [{
+            "original": "Dallas County", "normalized": "dallas county",
+            "source_url": "https://geocoding.geo.census.gov/geocoder/geographies/address",
+            "authority": "census_geocoder",
+        }],
     }
     payload["dossier"]["category_attribution"] = {
         "status": "observed", "observed": "high_rise",

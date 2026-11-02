@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -136,6 +136,7 @@ class PropertyDossier(BaseModel):
     summary: str = ""
     county_attribution: CountyAttribution | None = None
     category_attribution: CategoryAttribution | None = None
+    census_evidence: dict[str, Any] | None = None
 
 
 class RankingComparison(BaseModel):

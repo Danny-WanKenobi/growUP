@@ -1227,7 +1227,9 @@ def test_live_recovery_folds_committed_pass() -> None:
         )
         assert report["recovered_pending_pass"] == {
             "discovery_run_id": discovery_run, "enqueued": 2,
-            "already_folded": False,
+            "already_folded": False, "restored_created": 2,
+            "restored_pass": True, "restored_request": True,
+            "unit_key": _cells()[0].unit_key,
         }
         assert evaluated == [pid_a, pid_b]
         assert report["created"] == 0
@@ -1237,7 +1239,10 @@ def test_live_recovery_folds_committed_pass() -> None:
             reread = latest_run_in_transaction(check, scope)
             assert reread is not None
             assert reread["checkpoint"]["backlog"] == []
-            assert reread["checkpoint"]["created_total"] == 0
+            assert reread["checkpoint"]["created_total"] == 2
+            assert reread["checkpoint"]["per_cell"][_cells()[0].key] == 2
+            assert reread["checkpoint"]["cell_state"][
+                _cells()[0].unit_key]["created"] == 2
             assert reread["checkpoint"]["evaluations"][pid_a]["outcome"] == "evaluated"
         finally:
             check.rollback()
@@ -1545,15 +1550,70 @@ def test_recover_pending_pass_enqueues_exact_created() -> None:
 
     note = _recover_pending_pass(checkpoint, events_fn=_events)
     assert note == {"discovery_run_id": "runner:t:r:0", "enqueued": 2,
-                    "already_folded": False}
+                    "already_folded": False, "restored_created": 2,
+                    "restored_pass": True, "restored_request": True,
+                    "unit_key": ""}
     assert queried == ["runner:t:r:0"]  # exact run only, no fuzzy scan
     assert checkpoint["backlog"] == [good1, good2]
     assert checkpoint["pending_pass"] is None
     assert checkpoint["discovery_runs"] == ["runner:t:r:0"]
+    assert checkpoint["created_total"] == 2  # totals restored...
+    assert checkpoint["passes"] == 1
+    assert checkpoint["overpass_requests"] == 1
+    assert checkpoint["cell_state"] == {}  # ...but unknown cell "k" names no unit
     again = _recover_pending_pass(checkpoint, events_fn=_events)
     assert again == {"discovery_run_id": "", "enqueued": 0,
                      "already_folded": True}
     assert checkpoint["backlog"] == [good1, good2]  # idempotent
+
+
+def test_recover_pending_pass_restores_creation_accounting() -> None:
+    from app.discovery_runner import (
+        _fresh_checkpoint,
+        _recover_pending_pass,
+        _unit_runnable,
+    )
+
+    cell = _cells()[0]
+    good1, good2 = str(uuid4()), str(uuid4())
+    checkpoint = _fresh_checkpoint(_cells())
+    checkpoint["pending_pass"] = {
+        "seq": 0,
+        "discovery_run_id": "runner:t:r:0",
+        "cell": cell.key,
+        "unit": cell.unit_key,
+    }
+
+    def _events(run_id: str) -> list[Any]:
+        assert run_id == "runner:t:r:0"
+        return [_created_event(good1), _created_event(good2)]
+
+    note = _recover_pending_pass(checkpoint, events_fn=_events)
+    assert note["already_folded"] is False
+    assert note["enqueued"] == 2
+    assert note["restored_created"] == 2
+    assert note["restored_pass"] is True
+    assert note["restored_request"] is True
+    assert note["unit_key"] == cell.unit_key
+    assert checkpoint["backlog"] == [good1, good2]
+    assert checkpoint["created_total"] == 2
+    assert checkpoint["per_cell"][cell.key] == 2
+    assert checkpoint["passes"] == 1
+    assert checkpoint["overpass_requests"] == 1
+    state = checkpoint["cell_state"][cell.unit_key]
+    assert state["created"] == 2
+    assert state["passes"] == 1
+    # The finding's exact scenario: two committed creations under a
+    # two-property unit limit must not permit a third after restart.
+    assert _unit_runnable(
+        cell, state, counts={}, policy="pilot", effective_limit=2,
+        max_created_per_unit=2,
+    ) is False
+    # Recovery is idempotent: a second fold restores nothing more.
+    again = _recover_pending_pass(checkpoint, events_fn=_events)
+    assert again["already_folded"] is True
+    assert checkpoint["created_total"] == 2
+    assert checkpoint["cell_state"][cell.unit_key]["created"] == 2
 
 
 def test_recover_pending_pass_skips_folded_without_query() -> None:
@@ -1610,8 +1670,10 @@ def test_resume_recovers_interrupted_pass(
         drives.append(candidate)
         return {"outcome": "evaluated", "qualified": 0}
 
+    # max_passes=2: the recovered pass's own request now correctly
+    # consumes one request of the burst bound, leaving one live pass.
     report = run_worker(
-        lambda: _FakeConn(db), _config(max_passes=1),
+        lambda: _FakeConn(db), _config(max_passes=2),
         discovery_fn=_discovery, counts_fn=lambda: {},
         sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
         evaluate_fn=_eval,
@@ -1619,10 +1681,111 @@ def test_resume_recovers_interrupted_pass(
     assert queried == ["runner:test:aaa:0"]
     assert report["recovered_pending_pass"] == {
         "discovery_run_id": "runner:test:aaa:0", "enqueued": 1,
-        "already_folded": False,
+        "already_folded": False, "restored_created": 1,
+        "restored_pass": True, "restored_request": True,
+        "unit_key": _cells()[0].unit_key,
     }
     assert report["evaluated"] == 1 and drives == [pid]
     assert len(discovery_calls) == 1  # recovery itself made no discovery call
+
+
+def test_resume_unit_cap_survives_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash after two capped-unit creations must not permit a third."""
+    from app.discovery_runner import _fresh_checkpoint
+
+    cell = _cells()[0]
+    db = _db()
+    pid1, pid2 = str(uuid4()), str(uuid4())
+    checkpoint = _fresh_checkpoint(_cells())
+    checkpoint["pending_pass"] = {
+        "seq": 0,
+        "discovery_run_id": "runner:test:aaa:0",
+        "cell": cell.key,
+        "unit": cell.unit_key,
+    }
+    db["runs"].append({
+        "run_id": str(uuid4()), "scope": "test", "policy": "pilot",
+        "status": "completed", "config": {}, "checkpoint": checkpoint,
+        "usage": {}, "created_by": "t", "owner": "w0",
+        "heartbeat_at": _now(), "stop_requested": False, "error": None,
+        "started_at": "t0", "finished_at": "end",
+    })
+
+    def _by_run(run_id: str, limit: int = 1000, config: Any = None) -> list[Any]:
+        assert run_id == "runner:test:aaa:0"
+        return [_created_event(pid1), _created_event(pid2)]
+
+    monkeypatch.setattr("app.observability.store.by_run", _by_run)
+    discovery_calls: list[str] = []
+
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        discovery_calls.append(cell.key)
+        return _Pass(0, ())
+
+    drives: list[str] = []
+
+    def _eval(scope: str, candidate: str) -> dict[str, Any]:
+        drives.append(candidate)
+        return {"outcome": "evaluated", "qualified": 0}
+
+    report = run_worker(
+        lambda: _FakeConn(db), _config(max_passes=4, max_created_per_unit=2),
+        discovery_fn=_discovery, counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    assert report["recovered_pending_pass"]["restored_created"] == 2
+    assert report["outcome"] == "completed"
+    assert cell.key not in discovery_calls  # capped unit never rediscovered
+    assert sorted(drives) == sorted([pid1, pid2])
+    final = db["runs"][-1]["checkpoint"]
+    assert final["created_total"] == 2
+    assert final["cell_state"][cell.unit_key]["created"] == 2
+
+
+def test_failed_pass_folds_partial_creations_without_seq_reuse() -> None:
+    """A raising discovery call keeps its committed work and spends its seq."""
+    db = _db()
+    pid = str(uuid4())
+    store: dict[str, list[Any]] = {}
+    calls: list[tuple[str, str]] = []
+    failed_once: list[bool] = []
+
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append((cell.key, run_id))
+        if not failed_once:
+            failed_once.append(True)
+            store.setdefault(run_id, []).append(_created_event(pid))
+            raise RuntimeError("provider boom after partial commit")
+        return _Pass(0, ())
+
+    drives: list[str] = []
+
+    def _eval(scope: str, candidate: str) -> dict[str, Any]:
+        drives.append(candidate)
+        return {"outcome": "evaluated", "qualified": 0}
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(max_passes=4, max_consecutive_failures=5),
+        discovery_fn=_discovery, counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval, events_fn=lambda run_id: list(store.get(run_id, [])),
+    )
+    assert drives == [pid]  # partial commit survived the failure
+    assert report["outcome"] == "completed"
+    run_ids = [run_id for _, run_id in calls]
+    assert len(set(run_ids)) == len(run_ids)  # failed seq never reused
+    final = db["runs"][-1]["checkpoint"]
+    assert final["created_total"] == 1
+    assert final["overpass_requests"] == len(calls)
+    first_unit = _cells()[0].unit_key
+    assert final["cell_state"][first_unit]["created"] == 1
+    # Folded failure plus one legitimate retry that found nothing
+    # (retry-after-failure stays allowed; F6 caps attempts per unit).
+    assert final["cell_state"][first_unit]["passes"] == 2
 
 
 def test_recovery_unavailable_aborts_loudly(
@@ -1982,7 +2145,9 @@ def test_report_states_cells_deficits_and_decisions() -> None:
     assert report["remaining_quota"] == 35 * 4 + 2
     assert report["raphael_decisions"] == {"needs_evidence": 1}
     assert report["credited_new"] == 0  # static counts never double-count
-    assert report["request_bounds"] == {"overpass_requests": 1, "brave_requests": 45}
+    assert report["request_bounds"] == {
+        "overpass_requests": 1, "brave_requests": 45, "census_requests": 0,
+    }
 
 
 def test_credited_new_counts_per_cell_gains() -> None:
@@ -2182,3 +2347,498 @@ def test_final_report_marks_quota_unavailable_on_read_failure() -> None:
     assert report["credited_new"] is None
     assert report["created"] == 1  # committed work preserved
     assert report["checkpoint_durable"] is True
+
+
+def test_per_unit_creation_cap_skips_capped_units() -> None:
+    north = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.0, -97.0, 33.0, -96.0))
+    south = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.5, -96.9, 33.0, -96.5))
+    db = _db()
+    calls: list[str] = []
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.unit_key)
+        return _Pass(1, (str(uuid4()),))
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[north, south], max_passes=4, max_created_per_unit=1),
+        discovery_fn=_seen,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert calls == [north.unit_key, south.unit_key]
+    assert report["created"] == 2
+    assert report["reason"] == "all configured work units at creation cap"
+
+
+def test_per_unit_cap_clamps_pass_limit() -> None:
+    db = _db()
+    seen: list[int] = []
+
+    def _honest(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        seen.append(limit)
+        ids = tuple(str(uuid4()) for _ in range(limit))
+        return _Pass(len(ids), ids)
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=4, pass_limit=10,
+                max_created_per_unit=2),
+        discovery_fn=_honest,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert seen == [2]  # min(pass_limit, total remaining, unit remaining)
+    assert report["created"] == 2
+    assert report["reason"] == "all configured work units at creation cap"
+
+
+def test_no_runnable_reason_reports_capped_bucket() -> None:
+    north = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.0, -97.0, 33.0, -96.0))
+    south = RunnerCell(county="dallas county", category="high_rise",
+                       bbox=(32.5, -96.9, 33.0, -96.5))
+    db = _db()
+
+    def _seen(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        if cell.unit_key == north.unit_key:
+            return _Pass(0, ())
+        return _Pass(1, (str(uuid4()),))
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[north, south], max_passes=4, max_created_per_unit=1),
+        discovery_fn=_seen,
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert report["reason"] == (
+        "no runnable discovery units (1 exhausted, 0 fulfilled, "
+        "1 at creation cap, 0 attempts spent)"
+    )
+
+
+def test_census_spend_accrues_from_outcomes() -> None:
+    db = _db()
+    ids = (str(uuid4()), str(uuid4()))
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        return {"outcome": "evaluated", "qualified": 0, "census_attempts": 1}
+
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1, max_evaluations_per_pass=2,
+                max_census_requests=6),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(2, ids),
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    assert report["census_requests"] == 2
+    assert report["census_preempted"] is None
+    assert report["request_bounds"]["census_requests"] == 6
+
+
+def test_census_allowed_for_eval_gate() -> None:
+    from app.discovery_runner import _census_allowed_for_eval
+
+    open_config = _config(max_census_requests=6)
+    assert _census_allowed_for_eval(open_config, 0) is True
+    assert _census_allowed_for_eval(open_config, 5) is True
+    assert _census_allowed_for_eval(open_config, 6) is False
+    assert _census_allowed_for_eval(_config(), 0) is False  # disabled by default
+    assert _census_allowed_for_eval(_config(max_census_requests=6,
+                                            census_attempt_limit=0), 0) is False
+
+
+def test_census_request_bounds_default_zero() -> None:
+    from app.discovery_runner import burst_request_bounds
+
+    assert burst_request_bounds(_config())["census_requests"] == 0
+    assert burst_request_bounds(_config(max_census_requests=6))["census_requests"] == 6
+
+
+def test_envelope_bounds_validated() -> None:
+    good = RunnerCell(county="dallas county", category="high_rise",
+                      bbox=(32.0, -97.0, 33.0, -96.0))
+
+    def _check(**overrides: Any) -> None:
+        params: dict[str, Any] = {
+            "scope": "t", "policy": "pilot", "cells": [good],
+            "max_passes": 1, "max_duration_seconds": 60.0,
+            "max_created_total": 10,
+        }
+        params.update(overrides)
+        with pytest.raises(RunnerError):
+            RunnerConfig(**params).validate()
+
+    _check(max_created_per_unit=0)
+    _check(max_created_per_unit=True)
+    _check(max_census_requests=0)
+    _check(max_census_requests=-2)
+    _check(census_attempt_limit=2)
+    _check(census_attempt_limit=-1)
+    _check(census_attempt_limit=True)
+    RunnerConfig(scope="t", policy="pilot", cells=[good], max_passes=1,
+                 max_duration_seconds=60.0, max_created_total=10,
+                 max_created_per_unit=2, max_census_requests=6,
+                 census_attempt_limit=1).validate()
+
+
+def test_census_gate_skips_past_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _db()
+    seen: list[int] = []
+
+    def _faithful(scope: str, pid: str, **kwargs: Any) -> dict[str, Any]:
+        limit = int(kwargs.get("census_attempt_limit", 0))
+        seen.append(limit)
+        assert kwargs.get("census_principal") == "runner:test"
+        return {"outcome": "evaluated", "qualified": 0,
+                "census_attempts": 1 if limit else 0}
+
+    monkeypatch.setattr("app.discovery_runner.evaluate_property", _faithful)
+    monkeypatch.setenv("MVP_WORKFLOW_ENABLED", "1")
+    ids = (str(uuid4()), str(uuid4()))
+    report = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1, max_evaluations_per_pass=2,
+                max_census_requests=1, acquire_approved=True),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(2, ids),
+        counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+    )
+    assert seen == [1, 0]  # second evaluation runs without county admission
+    assert report["census_requests"] == 1
+    assert report["census_preempted"] == "census request bound reached"
+    assert report["evaluated"] == 2
+
+
+def test_cli_preview_states_envelope_without_work(
+    tmp_path: Any, capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from app.discovery_runner import main
+
+    cells_file = tmp_path / "cells.json"
+    cells_file.write_text(json.dumps([{
+        "county": "dallas county", "category": "high_rise",
+        "bbox": [32.77, -96.81, 32.79, -96.785], "source": "overpass",
+    }]))
+
+    def _must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("preview must not execute")
+
+    monkeypatch.setattr("app.discovery_runner.run_worker", _must_not_run)
+    code = main([
+        "preview", "--scope", "s", "--cells", str(cells_file),
+        "--max-passes", "3", "--max-created", "6", "--max-created-per-unit", "2",
+        "--max-evaluations", "2", "--evaluation-attempt-limit", "1",
+        "--max-overpass-requests", "3", "--max-census-requests", "6",
+    ])
+    assert code == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["request_bounds"] == {
+        "overpass_requests": 3, "brave_requests": 6, "census_requests": 6,
+    }
+    assert preview["max_created_per_unit"] == 2
+    assert preview["census_attempt_limit"] == 1
+    assert len(preview["units"]) == 1
+
+
+def test_cli_run_parses_envelope_flags(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from app.discovery_runner import main
+
+    cells_file = tmp_path / "cells.json"
+    cells_file.write_text(json.dumps([{
+        "county": "dallas county", "category": "high_rise",
+        "bbox": [32.77, -96.81, 32.79, -96.785],
+    }]))
+    captured: dict[str, Any] = {}
+
+    def _capture(connect_fn: Any, config: Any) -> dict[str, Any]:
+        captured["config"] = config
+        return {"outcome": "completed"}
+
+    monkeypatch.setattr("app.discovery_runner.run_worker", _capture)
+    code = main([
+        "run", "--scope", "s", "--cells", str(cells_file),
+        "--max-census-requests", "6", "--census-attempt-limit", "1",
+        "--max-created-per-unit", "2",
+    ])
+    assert code == 0
+    assert captured["config"].max_census_requests == 6
+    assert captured["config"].census_attempt_limit == 1
+    assert captured["config"].max_created_per_unit == 2
+
+
+def test_dallas_opening_units_example_loads() -> None:
+    from pathlib import Path
+
+    from app.discovery_runner import _cells_from_json
+
+    path = Path(__file__).resolve().parent.parent / "config" / "dallas_opening_units.example.json"
+    cells = _cells_from_json(str(path))
+    assert len(cells) == 3
+    assert {cell.category for cell in cells} == {
+        "high_rise", "commercial_property", "warehouse_industrial",
+    }
+    assert {cell.county for cell in cells} == {"dallas county"}
+    assert {cell.source for cell in cells} == {"overpass"}
+    for cell in cells:
+        assert cell.bbox == (32.770, -96.810, 32.790, -96.785)
+    RunnerConfig(scope="t", policy="pilot", cells=cells, max_passes=3,
+                 max_duration_seconds=600.0, max_created_total=6).validate()
+
+
+def _dallas_envelope_path() -> str:
+    from pathlib import Path
+
+    return str(
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "dallas_opening_envelope.example.json"
+    )
+
+
+def test_dallas_opening_envelope_example_loads() -> None:
+    from app.discovery_runner import envelope_config_from_json
+
+    config = envelope_config_from_json(_dallas_envelope_path(), scope="pilot-dfw")
+    assert config.scope == "pilot-dfw"
+    assert config.policy == "pilot"
+    assert len(config.cells) == 3
+    assert {cell.category for cell in config.cells} == {
+        "high_rise", "commercial_property", "warehouse_industrial",
+    }
+    assert {cell.county for cell in config.cells} == {"dallas county"}
+    assert {cell.source for cell in config.cells} == {"overpass"}
+    for cell in config.cells:
+        assert cell.bbox == (32.770, -96.810, 32.790, -96.785)
+    assert config.max_passes == 3
+    assert config.max_created_total == 6
+    assert config.max_created_per_unit == 2
+    assert config.max_discovery_attempts_per_unit == 1
+    assert config.pass_limit == 2
+    assert config.pass_timeout_seconds == 12.0
+    assert config.max_evaluations_per_pass == 2
+    assert config.evaluation_attempt_limit == 1
+    assert config.evaluation_timeout_seconds == 12.0
+    assert config.max_overpass_requests == 3
+    assert config.max_census_requests == 6
+    assert config.census_attempt_limit == 1
+    config.validate()
+
+
+def test_envelope_loader_rejects_extras_and_live_execution(
+    tmp_path: Any,
+) -> None:
+    import json
+
+    from app.discovery_runner import RunnerError, envelope_config_from_json
+
+    base: dict[str, Any] = {
+        "envelope": "t", "policy": "pilot",
+        "units": [{
+            "county": "dallas county", "category": "high_rise",
+            "bbox": [32.77, -96.81, 32.79, -96.785], "source": "overpass",
+        }],
+        "max_passes": 3, "max_duration_seconds": 1800,
+        "max_created_total": 6, "max_created_per_unit": 2,
+        "max_discovery_attempts_per_unit": 1, "pass_limit": 2,
+        "pass_timeout_seconds": 12.0, "max_evaluations_per_pass": 2,
+        "evaluation_attempt_limit": 1, "evaluation_timeout_seconds": 12.0,
+        "max_overpass_requests": 3, "max_census_requests": 6,
+        "census_attempt_limit": 1, "max_consecutive_failures": 3,
+        "pacing_seconds": 5.0, "backoff_cap_seconds": 60.0,
+        "claim_lease_seconds": 900.0,
+        "meta_calls": 0, "outreach": "disabled",
+    }
+
+    def _load(extra: dict[str, Any]) -> Any:
+        payload = dict(base)
+        payload.update(extra)
+        path = tmp_path / "envelope.json"
+        path.write_text(json.dumps(payload))
+        return envelope_config_from_json(str(path), scope="t")
+
+    _load({})  # the complete shape loads
+    with pytest.raises(RunnerError, match="unknown envelope key"):
+        _load({"launch_now": True})
+    with pytest.raises(RunnerError, match="meta_calls"):
+        _load({"meta_calls": 1})
+    with pytest.raises(RunnerError, match="outreach"):
+        _load({"outreach": "enabled"})
+    with pytest.raises(RunnerError, match="units"):
+        _load({"units": []})
+
+
+def test_unit_runnable_enforces_attempt_cap() -> None:
+    from app.discovery_runner import _fresh_checkpoint, _unit_runnable, _unit_state
+
+    cell = _cells()[0]
+    checkpoint = _fresh_checkpoint(_cells())
+    state = _unit_state(checkpoint, cell.unit_key)
+    assert _unit_runnable(
+        cell, state, counts={}, policy="pilot", effective_limit=2,
+        max_discovery_attempts_per_unit=1,
+    ) is True
+    state["passes"] = 1  # the one allowed attempt is spent
+    assert _unit_runnable(
+        cell, state, counts={}, policy="pilot", effective_limit=2,
+        max_discovery_attempts_per_unit=1,
+    ) is False
+    # A wider window reopens exhaustion but never the attempt cap.
+    state["exhausted"] = True
+    state["reason"] = "empty window"
+    state["limit"] = 2
+    assert _unit_runnable(
+        cell, state, counts={}, policy="pilot", effective_limit=99,
+        max_discovery_attempts_per_unit=1,
+    ) is False
+    assert _unit_runnable(
+        cell, state, counts={}, policy="pilot", effective_limit=99,
+    ) is True
+
+
+def test_census_spend_resumes_across_bursts() -> None:
+    db = _db()
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        return {"outcome": "evaluated", "qualified": 0, "census_attempts": 1}
+
+    kwargs: dict[str, Any] = {
+        "counts_fn": lambda: {}, "sleep_fn": lambda seconds: None,
+        "now_fn": _no_sabbath, "evaluate_fn": _eval,
+    }
+    first = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1, max_evaluations_per_pass=1,
+                max_census_requests=6),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (str(uuid4()),)),
+        **kwargs,
+    )
+    assert first["census_requests"] == 1
+    second = run_worker(
+        lambda: _FakeConn(db),
+        _config(cells=[_cells()[0]], max_passes=1, max_evaluations_per_pass=1,
+                max_census_requests=6, resume=True),
+        discovery_fn=lambda cell, run_id="", limit=0: _Pass(1, (str(uuid4()),)),
+        **kwargs,
+    )
+    assert second["census_requests"] == 1  # burst delta against restored spend
+
+
+def test_dallas_envelope_mocked_compliance() -> None:
+    """The shipped Dallas envelope enforces every bound with mocked providers."""
+    from app.discovery_runner import envelope_config_from_json
+
+    db = _db()
+    config = envelope_config_from_json(_dallas_envelope_path(), scope="pilot-dfw")
+    calls: list[str] = []
+    per_unit: dict[str, int] = {}
+
+    def _discovery(cell: RunnerCell, run_id: str = "", limit: int = 0) -> _Pass:
+        calls.append(cell.category)
+        per_unit[cell.unit_key] = per_unit.get(cell.unit_key, 0) + 1
+        if cell.category == "warehouse_industrial":
+            return _Pass(0, ())  # legitimately absent in this window
+        assert limit <= 2
+        ids = tuple(str(uuid4()) for _ in range(2))
+        return _Pass(2, ids)
+
+    spent: dict[str, int] = {"brave": 0, "census": 0}
+
+    def _eval(scope: str, pid: str) -> dict[str, Any]:
+        spent["brave"] += 1
+        spent["census"] += 1
+        return {
+            "outcome": "evaluated", "qualified": 0,
+            "brave_attempts": 1, "census_attempts": 1,
+        }
+
+    report = run_worker(
+        lambda: _FakeConn(db), config,
+        discovery_fn=_discovery, counts_fn=lambda: {},
+        sleep_fn=lambda seconds: None, now_fn=_no_sabbath,
+        evaluate_fn=_eval,
+    )
+    assert report["outcome"] == "completed"
+    assert report["overpass_requests"] == 3  # one attempt per unit
+    assert report["created"] == 4  # H:2 + C:2 + W:0, within the 6 total
+    assert report["brave_requests"] == 4
+    assert report["census_requests"] == 4
+    assert len(calls) == 3
+    assert sorted(calls) == [
+        "commercial_property", "high_rise", "warehouse_industrial",
+    ]
+    assert all(count == 1 for count in per_unit.values())
+    units = {entry["cell"]: entry for entry in report["units"]}
+    assert set(units) == {
+        "dallas county||high_rise",
+        "dallas county||commercial_property",
+        "dallas county||warehouse_industrial",
+    }
+    for entry in units.values():
+        assert entry["attempts"] == 1  # no unit skipped or repeated
+    assert units["dallas county||high_rise"]["created"] == 2
+    assert units["dallas county||commercial_property"]["created"] == 2
+    assert units["dallas county||warehouse_industrial"]["created"] == 0
+
+
+def test_cli_preview_and_run_share_envelope(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from app.discovery_runner import main
+
+    def _must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("preview must not execute")
+
+    monkeypatch.setattr("app.discovery_runner.run_worker", _must_not_run)
+    code = main([
+        "preview", "--scope", "pilot-dfw",
+        "--envelope", _dallas_envelope_path(),
+    ])
+    assert code == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["request_bounds"] == {
+        "overpass_requests": 3, "brave_requests": 6, "census_requests": 6,
+    }
+    assert preview["max_created_total"] == 6
+    assert preview["max_created_per_unit"] == 2
+    assert preview["max_discovery_attempts_per_unit"] == 1
+    assert preview["evaluation_attempt_limit"] == 1
+    assert preview["census_attempt_limit"] == 1
+    assert preview["pass_timeout_seconds"] == 12.0
+    assert preview["evaluation_timeout_seconds"] == 12.0
+    assert preview["meta_calls"] == 0
+    assert preview["outreach"] == "disabled"
+    assert len(preview["units"]) == 3
+    captured: dict[str, Any] = {}
+
+    def _capture(connect_fn: Any, config: Any) -> dict[str, Any]:
+        captured["config"] = config
+        return {"outcome": "completed"}
+
+    monkeypatch.setattr("app.discovery_runner.run_worker", _capture)
+    code = main([
+        "run", "--scope", "pilot-dfw", "--envelope", _dallas_envelope_path(),
+    ])
+    assert code == 0
+    executed = captured["config"]
+    assert executed.max_passes == preview["max_passes"] == 3
+    assert executed.max_created_total == 6
+    assert executed.max_created_per_unit == 2
+    assert executed.max_discovery_attempts_per_unit == 1
+    assert executed.evaluation_attempt_limit == 1
+    assert executed.census_attempt_limit == 1
+    assert executed.max_overpass_requests == 3
+    assert executed.max_census_requests == 6

@@ -1,0 +1,26 @@
+[
+  {
+    "unit_id": "DFW-DAL-001-H",
+    "county": "dallas county",
+    "category": "high_rise",
+    "bbox": [32.770, -96.810, 32.790, -96.785],
+    "source": "overpass",
+    "note": "target county is targeting context, never evidence"
+  },
+  {
+    "unit_id": "DFW-DAL-001-C",
+    "county": "dallas county",
+    "category": "commercial_property",
+    "bbox": [32.770, -96.810, 32.790, -96.785],
+    "source": "overpass",
+    "note": "target county is targeting context, never evidence"
+  },
+  {
+    "unit_id": "DFW-DAL-001-W",
+    "county": "dallas county",
+    "category": "warehouse_industrial",
+    "bbox": [32.770, -96.810, 32.790, -96.785],
+    "source": "overpass",
+    "note": "target county is targeting context, never evidence; warehouse results may legitimately be absent"
+  }
+]

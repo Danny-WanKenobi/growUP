@@ -984,6 +984,92 @@ def _patch_owned(monkeypatch: pytest.MonkeyPatch, db: _FakeDB) -> None:
     )
 
 
+def _seed_census_pair(db: _FakeDB) -> dict[str, Any]:
+    """Seed a Census collection/county pair for the parent address (test material)."""
+    import hashlib
+    import json
+
+    from app.agents.gabriel.sources import census as census_module
+    from app.workflow import (
+        KIND_CENSUS_COLLECTION,
+        KIND_CENSUS_COUNTY,
+        digest_payload,
+    )
+    from app.workflow_db import create_run_in_transaction, put_record_in_transaction
+
+    body = json.dumps(
+        {
+            "result": {
+                "input": {
+                    "benchmark": {"benchmarkName": "Public_AR_Current"},
+                    "vintage": {"vintageName": "Current_Current"},
+                },
+                "addressMatches": [
+                    {
+                        "matchedAddress": "2323 CHALK HILL RD, DALLAS, TX, 75212",
+                        "coordinates": {"x": -96.876, "y": 32.789},
+                        "addressComponents": {
+                            "city": "DALLAS",
+                            "state": "TX",
+                            "zip": "75212",
+                        },
+                        "geographies": {
+                            "Counties": [
+                                {
+                                    "GEOID": "48113",
+                                    "STATE": "48",
+                                    "COUNTY": "113",
+                                    "NAME": "Dallas County",
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        }
+    )
+    collection = {
+        "collector": census_module.CENSUS_COLLECTOR,
+        "collector_revision": census_module.CENSUS_COLLECTOR_REVISION,
+        "submitted_street": "2323 Chalk Hill Rd",
+        "submitted_city": "Dallas",
+        "submitted_state": "TX",
+        "submitted_zip": "75212",
+        "url": census_module.census_request_url(
+            "2323 Chalk Hill Rd", "Dallas", "TX", "75212"
+        ),
+        "retrieved_at": "2026-11-01T00:00:00+00:00",
+        "status_code": 200,
+        "content_type": "application/json",
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "body_text": body,
+        "principal": "wondrue-operator",
+        "collection_provenance": census_module.CENSUS_PROVENANCE,
+    }
+    conn = _FakeConn(db)
+    run = create_run_in_transaction(conn, idempotency_key="dcad-test-census-pair")
+    stored_collection = put_record_in_transaction(
+        conn, run.run_id, kind=KIND_CENSUS_COLLECTION,
+        record_key="census:test", version=1,
+        payload=collection, digest=digest_payload(collection),
+    )
+    county = census_module.assess_county(
+        collection=collection,
+        collection_digest=str(stored_collection.digest or ""),
+        property_record={"id": PROP_ID},
+    )
+    stored_county = put_record_in_transaction(
+        conn, run.run_id, kind=KIND_CENSUS_COUNTY,
+        record_key="census:test", version=1,
+        payload=county, digest=digest_payload(county),
+    )
+    return {
+        "run_id": run.run_id,
+        "collection_digest": stored_collection.digest,
+        "assessment_digest": stored_county.digest,
+    }
+
+
 # --- Producer extension -------------------------------------------------------
 
 
@@ -1072,6 +1158,160 @@ def test_successor_commit_needs_evidence(
     assert block["dcad_assessment"]["digest"] == collection["assessment_digest"]
     assert block["processing_revision"] == "successor-1"
     assert block["actor"] == "wondrue-operator"
+
+
+def test_successor_of_successor_resolves_original_artifacts(
+    monkeypatch: pytest.MonkeyPatch, _custody_env: None
+) -> None:
+    """Original -> DCAD successor -> Census successor keeps every lineage link."""
+    import copy
+
+    from app import mvp as mvp_module
+
+    db = _FakeDB()
+    parent = _seed_parent(db)
+    dcad = _seed_collection(db, parent)
+    census = _seed_census_pair(db)
+    db.pilot_cells.add(("dallas county", "commercial_property"))
+    original_records = copy.deepcopy(
+        {k: v for k, v in db.records.items() if k[0] == str(parent["run_id"])}
+    )
+    original_v1 = copy.deepcopy(db.versions[(str(parent["dossier_id"]), 1)])
+    _patch_owned(monkeypatch, db)
+    first = mvp_module.commit_successor_audited(
+        property_id=PROP_ID,
+        parent_run_id=str(parent["run_id"]),
+        dossier_key=parent["dossier_key"],
+        parent_version=1,
+        parent_digest=str(parent["dossier_digest"]),
+        expected_custody_version=1,
+        collection_run_id=str(dcad["run_id"]),
+        collection_digest=str(dcad["collection_digest"]),
+        assessment_digest=str(dcad["assessment_digest"]),
+        reason="assess admitted DCAD evidence",
+        principal="wondrue-operator",
+        approved=True,
+    )
+    assert first["custody_version"] == 2
+    second = mvp_module.commit_successor_audited(
+        property_id=PROP_ID,
+        parent_run_id=str(first["run_id"]),
+        dossier_key=parent["dossier_key"],
+        parent_version=1,
+        parent_digest=str(first["dossier_digest"]),
+        expected_custody_version=2,
+        collection_run_id=str(census["run_id"]),
+        collection_digest=str(census["collection_digest"]),
+        assessment_digest=str(census["assessment_digest"]),
+        reason="admit Census county evidence",
+        principal="wondrue-operator",
+        approved=True,
+    )
+    assert second["replayed"] is False
+    assert second["custody_version"] == 3
+    assert second["decision"] == "needs_evidence"
+    conn = _FakeConn(db)
+    from app.workflow import KIND_DOSSIER_VERSION
+    from app.workflow_db import get_record_in_transaction
+
+    first_record = get_record_in_transaction(
+        conn, first["run_id"], KIND_DOSSIER_VERSION, parent["dossier_key"]
+    )
+    second_record = get_record_in_transaction(
+        conn, second["run_id"], KIND_DOSSIER_VERSION, parent["dossier_key"]
+    )
+    assert first_record is not None and second_record is not None
+    first_block = (first_record.payload or {})["successor"]
+    second_block = (second_record.payload or {})["successor"]
+    # First-generation lineage points at the original run explicitly.
+    assert first_block["retained_artifacts"] == [
+        {
+            "run_id": str(parent["run_id"]),
+            "record_key": "a1",
+            "digest": str(parent["artifact_digest"]),
+        }
+    ]
+    # Second-generation lineage still resolves the ORIGINAL artifacts,
+    # not the intermediate run that merely references them.
+    assert second_block["retained_artifacts"] == [
+        {
+            "run_id": str(parent["run_id"]),
+            "record_key": "a1",
+            "digest": str(parent["artifact_digest"]),
+        }
+    ]
+    assert second_block["parent_run_id"] == str(first["run_id"])
+    assert second_block["census_county"]["digest"] == census["assessment_digest"]
+    second_dossier = (second_record.payload or {})["dossier"]
+    assert second_dossier["census_evidence"]["admission_run_id"] == str(census["run_id"])
+    assert (
+        second_dossier["census_evidence"]["county_digest"]
+        == census["assessment_digest"]
+    )
+    # The DCAD successor's own evidence block is preserved, not rewritten.
+    assert first_block["dcad_assessment"]["digest"] == dcad["assessment_digest"]
+    # Original history is untouched.
+    assert {
+        k: v for k, v in db.records.items() if k[0] == str(parent["run_id"])
+    } == original_records
+    assert db.versions[(str(parent["dossier_id"]), 1)] == original_v1
+
+
+def test_successor_lineage_digest_mismatch_refuses(
+    monkeypatch: pytest.MonkeyPatch, _custody_env: None
+) -> None:
+    """Lineage that disagrees with the stored artifact is refused loudly."""
+    from app import mvp as mvp_module
+    from app.workflow import KIND_DOSSIER_VERSION, digest_payload
+    from app.workflow_db import (
+        WorkflowError,
+        create_run_in_transaction,
+        get_record_in_transaction,
+        put_record_in_transaction,
+    )
+
+    db = _FakeDB()
+    parent = _seed_parent(db)
+    census = _seed_census_pair(db)
+    conn = _FakeConn(db)
+    original = get_record_in_transaction(
+        conn, parent["run_id"], KIND_DOSSIER_VERSION, parent["dossier_key"]
+    )
+    assert original is not None
+    intermediate = create_run_in_transaction(conn, idempotency_key="dcad-test-forged-link")
+    payload = {
+        "version": 1,
+        "builder_version": "test",
+        "artifact_refs": ["a1"],
+        "dossier": dict((original.payload or {})["dossier"]),
+        "candidate_verification": (original.payload or {})["candidate_verification"],
+        "property_id": PROP_ID,
+        "successor": {
+            "parent_run_id": str(parent["run_id"]),
+            "retained_artifacts": [
+                {
+                    "run_id": str(parent["run_id"]),
+                    "record_key": "a1",
+                    "digest": "forged-digest",
+                }
+            ],
+        },
+    }
+    payload["digest"] = digest_payload({k: v for k, v in payload.items() if k != "digest"})
+    put_record_in_transaction(
+        conn, intermediate.run_id, kind=KIND_DOSSIER_VERSION,
+        record_key=parent["dossier_key"], version=1,
+        payload=payload, digest=str(payload["digest"]),
+    )
+    _patch_owned(monkeypatch, db)
+    with pytest.raises(WorkflowError, match="digest mismatch"):
+        mvp_module.preview_successor_in_transaction(
+            _FakeConn(db),
+            property_id=PROP_ID,
+            parent_run_id=str(intermediate.run_id),
+            dossier_key=parent["dossier_key"],
+            collection_run_id=str(census["run_id"]),
+        )
 
 
 def test_successor_idempotent_retry_replays(

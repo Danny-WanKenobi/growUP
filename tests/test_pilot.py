@@ -278,12 +278,29 @@ def test_cross_run_rediscovery_records_once() -> None:
 
 def test_cell_from_dossier_requires_verified_county() -> None:
     verified = {
-        "county_attribution": {"evidence_status": "verified", "value": "Dallas County"},
+        "county_attribution": {
+            "evidence_status": "verified",
+            "value": "dallas county",
+            "claims": [
+                {
+                    "original": "Dallas County",
+                    "normalized": "dallas county",
+                    "source_url": (
+                        "https://geocoding.geo.census.gov/geocoder/geographies/address"
+                    ),
+                    "authority": "census_geocoder",
+                }
+            ],
+        },
         "category_attribution": {"status": "observed", "observed": "high_rise"},
     }
     assert cell_from_dossier(verified) == ("dallas county", "high_rise")
     assert cell_from_dossier({}) is None
     assert cell_from_dossier({"county_attribution": {"evidence_status": "observed"}}) is None
+    assert cell_from_dossier({
+        "county_attribution": {"evidence_status": "verified", "value": "Dallas County"},
+        "category_attribution": {"status": "observed", "observed": "high_rise"},
+    }) is None  # bare verified label without collector backing earns nothing
     assert cell_from_dossier({
         "county_attribution": {"evidence_status": "verified", "value": "Dallas County"},
         "category_attribution": {"status": "contradictory"},

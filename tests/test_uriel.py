@@ -175,7 +175,14 @@ def test_prepare_records_pilot_transition_for_known_cell() -> None:
         {"county": "dallas"}, {"event_id": uuid4()},
     ])
     dossier = {
-        "county_attribution": {"evidence_status": "verified", "value": "Dallas County"},
+        "county_attribution": {
+            "evidence_status": "verified", "value": "dallas county",
+            "claims": [{
+                "original": "Dallas County", "normalized": "dallas county",
+                "source_url": "https://geocoding.geo.census.gov/geocoder/geographies/address",
+                "authority": "census_geocoder",
+            }],
+        },
         "category_attribution": {"status": "observed", "observed": "high_rise"},
     }
     result = _prepare(conn, receipt, dossier=dossier)

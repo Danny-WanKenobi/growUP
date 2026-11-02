@@ -60,7 +60,7 @@ The agents share a common property record and coordinated workflow rather than o
 
 **Long-term capabilities (planned, not implemented):** Nicole — Permits & Licenses; Theresia Key — Underwriting; Simeon — Deal Coordination/Closing; Solomon — Construction Coordination; Gabriella — Vacant-Lot Discovery; Elmer — Accounting; Yoseph — Insurance & Liability; Deborah — Legal; Dan — Owner/Asset Management. These names reserve future responsibilities only: no placeholder agents exist, and the implemented canonical roles stay Michael (finance), Uriel (outreach), and Priscilla (conversion tracking). Future execution agents follow the same boundary as outreach — demo dispatch is labeled simulation only, and live mode alone grants no spending, sending, contract, filing, or construction authority.
 
-**Successor processing (bounded, implemented):** admitted DCAD evidence is assessed on the same property, dossier, and custody lineage: the successor run references its parent, replays retained evidence without a new acquisition, appends the next custody version under an enrolled authorizer, and routes a fresh Raphael decision. Identical retries replay; original history is never rewritten and pilot counts replay without new credit. Broader successor sources remain planned, not built.
+**Successor processing (bounded, implemented):** admitted DCAD or Census evidence is assessed on the same property, dossier, and custody lineage: the successor run references its parent, replays retained evidence without a new acquisition, appends the next custody version under an enrolled authorizer, and routes a fresh Raphael decision. Identical retries replay; original history is never rewritten and pilot counts replay without new credit. Census successors apply county-only attribution with the ordinary fail-closed category verdict. Further successor sources remain planned, not built.
 
 ---
 
@@ -137,7 +137,7 @@ python -m app.migrate           # apply SQL migrations in filename order
 uvicorn app.main:app --port 8001
 ```
 
-Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for simulated external execution, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window, and `DCAD_COLLECTION_ENABLED` / `DCAD_ALLOWED_ACCOUNTS` for bounded DCAD collection (both default closed).
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for simulated external execution, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window, and `DCAD_COLLECTION_ENABLED` / `DCAD_ALLOWED_ACCOUNTS` for bounded DCAD collection (both default closed), plus `CENSUS_COLLECTION_ENABLED` for bounded Census county admission (default closed).
 
 Run the local suite with `python -m pytest -q tests` (PostgreSQL-gated tests skip without `GROWUP_PG_INTEGRATION=1`).
 
@@ -1943,9 +1943,10 @@ normalizing to that same value, and a verified value outside
 verified status is rejected; county needs backing claims with a
 normalizable value. A caller-supplied verified label without
 supporting observations establishes nothing. Pilot cell credit
-additionally requires *verified* county attribution, and the generic
-evaluators cap at corroborated by design — see MVP limitations for
-the resulting county-admission blocker.
+additionally requires *verified* county attribution backed by a
+Census collector claim, and the generic evaluators cap at
+corroborated by design — see the Census county-admission
+section and MVP limitations.
 
 ### Raphael — verification and authorization
 
@@ -2160,6 +2161,108 @@ ask-mode tokens bind exact args). Live retrieval is
 owner-executed after separate approval and is not proven by
 fixture tests.
 
+Bounded Census county admission covers exactly one approved
+source: the documented Census geocoder structured-address
+geographies endpoint (`geographies/address?street=&city=&state=
+&zip=`, benchmark `Public_AR_Current`, vintage `Current_Current`,
+JSON). Collection refuses before claiming or transmitting unless
+explicitly approved, enabled (`CENSUS_COLLECTION_ENABLED=1`),
+and presented with a stored Texas street address and an
+authenticated principal; the URL is server-constructed from the
+stored operational address, so callers supply no URL and uploads
+cannot impersonate the minted `adapter_collected` provenance. A
+committed exclusive claim serializes transmission per
+property/address/attempt key: concurrent identical calls permit
+at most one HTTPS GET (12-second timeout, 256 KiB cap, no
+redirects, no retries, no secondary fetches, no proxy
+environment, TLS verified, destination resolved and refused
+unless public), completed evidence replays without a request,
+and an uncertain started claim cannot silently retransmit —
+recovery is a separately approved new attempt. No business
+transaction stays open during HTTP. The bounded response bytes
+are retained with their SHA-256, request parameters, retrieval
+time, submitted/matched address, coordinates, returned
+benchmark/vintage identity, collector revision, and principal
+before assessment, so an assessment refusal is recorded as an
+inspectable refusal record without erasing the bytes. Returned
+benchmark/vintage names are preserved per retrieval; a mutable
+"Current" dataset is never described as immutable across dates.
+The claim commit reserves the attempt's allowance on the
+evaluation run *before* transmission: only the claim winner
+charges, exactly once, so ambiguous transmits, assessment
+refusals, resumes, and replays can neither undercount (no crash
+window between transmit and accounting) nor double-count, and
+no refund path reopens the allowance. Pre-claim refusals
+(disabled, unapproved, unusable address, uncertain prior,
+lost race) charge nothing. Known limits: a crash
+between transmit and retention loses the bytes (the key stays
+uncertain, the allowance stays consumed), and
+resolve-then-connect is not IP pinning.
+
+Admission is county-only and requires exactly one supported
+address match with compatible normalized house number, street,
+and Texas state; city/ZIP are compared when both sides are
+present (mismatches refuse, absent sides record as not
+compared, never filled from targeting context); and exactly
+one county geography with valid consistent identifiers
+(GEOID == STATE+COUNTY, Texas FIPS 48) cross-checked between
+the returned name and the embedded Texas reference table. The
+result maps explicitly to the twelve canonical counties;
+valid outside-territory Texas results are admitted as outside,
+never rewritten to the requested county. No match, ambiguity,
+malformed geography, unsupported alignment, or conflicting
+retained county claims prevents admission, with all claims
+retained and contradictions explained. The admitted assertion
+is labeled "County of the matched Census address location —
+discovery territory only." It never establishes parcel
+boundaries (or whether a parcel straddles counties), a
+particular building or suite, ownership, occupancy, vacancy,
+distress, current use, category verification, zoning, or
+agricultural permission; interpolation does not guarantee the
+correct parcel, and known parcel/address disputes stay
+unresolved. Only collector evidence establishes this result —
+a caller-supplied "verified" status is never authority, and
+both credit gates (qualification `county_credit` and pilot
+cell selection) require the collector claim marker. Applying a
+result additionally binds the dossier's own address to the
+collected address (house number, street, and state must match;
+city compares when both sides are present): evidence collected
+for address B never credits a dossier describing address A,
+even under the same property UUID, and unresolved dossier
+addresses refuse. Agreeing retained claims are preserved with
+the Census claim appended (identical collector claims dedup,
+never duplicate), and every credited dossier carries a Census
+evidence locator (admission run id, collection/county record
+keys and digests, submitted/matched address) retrievable and
+verifiable without reconstructing identities from URL text; no
+verified attribution persists without its locator. Census is
+never enrolled in the property-category verification registry,
+and the shared verification policy is unchanged.
+
+New evaluations collect in a committed phase before the
+coordinated chain (at most one request per property, default
+disabled) and apply the retained result to the associated
+dossier inside the chain; a refused application is recorded
+and the dossier stays county-unresolved, and Census failures
+never abort the evaluation. Existing dossiers use the same
+audited successor mechanism narrowly extended to Census pairs
+(explicit source/parent/digest bindings, enrolled-amender
+authority, custody serialization, idempotent replay, one
+canonical quota identity, no duplicate credit, original
+history untouched) with the ordinary fail-closed category
+verdict — county admission cannot authorize Raphael or
+verify category. Retained artifacts resolve through explicit
+run/key/digest lineage, so a successor-of-successor (original
+→ DCAD successor → Census successor) still retrieves the
+original evidence with its digests verified; lineage that
+disagrees with the stored rows refuses loudly. No schema
+migration is needed: the new record kinds
+(`census_collection`, `census_county`, `census_claim`,
+`census_refusal`) ride the schemaless workflow store. Live
+Census compatibility and real county results are not proven
+by fixture tests; the inline JSON fixtures are labeled test
+material.
+
 The initial owner-run evaluation is a configurable single-request
 bound rather than the ordinary nine-attempt allowance:
 `brave_attempt_limit=1`, 12-second provider timeout, no automatic
@@ -2173,7 +2276,10 @@ outreach (no sender exists), and no simulated conversions
 `timeout_seconds`, `property_id`), or the runner
 (`--evaluation-attempt-limit 1 --evaluation-timeout 12`, or the
 same Wondrue burst args); ask-mode previews state the bound
-before anything executes.
+before anything executes. Direct evaluations default to no
+Census county admission (`census_attempt_limit=0`); the runner
+passes an explicit per-property limit only inside an explicitly
+bounded burst.
 
 Operational-property intake is a prerequisite, not a coordinator
 function. The coordinator never invents a property identity or
@@ -2200,27 +2306,39 @@ skip without `GROWUP_PG_INTEGRATION=1`):
 python -m pytest -q tests/test_coordinator_attribution.py tests/test_extractor.py tests/test_grouping_identity.py tests/test_ranking.py tests/test_dossier.py tests/test_verification_producer.py tests/test_mvp_flow.py
 python -m pytest -q tests/test_acquisition_budget.py tests/test_mvp_flow.py tests/test_raphael.py
 python -m pytest -q tests/test_dcad_admission.py
+python -m pytest -q tests/test_census_admission.py
 python -m pytest -q tests
 git diff --check
 ```
 
-Local suite in this tree: **2,067 passed, 143 skipped** (133
-pre-existing skips plus 10 PG-gated checks), 17
+Local suite in this tree: **2,176 passed, 146 skipped** (133
+pre-existing skips plus 13 PG-gated checks), 17
 warnings, with legacy-helper coverage preserved on the supported
 owned entry point, plus the 16-check sanitized attribution suite
 (`tests/test_coordinator_attribution.py`, derived from the
 retained real snippets: TX/Texas identity, per-address ZIPs,
 directory-city attribution, coordinator verification
 persistence, shared-policy success contract, fail-closed
-association) and the 74-check DCAD admission suite
+association), the 79-check DCAD admission suite
 (`tests/test_dcad_admission.py`: source-derived nested parser
 with title binding, labeled-row association, and the actual
 `span.DtlSectionHdr` section boundary, section/account
 isolation, collector claim/retention/refusal boundaries,
 public-destination refusal, admission honesty, claim-scoped
 alignment, successor rebuilt content/idempotency/binding
-validation/history, custody lock behavior, principal-resolved
-amendment authority, Wondrue approvals).
+validation/history, successor-of-successor run/key/digest
+lineage, custody lock behavior, principal-resolved
+amendment authority, Wondrue approvals), and the 57-check
+Census admission suite (`tests/test_census_admission.py`:
+server-constructed URL, collector claim/retention/refusal
+boundaries, crash-safe claim-time charging without
+double-counting, no-match/ambiguous/incompatible handling,
+identifier and reference-table validation,
+outside-territory admission, forgery/binding refusal,
+dossier-address binding, agreeing-claim preservation,
+evidence-locator retrieval, in-stage application, successor
+county application without category authorization, forged
+county-credit refusal at both credit gates).
 Pending owner execution on the disposable database
 (`growup_mvp_gate`) after `python -m app.migrate`: the seven
 `GROWUP_PG_INTEGRATION`-gated tests in
@@ -2234,7 +2352,13 @@ PG-gated tests in `tests/test_dcad_admission.py`
 unenrolled-replay refusal, history preservation, no duplicate
 pilot credit, and rollback atomicity; two-thread collect race
 asserting one mocked transmission; and two-thread successor
-race asserting exactly one v2 with its intended receipts),
+race asserting exactly one v2 with its intended receipts), the
+three PG-gated tests in `tests/test_census_admission.py`
+(two-thread collect race asserting one mocked transmission;
+successor-commit end-to-end county credit with replay,
+history preservation, and no duplicate credit; and a new
+evaluation running evidence to dossier to qualification to
+cell credit with mocked providers),
 plus a full regression and health checks. Those mutating checks
 verify they are connected to `growup_mvp_gate` before any write
 and fail rather than run elsewhere. Cleanup deletes disposable
@@ -3296,7 +3420,17 @@ runner folds that exact run's permanent decision events back into the
 backlog — `created` outcomes with a `COMMITTED` mutation and a valid
 property UUID only, event-store reads, no provider calls and no new
 property records — and records the folded run in `discovery_runs` so
-it is never folded twice. Discovery limits (creation ceiling, pilot
+it is never folded twice. The fold restores the pass's total,
+per-cell, and per-unit creation counts plus its pass sequence and
+request accounting (units resolve from the stamped unit key, or
+unambiguously from the cell for older checkpoints), so a crash
+after two committed creations under a two-property unit limit
+cannot permit a third after restart; only newly enqueued ids
+restore counts, so a re-fold cannot double-count. A discovery
+call that raises folds its partial committed creations through
+the same accounting and consumes its sequence, so the next
+pass never reuses the failed run id. Discovery limits
+(creation ceiling, pilot
 quota) stop new discovery only: a pending backlog keeps draining in
 bounded rounds under the same duration, stop-request, and
 per-pass-evaluation limits, so a creation ceiling never strands queued
@@ -3304,6 +3438,8 @@ work. If the event store is unreadable, recovery aborts rather than
 proceeding blind.
 
 ```bash
+python -m app.discovery_runner preview --scope pilot-dfw \
+    --envelope config/dallas_opening_envelope.example.json
 python -m app.discovery_runner run --scope pilot-dfw --policy pilot \
     --cells cells.json --max-passes 3 --max-duration 1800 --max-created 100 \
     --max-overpass-requests 3
@@ -3316,9 +3452,27 @@ with canonical county/category names and finite south<north,
 west<east windows; placeholders are never silently expanded and
 non-canonical cells or degenerate windows are refused at validation,
 never widened or reinterpreted. City names in cell metadata are
-targeting notes, not proof of city coverage. The same bursts are
-available through Wondrue (`start_discovery` / `resume_discovery` /
-`stop_discovery` / `inspect_discovery`, request-safe caps). A proposed
+targeting notes, not proof of city coverage. The approved Dallas
+opening probe ships as two reviewable examples: the unit list
+(`config/dallas_opening_units.example.json`) and one complete
+envelope (`config/dallas_opening_envelope.example.json`) pinning
+units plus every bound — three units (`DFW-DAL-001-H/C/W`)
+sharing one downtown window (32.770/-96.810/32.790/-96.785)
+across the three categories with equal priority, at most 3
+passes, 6 created (2 per unit), 1 discovery attempt per unit, 3
+Overpass / 6 Brave / 6 Census requests, 12-second timeouts, no
+retries, zero Meta and zero outreach — a bounded coverage
+probe, not complete Dallas coverage, and not installed or
+activated anywhere. The envelope loader is strict (unknown
+keys, nonzero Meta, or enabled outreach refuse), and `preview`
+and `run` load through the same function, so the shown
+envelope is the enforced envelope; only scope, resume,
+created-by, and the acquisition grant ride the command line.
+The `preview` subcommand validates and prints the effective
+envelope without claiming, transmitting, or writing. The same
+bursts are available through Wondrue (`start_discovery` /
+`resume_discovery` / `stop_discovery` / `inspect_discovery`,
+request-safe caps, including the per-unit attempt bound). A proposed
 two-hour timed preset (`TIMED_TWO_HOUR_PRESET`: 7200 s, 48 passes,
 400 created) exists in code but is **not launched** — duration and
 any spending approval are separate from implementation approval, and
@@ -3361,21 +3515,39 @@ before exceeding `max_passes × max_evaluations_per_pass ×
 evaluation_attempt_limit` Brave attempts, checked between
 evaluations alongside the duration and stop-request checks
 (in-flight evaluations run to their own timeout and may land just
-past a bound). Each discovery pass is also clamped to the remaining
-creation allowance. Reports state the computed `request_bounds`,
-actual `overpass_requests` and `brave_requests` spend,
+past a bound). Census county admission is capped by
+`--max-census-requests` (Wondrue `max_census_requests`, at most
+25 per Wondrue burst) with at most `--census-attempt-limit`
+(`0..1`, default 1) per evaluated property — and unlike
+Overpass it has no per-pass default: county admission transmits
+only inside an explicitly set envelope. Evaluations past the
+Census budget run without county admission (reported as
+`census_preempted`) rather than transmitting. Each discovery
+pass is also clamped to the remaining creation allowance and,
+when `--max-created-per-unit` is set (Wondrue
+`max_created_per_unit`), to the unit's remaining cap; capped
+units are skipped under every policy with an explicit reason.
+`--max-discovery-attempts-per-unit` (Wondrue
+`max_discovery_attempts_per_unit`) caps discovery attempts per
+unit absolutely — no wider window, exhaustion reset, or unmet
+quota reopens a spent unit, and failed attempts count. Reports
+state the computed `request_bounds`,
+actual `overpass_requests`, `brave_requests`, and
+`census_requests` spend,
 created/evaluated/qualified counts, newly credited dossiers,
 per-cell credited totals and deficits, aggregate `remaining_quota`
 (summed from per-cell deficits, so an overfilled cell never hides
 another cell's shortfall), Raphael decision tallies, exhausted
-units, and unresolved items (queued backlog depth, blocked and
-error counts). The final report always re-reads canonical counts
-from the same source before tallying, so credit earned by the last
-allowed round is included; if that read fails, quota progress is
-reported unavailable (no per-cell rows, `remaining_quota` and
-`credited_new` null) rather than stale counts presented as
-current. Reaching a pass limit is reported as a limit, never
-as pilot completion.
+units, per-unit states (`units`: attempts, created, exhaustion,
+reason — no unit is silently skipped or repeated beyond its
+allowance), and unresolved items (queued backlog depth, blocked
+and error counts). The final report always re-reads canonical
+counts from the same source before tallying, so credit earned by
+the last allowed round is included; if that read fails, quota
+progress is reported unavailable (no per-cell rows,
+`remaining_quota` and `credited_new` null) rather than stale
+counts presented as current. Reaching a pass limit is reported
+as a limit, never as pilot completion.
 
 ### Uriel — preparation-only packages
 
@@ -3465,19 +3637,22 @@ permitting. Synthetic records never count toward the 144-dossier
 target. `michael_ready` pilot counter and pre-canonical `mvp-1` receipt
 rows are retained for history, not live use. Positive real-property
 authorization still needs reviewed registry curation plus aligned
-identity evidence. Pilot cell credit additionally requires verified
-county attribution, but no supported county-verification path
-exists: the generic county evaluator caps at corroborated, and DCAD
-admission proves only its account/address relationship. Retained
-evidence therefore stays county-unresolved, and a county-admission
-design is proposed for owner approval — no invented trust may fill
-this gap. The proposal must show that the specific retained record
-actually supports the county conclusion and handles jurisdiction
-exceptions and ambiguity; the district's name, hostname, or an
-authenticated download alone enrolls nothing. Known residual: pending-pass recovery depends on
-reading the interrupted run's permanent decision events from the
-event store; an unreadable store aborts the burst rather than
-proceeding blind (see bounded discovery above). Validation gates
+identity evidence. Pilot cell credit requires verified county
+attribution backed by a Census collector claim (bare verified
+labels earn nothing at either credit gate); listing-derived
+county evaluation stays conservative and the generic evaluator
+caps at corroborated. Live Census compatibility and real county
+results are unvalidated — only separately approved
+owner-executed retrieval proves them. Known residuals:
+pending-pass recovery depends on reading the interrupted run's
+permanent decision events from the event store; an unreadable
+store aborts the burst rather than proceeding blind (see
+bounded discovery above); a crash between Census transmit and
+retention loses the bytes under an uncertain key (the
+allowance stays consumed); and resolve-then-connect is not IP
+pinning. Census allowance accounting is crash-safe (reserved
+in the claim commit before transmission — no undercount, no
+double-count, no reopening). Validation gates
 (each needs
 its own owner approval): owner Wondrue credential setup and
 service restart (procedure below; checkpoint `2aebc93` was fully
@@ -3488,13 +3663,20 @@ regression, the seven `GROWUP_PG_INTEGRATION`-gated acquisition
 tests, owner first-acquisition configuration, and health checks —
 all pending); a bounded live smoke test proving meaningful Meta
 runtime inference (see Demonstration); real discovery runs
-(the two-hour timed preset is defined but not launched); and the
-pilot-readiness tree in this worktree (attribution wiring, durable
-progression, per-provider request bounds, aggregate-shortfall fix,
+(the two-hour timed preset is defined but not launched); the
+pilot-readiness tree (attribution wiring, durable progression,
+per-provider request bounds, aggregate-shortfall fix,
 property-bound category observations, verified-category
-qualification, fresh final quota reporting — full offline suite
-green at 2,097 passed / 143 skipped / 17 warnings, owner
-PostgreSQL/Ubuntu validation pending).
+qualification, fresh final quota reporting); and the Census
+county-admission tree in this worktree (controlled collection,
+county-only assessment, dossier/successor integration, Dallas
+opening units, enforced opening envelope, plus the six-finding
+correction pass: dossier-address binding, crash-safe claim
+charging, creation-accounting recovery, successor lineage,
+claim/evidence preservation, complete envelope — full offline
+suite green at 2,176 passed / 146 skipped / 17 warnings, owner
+PostgreSQL/Ubuntu validation pending including the three
+Census PG checks).
 
 ## 🎥 Demonstration
 
@@ -3549,8 +3731,10 @@ spend at most one model call each from the shared budget; without
 by agent/capability.
 
 Model output is labeled `live` or `replay` in every response; read-only
-mode never issues live calls. Live Meta and Brave calls were not executed
-during implementation (pending explicit spending authorization).
+mode never issues live calls. Live Meta, Brave, and Census calls were not
+executed during implementation (pending explicit owner authorization;
+the only Census contact was reading the public API documentation and
+the static county reference file while implementing).
 Mocked success is not proof of live compatibility: the bounded live
 smoke test below stays owner-executed.
 

@@ -164,18 +164,24 @@ def canonical_quota_id(property_id: UUID | str) -> UUID:
 def cell_from_dossier(dossier: dict[str, Any]) -> tuple[str, str] | None:
     """Extract the pilot cell from a dossier dump, or None if unknown.
 
-    County requires a verified attested county name; category accepts a
-    verified or observed canonical category. Anything else (unknown,
-    contradictory, non-pilot) returns None: unknown cells earn no
-    quota credit but remain researchable elsewhere.
+    County requires a verified attested county name backed by a
+    collector claim; category accepts a verified or observed
+    canonical category. Anything else (unknown, contradictory,
+    non-pilot, caller-supplied verified labels without collector
+    backing) returns None: unknown cells earn no quota credit but
+    remain researchable elsewhere.
     """
     if not isinstance(dossier, dict):
         return None
     try:
+        from app.agents.gabriel.sources.census import has_collector_county_claim
+
         county_attr = dossier.get("county_attribution") or {}
         county = str(county_attr.get("value", "") or "")
         county_state = str(county_attr.get("evidence_status", "") or "").lower()
         if county_state != "verified":
+            return None
+        if not has_collector_county_claim(county_attr):
             return None
         cell_county = normalize_county(county)
         cat_attr = dossier.get("category_attribution") or {}

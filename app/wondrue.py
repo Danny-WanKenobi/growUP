@@ -87,6 +87,9 @@ INFERENCE_INTENTS = frozenset(
 WONDRUE_BURST_MAX_PASSES = 5
 WONDRUE_BURST_MAX_DURATION_SECONDS = 900.0
 WONDRUE_BURST_MAX_EVALUATIONS = 5
+# Census ceiling for one Wondrue burst: at most one admission per
+# evaluation across the largest request-safe burst (5 x 5).
+WONDRUE_BURST_MAX_CENSUS_REQUESTS = 25
 # Default metered calls per coordinator evaluation (ordinary
 # allowance; entry points accept an explicit ``brave_attempt_limit``
 # instead of hardcoding this for every run).
@@ -261,7 +264,9 @@ def preview_intent(
         requested = _acquire_request(args)
         bounds = _burst_bounds(args)
         per_evaluation = _evaluation_attempt_limit(args)
+        census_per_property = _census_attempt_limit(args)
         brave_bound = bounds[0] * bounds[3] * per_evaluation
+        census_bound = bounds[5] if bounds[5] is not None else 0
         operations = ["bounded discovery burst (existing OSM adapter)"]
         if requested:
             operations.append(
@@ -283,6 +288,11 @@ def preview_intent(
                 "; coordinator evaluations are NOT run (acquire not "
                 "requested): free OSM discovery only"
             )
+        if bounds[5] is not None and requested:
+            effects += (
+                f"; up to {census_bound} Census county-admission requests "
+                f"(at most {census_per_property} per evaluated property)"
+            )
         overpass_bound = bounds[4] if bounds[4] is not None else bounds[0]
         return {
             "operations": operations,
@@ -296,11 +306,16 @@ def preview_intent(
                 "max_evaluations": bounds[3],
                 "brave_attempt_limit": per_evaluation,
                 "max_overpass_requests": bounds[4],
+                "max_census_requests": bounds[5],
+                "census_attempt_limit": census_per_property,
+                "max_created_per_unit": bounds[6],
+                "max_discovery_attempts_per_unit": bounds[7],
             },
             "effects": effects,
             "cost_bounds": {
                 "overpass_requests": f"<= {overpass_bound}",
                 "brave_attempts": f"<= {brave_bound}" if requested else 0,
+                "census_requests": f"<= {census_bound}" if requested and bounds[5] else 0,
                 "meta_calls": 0,
             },
         }
@@ -613,7 +628,28 @@ def _acquire_request(args: dict[str, Any]) -> bool:
     raise WondrueError("acquire must be a boolean")
 
 
-def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int, int | None]:
+def _optional_positive_int(args: dict[str, Any], name: str) -> int | None:
+    """Optional integer bound (None when absent; rejects the rest)."""
+    raw = args.get(name)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise WondrueError("burst bounds must be numeric")
+    try:
+        value = float(raw)
+    except (ValueError, TypeError) as exc:
+        raise WondrueError("burst bounds must be numeric") from exc
+    if not value.is_integer():
+        raise WondrueError("burst bounds must be numeric")
+    result = int(value)
+    if result < 1:
+        raise WondrueError(f"{name} must be an integer >= 1")
+    return result
+
+
+def _burst_bounds(
+    args: dict[str, Any],
+) -> tuple[int, float, int, int, int | None, int | None, int | None, int | None]:
     """Strict burst bounds shared by preview and execution (fail closed)."""
     try:
         max_passes = int(args.get("max_passes", 1))
@@ -621,20 +657,12 @@ def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int, int | Non
         max_created = int(args.get("max_created", 50))
     except (ValueError, TypeError) as exc:
         raise WondrueError("burst bounds must be numeric") from exc
-    raw_overpass = args.get("max_overpass_requests")
-    max_overpass_requests: int | None = None
-    if raw_overpass is not None:
-        if isinstance(raw_overpass, bool):
-            raise WondrueError("burst bounds must be numeric")
-        try:
-            overpass_float = float(raw_overpass)
-        except (ValueError, TypeError) as exc:
-            raise WondrueError("burst bounds must be numeric") from exc
-        if not overpass_float.is_integer():
-            raise WondrueError("burst bounds must be numeric")
-        max_overpass_requests = int(overpass_float)
-        if max_overpass_requests < 1:
-            raise WondrueError("max_overpass_requests must be an integer >= 1")
+    max_overpass_requests = _optional_positive_int(args, "max_overpass_requests")
+    max_census_requests = _optional_positive_int(args, "max_census_requests")
+    max_created_per_unit = _optional_positive_int(args, "max_created_per_unit")
+    max_discovery_attempts = _optional_positive_int(
+        args, "max_discovery_attempts_per_unit"
+    )
     raw_evaluations = args.get("max_evaluations", WONDRUE_BURST_MAX_EVALUATIONS)
     if isinstance(raw_evaluations, bool):
         raise WondrueError("burst bounds must be numeric")
@@ -655,7 +683,24 @@ def _burst_bounds(args: dict[str, Any]) -> tuple[int, float, int, int, int | Non
         raise WondrueError(
             f"max_evaluations must be 0..{WONDRUE_BURST_MAX_EVALUATIONS}"
         )
-    return max_passes, max_duration, max_created, max_evaluations, max_overpass_requests
+    if (
+        max_census_requests is not None
+        and max_census_requests > WONDRUE_BURST_MAX_CENSUS_REQUESTS
+    ):
+        raise WondrueError(
+            "max_census_requests must be 1.."
+            f"{WONDRUE_BURST_MAX_CENSUS_REQUESTS}"
+        )
+    return (
+        max_passes,
+        max_duration,
+        max_created,
+        max_evaluations,
+        max_overpass_requests,
+        max_census_requests,
+        max_created_per_unit,
+        max_discovery_attempts,
+    )
 
 
 def _evaluation_attempt_limit(args: dict[str, Any]) -> int:
@@ -671,6 +716,22 @@ def _evaluation_attempt_limit(args: dict[str, Any]) -> int:
         raise WondrueError("brave_attempt_limit must be an integer 1..18")
     if limit < 1 or limit > 18:
         raise WondrueError("brave_attempt_limit must be an integer 1..18")
+    return limit
+
+
+def _census_attempt_limit(args: dict[str, Any]) -> int:
+    """Per-property Census attempt bound for one evaluation (default 1)."""
+    raw = args.get("census_attempt_limit", 1)
+    if isinstance(raw, bool):
+        raise WondrueError("census_attempt_limit must be an integer 0..1")
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (ValueError, TypeError) as exc:
+        raise WondrueError("census_attempt_limit must be an integer 0..1") from exc
+    if isinstance(raw, float) and not float(raw).is_integer():
+        raise WondrueError("census_attempt_limit must be an integer 0..1")
+    if limit < 0 or limit > 1:
+        raise WondrueError("census_attempt_limit must be an integer 0..1")
     return limit
 
 
@@ -707,7 +768,16 @@ def _burst_report(
     scope = str(args.get("scope", "") or "")
     if not scope:
         raise WondrueError("scope is required")
-    max_passes, max_duration, max_created, max_evaluations, max_overpass = _burst_bounds(args)
+    (
+        max_passes,
+        max_duration,
+        max_created,
+        max_evaluations,
+        max_overpass,
+        max_census,
+        max_per_unit,
+        max_attempts_per_unit,
+    ) = _burst_bounds(args)
     # An explicit burst timeout overrides the runner's pass timeout for
     # coordinator evaluations; when absent the runner default applies.
     burst_timeout = (
@@ -728,6 +798,10 @@ def _burst_report(
         evaluation_attempt_limit=_evaluation_attempt_limit(args),
         evaluation_timeout_seconds=burst_timeout,
         max_overpass_requests=max_overpass,
+        max_created_per_unit=max_per_unit,
+        max_discovery_attempts_per_unit=max_attempts_per_unit,
+        max_census_requests=max_census,
+        census_attempt_limit=_census_attempt_limit(args),
     )
 
     def _connect() -> Any:

@@ -413,7 +413,12 @@ def _dossier_payload(prop: UUID) -> dict[str, Any]:
             "conflicts": [],
             "category_attribution": {"status": "observed", "observed": "high_rise"},
             "county_attribution": {
-                "evidence_status": "verified", "value": "Dallas County",
+                "evidence_status": "verified", "value": "dallas county",
+                "claims": [{
+                    "original": "Dallas County", "normalized": "dallas county",
+                    "source_url": "https://geocoding.geo.census.gov/geocoder/geographies/address",
+                    "authority": "census_geocoder",
+                }],
             },
             "sources": ["https://broker-a.example/x", "https://broker-b.example/y"],
         },

@@ -34,6 +34,10 @@ KIND_DCAD_COLLECTION = "dcad_collection"
 KIND_DCAD_ASSESSMENT = "dcad_assessment"
 KIND_DCAD_CLAIM = "dcad_claim"
 KIND_DCAD_REFUSAL = "dcad_refusal"
+KIND_CENSUS_COLLECTION = "census_collection"
+KIND_CENSUS_COUNTY = "census_county"
+KIND_CENSUS_CLAIM = "census_claim"
+KIND_CENSUS_REFUSAL = "census_refusal"
 
 RECORD_KINDS = frozenset(
     {
@@ -50,6 +54,10 @@ RECORD_KINDS = frozenset(
         KIND_DCAD_ASSESSMENT,
         KIND_DCAD_CLAIM,
         KIND_DCAD_REFUSAL,
+        KIND_CENSUS_COLLECTION,
+        KIND_CENSUS_COUNTY,
+        KIND_CENSUS_CLAIM,
+        KIND_CENSUS_REFUSAL,
     }
 )
 

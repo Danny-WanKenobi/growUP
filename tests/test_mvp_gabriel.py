@@ -89,15 +89,23 @@ def _dossier(**overrides: Any) -> dict[str, Any]:
 
 
 def _backed_county_attribution() -> dict[str, Any]:
+    # Collector-minted shape (what apply_county_to_dossier actually
+    # writes): canonical value plus a Census collector claim. A bare
+    # verified label, or a listing claim relabeled "official", earns
+    # no credit.
     return {
         "evidence_status": "verified",
-        "value": "Dallas County",
+        "value": "dallas county",
         "claims": [
             {
                 "original": "Dallas County",
                 "normalized": "dallas county",
-                "source_url": "https://broker-a.example/x",
-                "authority": "official",
+                "source_url": (
+                    "https://geocoding.geo.census.gov/geocoder/geographies/address"
+                    "?street=2323+Chalk+Hill+Rd&city=Dallas&state=TX&zip=75212"
+                ),
+                "source_domain": "geocoding.geo.census.gov",
+                "authority": "census_geocoder",
             }
         ],
     }
@@ -113,7 +121,16 @@ def test_qualify_clean_dossier() -> None:
 def test_qualify_verified_county_earns_credit() -> None:
     result = qualify_dossier(_dossier(county_attribution=_backed_county_attribution()))
     assert result["outcome"] == "qualified"
-    assert result["county_credit"] == "Dallas County"
+    assert result["county_credit"] == "dallas county"
+
+
+def test_qualify_relabelled_county_claim_earns_no_credit() -> None:
+    forged = _backed_county_attribution()
+    forged["claims"][0]["authority"] = "official"
+    forged["claims"][0]["source_url"] = "https://broker-a.example/x"
+    result = qualify_dossier(_dossier(county_attribution=forged))
+    assert result["outcome"] == "qualified"
+    assert result["county_credit"] == ""
 
 
 def test_qualify_unbacked_observed_category_needs_research() -> None:
