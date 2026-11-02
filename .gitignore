@@ -53,3 +53,4 @@ htmlcov/
 # GUADE local runtime state (ledgers, audit logs, prompt files)
 guade/state/
 guade/state-operating/
+guade/state-overnight-*/
