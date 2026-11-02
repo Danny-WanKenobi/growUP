@@ -1,0 +1,311 @@
+{
+  "contract": "gabriel-search-priority-1",
+  "description": "Permanent Gabriel search priority (owner directive 2026-11-02): 1) DFW Metroplex county-by-county in the existing DFW order, 2) Houston Metroplex, 3) remaining Texas metros by principal-city population descending, 4) each remaining state's principal metro with states ordered by state population descending (Texas already covered first), 5) after the entire USA, restart at DFW with the next cycle. A front is attempt-complete when its batch quota is met or its sources are exhausted (owner-selected restart trigger). County sets resolve through batch geography datasets; fronts without a county dataset report geography-data-required rather than inventing counties.",
+  "population_basis": "2020 United States Census (decennial), parsed and corroborated 2026-11-02. State populations from the Census state-ranking table; Texas city figures as recorded in config/batch_geography.json plus the Texas metro list below. Refreshable data: updating figures re-orders future cycles without code changes.",
+  "states_by_population": [
+    {
+      "state": "California",
+      "population_2020": 39538223,
+      "principal_city": "Los Angeles"
+    },
+    {
+      "state": "Texas",
+      "population_2020": 29145505,
+      "principal_city": "Houston"
+    },
+    {
+      "state": "Florida",
+      "population_2020": 21538187,
+      "principal_city": "Jacksonville"
+    },
+    {
+      "state": "New York",
+      "population_2020": 20201249,
+      "principal_city": "New York"
+    },
+    {
+      "state": "Pennsylvania",
+      "population_2020": 13002700,
+      "principal_city": "Philadelphia"
+    },
+    {
+      "state": "Illinois",
+      "population_2020": 12812508,
+      "principal_city": "Chicago"
+    },
+    {
+      "state": "Ohio",
+      "population_2020": 11799448,
+      "principal_city": "Columbus"
+    },
+    {
+      "state": "Georgia",
+      "population_2020": 10711908,
+      "principal_city": "Atlanta"
+    },
+    {
+      "state": "North Carolina",
+      "population_2020": 10439388,
+      "principal_city": "Charlotte"
+    },
+    {
+      "state": "Michigan",
+      "population_2020": 10077331,
+      "principal_city": "Detroit"
+    },
+    {
+      "state": "New Jersey",
+      "population_2020": 9288994,
+      "principal_city": "Newark"
+    },
+    {
+      "state": "Virginia",
+      "population_2020": 8631393,
+      "principal_city": "Virginia Beach"
+    },
+    {
+      "state": "Washington",
+      "population_2020": 7705281,
+      "principal_city": "Seattle"
+    },
+    {
+      "state": "Arizona",
+      "population_2020": 7151502,
+      "principal_city": "Phoenix"
+    },
+    {
+      "state": "Massachusetts",
+      "population_2020": 7029917,
+      "principal_city": "Boston"
+    },
+    {
+      "state": "Tennessee",
+      "population_2020": 6910840,
+      "principal_city": "Nashville"
+    },
+    {
+      "state": "Indiana",
+      "population_2020": 6785528,
+      "principal_city": "Indianapolis"
+    },
+    {
+      "state": "Maryland",
+      "population_2020": 6177224,
+      "principal_city": "Baltimore"
+    },
+    {
+      "state": "Missouri",
+      "population_2020": 6154913,
+      "principal_city": "Kansas City"
+    },
+    {
+      "state": "Wisconsin",
+      "population_2020": 5893718,
+      "principal_city": "Milwaukee"
+    },
+    {
+      "state": "Colorado",
+      "population_2020": 5773714,
+      "principal_city": "Denver"
+    },
+    {
+      "state": "Minnesota",
+      "population_2020": 5706494,
+      "principal_city": "Minneapolis"
+    },
+    {
+      "state": "South Carolina",
+      "population_2020": 5118425,
+      "principal_city": "Charleston"
+    },
+    {
+      "state": "Alabama",
+      "population_2020": 5024279,
+      "principal_city": "Huntsville"
+    },
+    {
+      "state": "Louisiana",
+      "population_2020": 4657757,
+      "principal_city": "New Orleans"
+    },
+    {
+      "state": "Kentucky",
+      "population_2020": 4505836,
+      "principal_city": "Louisville"
+    },
+    {
+      "state": "Oregon",
+      "population_2020": 4237256,
+      "principal_city": "Portland"
+    },
+    {
+      "state": "Oklahoma",
+      "population_2020": 3959353,
+      "principal_city": "Oklahoma City"
+    },
+    {
+      "state": "Connecticut",
+      "population_2020": 3605944,
+      "principal_city": "Bridgeport"
+    },
+    {
+      "state": "Utah",
+      "population_2020": 3271616,
+      "principal_city": "Salt Lake City"
+    },
+    {
+      "state": "Iowa",
+      "population_2020": 3190369,
+      "principal_city": "Des Moines"
+    },
+    {
+      "state": "Nevada",
+      "population_2020": 3104614,
+      "principal_city": "Las Vegas"
+    },
+    {
+      "state": "Arkansas",
+      "population_2020": 3011524,
+      "principal_city": "Little Rock"
+    },
+    {
+      "state": "Mississippi",
+      "population_2020": 2961279,
+      "principal_city": "Jackson"
+    },
+    {
+      "state": "Kansas",
+      "population_2020": 2937880,
+      "principal_city": "Wichita"
+    },
+    {
+      "state": "New Mexico",
+      "population_2020": 2117522,
+      "principal_city": "Albuquerque"
+    },
+    {
+      "state": "Nebraska",
+      "population_2020": 1961504,
+      "principal_city": "Omaha"
+    },
+    {
+      "state": "Idaho",
+      "population_2020": 1839106,
+      "principal_city": "Boise"
+    },
+    {
+      "state": "West Virginia",
+      "population_2020": 1793716,
+      "principal_city": "Charleston"
+    },
+    {
+      "state": "Hawaii",
+      "population_2020": 1455271,
+      "principal_city": "Honolulu"
+    },
+    {
+      "state": "New Hampshire",
+      "population_2020": 1377529,
+      "principal_city": "Manchester"
+    },
+    {
+      "state": "Maine",
+      "population_2020": 1362359,
+      "principal_city": "Portland"
+    },
+    {
+      "state": "Rhode Island",
+      "population_2020": 1097379,
+      "principal_city": "Providence"
+    },
+    {
+      "state": "Montana",
+      "population_2020": 1084225,
+      "principal_city": "Billings"
+    },
+    {
+      "state": "Delaware",
+      "population_2020": 989948,
+      "principal_city": "Wilmington"
+    },
+    {
+      "state": "South Dakota",
+      "population_2020": 886667,
+      "principal_city": "Sioux Falls"
+    },
+    {
+      "state": "North Dakota",
+      "population_2020": 779094,
+      "principal_city": "Fargo"
+    },
+    {
+      "state": "Alaska",
+      "population_2020": 733391,
+      "principal_city": "Anchorage"
+    },
+    {
+      "state": "Vermont",
+      "population_2020": 643077,
+      "principal_city": "Burlington"
+    },
+    {
+      "state": "Wyoming",
+      "population_2020": 576851,
+      "principal_city": "Cheyenne"
+    }
+  ],
+  "texas_metros_after_houston": [
+    {
+      "principal_city": "San Antonio",
+      "population_2020": 1434625
+    },
+    {
+      "principal_city": "Austin",
+      "population_2020": 961855
+    },
+    {
+      "principal_city": "El Paso",
+      "population_2020": 678815
+    },
+    {
+      "principal_city": "Corpus Christi",
+      "population_2020": 317863
+    },
+    {
+      "principal_city": "Lubbock",
+      "population_2020": 264610
+    },
+    {
+      "principal_city": "Laredo",
+      "population_2020": 256153
+    },
+    {
+      "principal_city": "Amarillo",
+      "population_2020": 200393
+    },
+    {
+      "principal_city": "Brownsville",
+      "population_2020": 186738
+    },
+    {
+      "principal_city": "Midland",
+      "population_2020": 169983
+    },
+    {
+      "principal_city": "Killeen",
+      "population_2020": 153095
+    },
+    {
+      "principal_city": "McAllen",
+      "population_2020": 142210
+    },
+    {
+      "principal_city": "Waco",
+      "population_2020": 139594
+    },
+    {
+      "principal_city": "Tyler",
+      "population_2020": 109510
+    }
+  ]
+}
