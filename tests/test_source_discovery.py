@@ -420,6 +420,12 @@ def _cleanup_source_gate(key):
     from app.properties_db import get_connection
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Child records reference the run (workflow_records_run_id_fkey);
+            # delete them first or PostgreSQL refuses the run delete.
+            cur.execute(
+                "DELETE FROM workflow_records WHERE run_id IN "
+                "(SELECT run_id FROM workflow_runs WHERE idempotency_key = %s)",
+                ("gabriel-source-finding:" + key,))
             cur.execute("DELETE FROM workflow_runs WHERE idempotency_key = %s",
                         ("gabriel-source-finding:" + key,))
 
