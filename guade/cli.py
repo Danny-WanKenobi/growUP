@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from .credentials import credential_status, missing_key_guidance
 from .runtime import (Authorization, Coach, CoachUnavailable, Dispatcher,
                       GuadeError, Ledger, run_cycle)
 
@@ -45,14 +46,38 @@ def _ledger(args) -> Ledger:
 def cmd_check(args) -> int:
     ledger = _ledger(args)
     coach = Coach(ledger)
+    status = credential_status()
+    auth = ledger.authorization
+    counters = ledger.counters
+    remaining = {
+        "wonder_dispatches": auth.max_wonder_dispatches
+        - counters["wonder_dispatches"],
+        "coach_calls": auth.max_coach_calls - counters["coach_calls"],
+        "coach_tokens": auth.max_coach_total_tokens
+        - counters["coach_total_tokens"],
+        "correction_retries": auth.max_correction_retries
+        - counters["correction_retries"],
+    }
     print(f"coach model: meta-models/muse-spark-open-1026")
-    print(f"BASETEN_API_KEY: {'SET' if coach.available() else 'ABSENT'}")
+    print(f"BASETEN_API_KEY: {'SET' if coach.available() else 'ABSENT'}"
+          f" (source: {status['source']})")
+    for problem in status["problems"]:
+        print(f"credential warning: {problem}")
     print(f"engineer: muse exec --provider meta --model muse-wonder-1.0")
     print(f"authorization: {ledger.authorization}")
     print(f"counters: {ledger.counters}")
+    print(f"remaining: {remaining}")
     if not coach.available():
-        print("BLOCKED: provision BASETEN_API_KEY (development-only secret) "
-              "before any live cycle. No provider call was made.")
+        print("BLOCKED: " + missing_key_guidance()
+              + " No provider call was made.")
+        return 2
+    if (remaining["wonder_dispatches"] <= 0
+            or remaining["coach_calls"] <= 0
+            or remaining["coach_tokens"] < auth.coach_max_tokens_per_call):
+        print("BLOCKED: this ledger's authorized envelope is exhausted "
+              "(see remaining above). Do not reset or reuse it; a live "
+              "cycle needs a separate owner-approved ledger. No "
+              "provider call was made.")
         return 2
     print("READY: live cycle permitted within the authorized envelope.")
     return 0

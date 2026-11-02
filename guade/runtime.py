@@ -28,6 +28,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from .credentials import resolve_baseten_api_key
+
 COACH_MODEL = "meta-models/muse-spark-open-1026"
 COACH_URL = "https://inference.baseten.co/v1/chat/completions"
 ENGINEER_MODEL = "muse-wonder-1.0"
@@ -226,7 +228,7 @@ class Coach:
     def __init__(self, ledger: Ledger, transport=None, api_key: str | None = None) -> None:
         self.ledger = ledger
         self.transport = transport or _urllib_transport
-        self.api_key = os.environ.get("BASETEN_API_KEY", "") if api_key is None else api_key
+        self.api_key = resolve_baseten_api_key().value if api_key is None else api_key
 
     def available(self) -> bool:
         return bool(self.api_key.strip())
@@ -234,7 +236,9 @@ class Coach:
     def decide(self, kind: str, prompt: str) -> dict:
         if not self.available():
             raise CoachUnavailable(
-                "BASETEN_API_KEY is not provisioned in this environment")
+                "BASETEN_API_KEY is not provisioned: not in the process "
+                "environment, the Windows user environment, or a "
+                "restricted GUADE env file (see guade.credentials)")
         auth = self.ledger.authorization
         self.ledger.reserve_coach_call()
         payload = {

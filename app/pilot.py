@@ -461,6 +461,7 @@ def plan_next_in_transaction(
                 "shortfall": _shortfall(cell),
                 "est_brave_requests": EST_BRAVE_REQUESTS_PER_ACTION,
                 "budget_ok": cumulative <= remaining,
+                "source": source_note_for(cell.county, cell.category),
             }
         )
     return {
@@ -576,6 +577,29 @@ def record_transition(
         record_key=record_key,
         config=config,
     )
+
+
+def source_note_for(county: str, category: str) -> dict[str, Any]:
+    """Worldwide-qualification source note for one pilot cell.
+
+    Pure and offline: qualifies the county's candidate sources and
+    reports the adapter the workflow may use (None outside Dallas
+    until a publisher is verified, enrolled, and adapted). Planning
+    surfaces this so an operator never mistakes a provisional source
+    for an authorized one.
+    """
+    from app.agents.gabriel.sources.discovery import discover_sources
+
+    result = discover_sources(normalize_county(county),
+                              normalize_category(category))
+    top = result["ranked"][0] if result["ranked"] else {}
+    return {
+        "top_source": top.get("name"),
+        "top_status": top.get("status"),
+        "selected_adapter": result["selected_adapter"],
+        "authority_basis": result["authority_basis"],
+        "blockers": result["blockers"],
+    }
 
 
 def plan_next(
