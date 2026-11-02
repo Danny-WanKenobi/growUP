@@ -269,8 +269,13 @@ def test_unknown_registry_host() -> None:
     assert registry.source_class_of("https://nope.example/x") is SourceClass.UNVETTED
 
 
-def test_production_registry_empty() -> None:
-    assert PRODUCTION_REGISTRY.entries == {}
+def test_production_registry_contains_only_dcad() -> None:
+    # Owner-authorized 2026-11-02: DCAD is the sole enrollment, and it
+    # confers no authority on any other host.
+    assert set(PRODUCTION_REGISTRY.entries) == {"www.dallascad.org"}
+    entry = PRODUCTION_REGISTRY.entries["www.dallascad.org"]
+    assert entry.source_class is SourceClass.AUTHORITATIVE
+    assert entry.record_types == ["commercial_account"]
 
 
 def test_no_automatic_gov_authority() -> None:

@@ -5,8 +5,10 @@ establishes voice *eligibility* only -- never claim truth. Unknown hosts
 fail closed to UNVETTED. Nothing here is inferred: every entry is an
 explicit curation decision with provenance metadata.
 
-The production registry starts EMPTY. Entries are added only through
-separately reviewed curation; tests build synthetic registries in memory.
+Entries are added only through separately reviewed curation; tests
+build synthetic registries in memory. The Dallas Central Appraisal
+District entry below was enrolled by explicit owner directive on
+2026-11-02, narrowly scoped to the recorded facts named in its note.
 """
 
 from __future__ import annotations
@@ -70,5 +72,29 @@ class SourceRegistry(BaseModel):
         return entry.publisher if entry is not None else ""
 
 
-# Production registry: zero vetted entries until separately reviewed curation.
-PRODUCTION_REGISTRY = SourceRegistry()
+# Production registry. Enrollments happen only through separately
+# reviewed, owner-authorized curation (see module docstring).
+PRODUCTION_REGISTRY = SourceRegistry(
+    entries={
+        "www.dallascad.org": RegistryEntry(
+            hostname="www.dallascad.org",
+            source_class=SourceClass.AUTHORITATIVE,
+            outlet_name="Dallas Central Appraisal District",
+            publisher="Dallas Central Appraisal District",
+            record_types=["commercial_account"],
+            added_by="owner directive 2026-11-02 (Dallas P1 verification)",
+            added_on="2026-11-02",
+            review_due="2027-05-02",
+            note=(
+                "Narrow authority: parcel/account identifiers, recorded "
+                "situs addresses, appraisal values with their years, "
+                "recorded land-use classifications (appraisal "
+                "classifications only), recorded improvements, areas, "
+                "and construction years, and dataset provenance. NOT "
+                "authority for occupancy, vacancy, availability, "
+                "current operational use, agricultural suitability, "
+                "code compliance, zoning permission, or feasibility."
+            ),
+        ),
+    }
+)

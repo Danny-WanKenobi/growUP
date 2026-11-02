@@ -163,7 +163,7 @@ def test_production_registry_untouched_by_demo() -> None:
 
     store = DemoStore()
     run_demo_workflow(store, demo_id("reg"))
-    assert PRODUCTION_REGISTRY.entries == {}
+    assert set(PRODUCTION_REGISTRY.entries) == {"www.dallascad.org"}
     assert not any("fiction" in host for host in PRODUCTION_REGISTRY.entries)
 
 

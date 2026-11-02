@@ -146,7 +146,7 @@ def test_distinct_hosts_do_not_verify() -> None:
     # evidence cannot verify, and multi-host agreement alone never does.
     assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
     assert R.UNVETTED_SOURCES_ONLY in verdict.reasons
-    assert R.REGISTRY_UNCONFIGURED in verdict.reasons
+    assert R.REGISTRY_UNCONFIGURED not in verdict.reasons
     assert R.IDENTITY_UNRESOLVED in verdict.reasons
 
 
@@ -188,15 +188,18 @@ def test_identity_disputes_noted_not_resolved() -> None:
     assert R.IDENTITY_UNRESOLVED in verdict.reasons
 
 
-def test_empty_production_registry_blocks() -> None:
-    assert PRODUCTION_REGISTRY.entries == {}
+def test_unrelated_registry_enrollment_blocks() -> None:
+    # The production registry enrolls only DCAD; broker hosts remain
+    # unvetted and cannot verify.
+    assert set(PRODUCTION_REGISTRY.entries) == {"www.dallascad.org"}
     intel, ranking = _ranked(
         _result("https://broker-a.example/x", "Meridian Center",
                f"Office building for sale at {_ADDR}.")
     )
     candidate = _only_candidate(intel, ranking)
     verdict = build_candidate_verifications(ranking, intel)[candidate.key]
-    assert R.REGISTRY_UNCONFIGURED in verdict.reasons
+    assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
+    assert R.REGISTRY_UNCONFIGURED not in verdict.reasons
 
 
 def test_ranking_scores_and_order_unchanged() -> None:
@@ -451,7 +454,7 @@ def test_ranking_unchanged_by_verdict_build() -> None:
     assert ranking.model_dump(mode="json") == before
 
 
-def test_persisted_details_show_empty_registry() -> None:
+def test_persisted_details_show_unvetted_hosts() -> None:
     from app.agents.gabriel.provenance import build_research_verdicts
 
     intel, ranking = _annotated()
@@ -459,7 +462,7 @@ def test_persisted_details_show_empty_registry() -> None:
         run_id="run-2b", correlation_id="", ranking=ranking, intel=intel)
     stored = verdict.details["category_verification"]
     assert stored["outcome"] == "not_verified"
-    assert "registry_unconfigured" in stored["reasons"]
+    assert "registry_unconfigured" not in stored["reasons"]
     assert "identity_unresolved" in stored["reasons"]
 
 
@@ -528,7 +531,7 @@ def test_live_verdict_persists_category_verification() -> None:
         assert len(events) == 1
         stored = events[0].details["category_verification"]
         assert stored["outcome"] == "not_verified"
-        assert "registry_unconfigured" in stored["reasons"]
+        assert "registry_unconfigured" not in stored["reasons"]
         assert stored["rationale"]
     finally:
         with pdb.get_connection() as conn:
@@ -574,12 +577,12 @@ def _policy_request(publishers, *, registry=None, aligned=False, facts=None):
 
 
 def test_gate_claimed_publisher_is_not_authenticated() -> None:
-    # Distinct claimed publishers, empty production registry: the claim
-    # strings cannot create vetted standing.
+    # Distinct claimed publishers; the production registry enrolls
+    # only DCAD, so the claim strings cannot create vetted standing.
     result = verify_category(_policy_request(["Broker A", "Broker B"]))
     assert result.outcome is VerificationOutcome.NOT_VERIFIED
     assert R.UNVETTED_SOURCES_ONLY in result.reasons
-    assert R.REGISTRY_UNCONFIGURED in result.reasons
+    assert R.REGISTRY_UNCONFIGURED not in result.reasons
 
 
 def test_gate_claimed_publishers_do_not_bypass_identity() -> None:
@@ -669,10 +672,10 @@ def test_existing_high_rise_facts_flow_but_do_not_verify() -> None:
                f"Existing 20-story office tower at {_ADDR}.")
     )
     candidate = _only_candidate(intel, ranking)
-    # Empty production registry: facts alone never verify.
+    # Facts alone never verify for an unvetted host.
     verdict = build_candidate_verifications(ranking, intel)[candidate.key]
     assert verdict.outcome is VerificationOutcome.NOT_VERIFIED
-    assert R.REGISTRY_UNCONFIGURED in verdict.reasons
+    assert R.REGISTRY_UNCONFIGURED not in verdict.reasons
     # Even vetted, a single unaligned voice cannot verify.
     vetted = build_candidate_verifications(
         ranking, intel, _vetted_registry("broker-a.example"))[candidate.key]

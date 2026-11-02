@@ -98,14 +98,17 @@ _DESC_LABEL_RE = re.compile(r"^desc\s*:(.*)$", re.IGNORECASE)
 _TOTAL_AREA_LABEL_RE = re.compile(r"^total\s+area\s*:(.*)$", re.IGNORECASE)
 _YEAR_BUILT_LABEL_RE = re.compile(r"^year\s+built\s*:(.*)$", re.IGNORECASE)
 
-# Description keyword buckets for scope transparency only. Buckets
-# never become use facts; they only show whether descriptions span
-# more than the claim scope.
+# Description keyword buckets. Since the owner-authorized DCAD
+# registry enrollment (2026-11-02), a record carrying exactly one
+# recorded improvement class contributes that class as a recorded
+# (appraisal) classification fact; mixed-class records contribute no
+# selected fact and are flagged as material contradictions instead.
 _DESC_BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("warehouse", ("warehouse", "storage", "distribution", "industrial")),
     ("office", ("office",)),
     ("retail", ("retail", "commercial", "store", "restaurant")),
 )
+_BUCKET_USE = {"warehouse": "warehouse", "office": "office", "retail": "retail"}
 _CLAIM_BUCKET = {
     "warehouse_industrial": "warehouse",
     "commercial_property": None,  # broad claim; any single bucket is in-scope
@@ -612,12 +615,14 @@ def _admission_scope_note(claim_scope: str, buckets: set[str]) -> str:
 
 
 def build_dcad_voice(collection_url: str) -> VoiceInput:
-    """One authenticated DCAD voice: no defining facts, no publisher.
+    """One authenticated DCAD voice (facts attached by the assessment).
 
-    The record type names the source format honestly; with no use
-    facts attached, this voice alone can never satisfy a category
-    pathway. Provenance ``adapter_collected`` here is minted only
-    through :func:`build_dcad_assessment` over a validated collection.
+    The record type names the source format honestly. Defining facts
+    are attached only by :func:`build_dcad_assessment`, and only when
+    the record carries exactly one recorded improvement class; they
+    state the appraisal classification, never present use or
+    occupancy. Provenance ``adapter_collected`` here is minted only
+    through that assessment over a validated collection.
     """
     return VoiceInput(
         url=collection_url,
@@ -754,22 +759,38 @@ def build_dcad_assessment(
         aligned=bool(agreement),
         note=f"{basis}. {scope_limits}",
     )
-    voice = build_dcad_voice(str(collection.get("url", "")))
-    active = PRODUCTION_REGISTRY if registry is None else registry
-    verdict = verify_category(
-        VerificationRequest(
-            claim=str(claim_scope or ""),
-            voices=[voice],
-            identity=attestation,
-            registry=active,
-        )
-    ).model_dump(mode="json")
     improvements: list[dict[str, Any]] = []
     buckets: set[str] = set()
     for entry in parsed["improvements"]:
         entry_buckets = _description_buckets(entry["description_raw"])
         buckets.update(entry_buckets)
         improvements.append({**entry, "buckets": entry_buckets})
+    recorded_uses = sorted({_BUCKET_USE[b] for b in buckets if b in _BUCKET_USE})
+    defining_facts: dict[str, str] = {}
+    if len(recorded_uses) == 1:
+        defining_facts = {
+            "use": recorded_uses[0],
+            "use_status": "recorded",
+        }
+    voice = build_dcad_voice(str(collection.get("url", ""))).model_copy(
+        update={"defining_facts": defining_facts}
+    )
+    active = PRODUCTION_REGISTRY if registry is None else registry
+    verdict = verify_category(
+        VerificationRequest(
+            claim=str(claim_scope or ""),
+            voices=[voice],
+            identity=attestation,
+            material_contradiction=len(recorded_uses) > 1,
+            contradiction_note=(
+                "DCAD record carries multiple recorded improvement "
+                f"classes {recorded_uses}; no single category selected."
+                if len(recorded_uses) > 1
+                else ""
+            ),
+            registry=active,
+        )
+    ).model_dump(mode="json")
     return {
         "assessment_version": DCAD_ASSESSMENT_VERSION,
         "collector": DCAD_COLLECTOR,
@@ -779,6 +800,7 @@ def build_dcad_assessment(
         "account": account,
         "collection_digest": str(collection_digest or ""),
         "claim_scope": str(claim_scope or ""),
+        "recorded_uses": recorded_uses,
         "address": {
             "source_raw": parsed["address_raw"],
             "locator": parsed["address_locator"],

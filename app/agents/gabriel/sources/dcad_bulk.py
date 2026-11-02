@@ -43,7 +43,7 @@ from app.agents.gabriel.sources.base import (
     SourceError,
     register_source,
 )
-from app.agents.gabriel.sources.dcad import dcad_account_url
+from app.agents.gabriel.sources.dcad import DcadConfigError, dcad_account_url
 
 logger = logging.getLogger(__name__)
 
@@ -127,11 +127,17 @@ def parse_exchange(data_dir: Path, retrieved_at: str) -> list[RawListing]:
         seen.add(account)
         land_use = str(row.get("land_use", "") or "").strip()
         improvement = str(row.get("improvement_description", "") or "").strip()
+        try:
+            element_url = dcad_account_url(account)
+        except DcadConfigError:
+            # Bulk accounts include alphanumeric unit ids that have
+            # no account-page URL; discovery must not fail on them.
+            element_url = None
         listings.append(
             RawListing(
                 source="dcad_bulk",
                 external_id=f"dcad:{account}",
-                element_url=dcad_account_url(account),
+                element_url=element_url,
                 name=None,
                 street_address=address,
                 city=str(row.get("city", "") or "").strip() or None,

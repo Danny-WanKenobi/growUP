@@ -60,6 +60,18 @@ def test_parse_exchange_dedupes_and_maps_categories(tmp_path):
         "ID=10000000000000002")
 
 
+def test_alphanumeric_bulk_accounts_do_not_crash(tmp_path):
+    """Real bulk data includes unit accounts with letters (no page URL)."""
+    rows = (
+        '527662500A0110000,"222 CATULLUS DR",Sunnyvale,75182,Residential,'
+        "SINGLE FAMILY,1200,2001,32.90,-96.60,300000,2026 Certified\n"
+    )
+    listings = parse_exchange(_stage(tmp_path, rows=rows),
+                              "2026-11-02T00:00:00Z")
+    assert listings[0].external_id == "dcad:527662500A0110000"
+    assert listings[0].element_url is None
+
+
 def test_map_land_use_defaults_to_other():
     assert map_land_use("Residential", "SINGLE FAMILY") == "other"
     assert map_land_use("", "") == "other"
