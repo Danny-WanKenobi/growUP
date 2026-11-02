@@ -539,6 +539,16 @@ def test_run_skips_candidates_failing_validation_gate(monkeypatch) -> None:
     assert result.counts.created == 0
 
 
+def test_mission_scoped_run_without_selection_refused(monkeypatch) -> None:
+    _configured_env(monkeypatch)
+    stub = _StubSource(listings=[_listing()])
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: stub)
+    req = _run_request(jurisdiction="Travis County")
+    with pytest.raises(Exception):
+        gabriel_service.run_discovery(req)
+    assert stub.calls == 0
+
+
 def test_unknown_source_name_raises() -> None:
     with pytest.raises(UnknownSourceError):
         get_source("no-such-provider")

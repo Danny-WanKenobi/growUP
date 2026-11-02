@@ -31,6 +31,9 @@ collection envelope and is not performed here.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from typing import Any
 
 from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER, display_name
@@ -210,6 +213,97 @@ def discover_sources(county: str, category: str) -> dict[str, Any]:
         "provenance": note,
         "blockers": blockers,
     }
+
+
+def select_for_mission(mission, *, http_get=None, supported_adapters=None,
+                       persist: bool = False, run_id: str = "",
+                       assignment_key: str | None = None, durable_store=None,
+                       brave_execute=None, reserve=None, env=None) -> dict[str, Any]:
+    """Find, qualify, rank, and select for any jurisdiction (not only the 12 pilot counties).
+
+    Without ``assignment_key`` this is the legacy in-process path.
+    With a stable ``assignment_key`` it is the durable path: an
+    exclusive claim (and, for Brave, the shared monthly reservation)
+    is committed before any provider transmission, bounded response
+    evidence and the decision are persisted in the existing workflow
+    store, and a replay with the same key returns the retained
+    decision with zero provider/DNS calls -- even after the process
+    cache is cleared. A claimed attempt with no retained decision is
+    uncertain and is never auto-retransmitted; the same key with a
+    different mission/limits refuses.
+    """
+    from app.agents.gabriel.sources.source_finder import find_candidates
+    from app.agents.gabriel.sources.source_selection import (
+        SourceSelectionError, UncertainFindingError, WorkflowSelectionStore,
+        mission_fingerprint, mission_payload, persist_selection, select_sources,
+    )
+
+    mission.validate()
+    if not mission.approved:
+        raise SourceSelectionError("source finding requires explicit approval")
+    if assignment_key is None and durable_store is None:
+        if http_get is None or brave_execute is not None or mission.budget.max_paid_requests:
+            raise SourceSelectionError("real source finding requires a stable assignment_key")
+        decision = select_sources(
+            mission,
+            find_candidates(mission, http_get=http_get, brave_execute=brave_execute,
+                            reserve=reserve, env=env),
+            supported_adapters=supported_adapters)
+        if persist:
+            persist_selection(decision, run_id=run_id or f"source-selection:{decision['digest'][:16]}")
+        return decision
+    if not str(assignment_key or "").strip():
+        raise SourceSelectionError(
+            "durable source finding requires a stable assignment_key")
+    store = durable_store if durable_store is not None else WorkflowSelectionStore()
+    fingerprint = mission_fingerprint(mission)
+    claim = store.claim(assignment_key, fingerprint, mission_payload(mission))
+    status = claim.get("status")
+    if status == "completed":
+        import copy as _copy
+        from app.agents.gabriel.sources.source_selection import _RETAINED, _digest
+        decision = _copy.deepcopy(claim["decision"])
+        if decision.get("mission_fingerprint") != fingerprint \
+                or decision.get("run_id") != claim.get("run_id") \
+                or _digest(decision) != decision.get("digest"):
+            raise SourceSelectionError(
+                "retained source-selection decision does not verify against its run/digest/mission identity")
+        _RETAINED[decision["digest"]] = _copy.deepcopy(decision)
+        return decision
+    if status != "winner":
+        raise UncertainFindingError(
+            "source finding for this assignment_key was already claimed and its "
+            "outcome is uncertain; it will not be auto-retransmitted")
+    run_identity = str(claim.get("run_id") or "")
+    evidence_sink: list = []
+    found = find_candidates(mission, http_get=http_get, brave_execute=brave_execute,
+                            reserve=reserve, env=env, evidence_sink=evidence_sink)
+    decision = select_sources(mission, found, supported_adapters=supported_adapters)
+    import hashlib as _hashlib
+    import json as _json
+    evidence = {
+        "assignment_key": str(assignment_key), "run_id": run_identity,
+        "mission_fingerprint": fingerprint, "mission": mission_payload(mission),
+        "attempts": evidence_sink[:10],
+        "candidates": [
+            {"name": f.candidate.name, "publisher_domain": f.candidate.publisher_domain,
+             "tier": f.tier, "provider": f.provider, "adapter": f.adapter,
+             "evidence_ref": f.evidence_ref}
+            for f in found[: mission.budget.max_results]],
+    }
+    evidence_digest = _hashlib.sha256(
+        _json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    from app.agents.gabriel.sources.source_selection import _RETAINED, _digest
+    _RETAINED.pop(decision["digest"], None)
+    decision.update({"assignment_key": str(assignment_key), "run_id": run_identity,
+                     "mission_fingerprint": fingerprint,
+                     "evidence_digest": evidence_digest})
+    decision["digest"] = _digest(decision)
+    store.complete(assignment_key, decision=decision, evidence=evidence)
+    _RETAINED[decision["digest"]] = __import__("copy").deepcopy(decision)
+    if persist:
+        persist_selection(decision, run_id=run_id or f"source-selection:{decision['digest'][:16]}")
+    return decision
 
 
 def qualified_adapter(county: str, category: str) -> str | None:

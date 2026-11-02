@@ -117,3 +117,22 @@ def test_convert_end_to_end_preserves_leading_zeros(tmp_path):
     assert parcels[0]["account"] == account
     assert abs(float(parcels[0]["latitude"]) - 32.78) < 1e-4
     assert abs(float(parcels[0]["longitude"]) + 96.80) < 1e-4
+
+
+def test_conversion_serializes_all_improvements_and_pairs_primary_fields(tmp_path):
+    import json
+    test_convert_end_to_end_preserves_leading_zeros(tmp_path)
+    account = "00000700090000000"
+    extracted, out = tmp_path / "in", tmp_path / "out"
+    (extracted / "COM_DETAIL.CSV").write_text(
+        "ACCOUNT_NUM,BLDG_CLASS_DESC,GROSS_BLDG_AREA,YEAR_BUILT,NUM_STORIES\n"
+        f"{account},STORAGE WAREHOUSE,19440,1968,2\n"
+        f"{account},OFFICE BUILDING,1440,1980,18\n", encoding="utf-8")
+    convert(extracted, out)
+    with (out / "dcad_accounts.csv").open() as handle:
+        row = next(csv.DictReader(handle))
+    assert row["num_stories"] == "2", "primary area and stories must describe the same improvement"
+    assert row["improvement_count"] == "2"
+    improvements = json.loads(row["improvements"])
+    assert len(improvements) == 2
+    assert {str(x.get("NUM_STORIES", x.get("num_stories"))) for x in improvements} == {"2", "18"}

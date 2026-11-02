@@ -68,6 +68,8 @@ class RunnerCell:
     category: str
     bbox: tuple[float, float, float, float]  # south, west, north, east
     source: str = "overpass"
+    jurisdiction: str = ""
+    selection: dict | None = None
 
     @property
     def key(self) -> str:
@@ -163,6 +165,24 @@ class RunnerConfig:
                 )
             if not str(cell.source or "").strip():
                 raise RunnerError(f"cell source is required: {cell.key}")
+            from app.agents.gabriel.sources.source_selection import (
+                SourceSelectionError, bootstrap_selection, enforce_selection)
+            try:
+                # Cells are server-owned config: with no claimed
+                # jurisdiction the explicit scope is its canonical
+                # county; an explicit jurisdiction still requires a
+                # retained selection (no bypass).
+                if cell.selection is not None:
+                    selection = cell.selection
+                elif cell.jurisdiction:
+                    selection = None
+                else:
+                    selection = bootstrap_selection(source=cell.source, jurisdiction=cell.county)
+                enforce_selection(source=cell.source,
+                                  jurisdiction=cell.jurisdiction or selection["mission"]["jurisdiction"],
+                                  selection=selection)
+            except SourceSelectionError as exc:
+                raise RunnerError(str(exc)) from exc
         if self.max_passes < 1:
             raise RunnerError("max_passes must be >= 1")
         if self.max_duration_seconds <= 0:
@@ -655,10 +675,11 @@ def burst_request_bounds(config: RunnerConfig) -> dict[str, int]:
     than transmitting. In-flight requests run to their own
     timeout and may land just past a bound.
     """
+    local_official = bool(config.cells) and all(c.source == "dcad_bulk" for c in config.cells)
     return {
-        "overpass_requests": config.overpass_request_bound,
+        "overpass_requests": 0 if local_official else config.overpass_request_bound,
         "brave_requests": (
-            config.max_passes
+            0 if local_official else config.max_passes
             * config.max_evaluations_per_pass
             * config.evaluation_attempt_limit
         ),
@@ -903,6 +924,7 @@ def _merge_saved_checkpoint(
                 "limit": int(value.get("limit", 0)),
             }
     checkpoint["overpass_requests"] = int(saved.get("overpass_requests", 0))
+    checkpoint["local_discovery_passes"] = int(saved.get("local_discovery_passes", 0))
     checkpoint["brave_requests"] = int(saved.get("brave_requests", 0))
     checkpoint["census_requests"] = int(saved.get("census_requests", 0))
     saved_evals = saved.get("evaluations") or {}
@@ -1082,6 +1104,11 @@ def _unit_key_for_cell(checkpoint: dict[str, Any], cell_key: str) -> str:
     return matches[0] if len(matches) == 1 else ""
 
 
+def _record_discovery_attempt(checkpoint: dict[str, Any], source: str) -> None:
+    counter = "local_discovery_passes" if source == "dcad_bulk" else "overpass_requests"
+    checkpoint[counter] = int(checkpoint.get(counter, 0)) + 1
+
+
 def _fold_pass_events(
     checkpoint: dict[str, Any],
     run_id: str,
@@ -1149,9 +1176,7 @@ def _fold_pass_events(
     _enqueue_backlog(checkpoint, created_ids, run_id)
     checkpoint["created_total"] = int(checkpoint.get("created_total", 0)) + len(added)
     checkpoint["passes"] = int(checkpoint.get("passes", 0)) + 1
-    checkpoint["overpass_requests"] = (
-        int(checkpoint.get("overpass_requests", 0)) + 1
-    )
+    _record_discovery_attempt(checkpoint, unit_key.rsplit("||", 1)[-1])
     per_cell = checkpoint.get("per_cell")
     if isinstance(per_cell, dict) and cell_key in per_cell:
         per_cell[cell_key] = int(per_cell[cell_key]) + len(added)
@@ -1358,6 +1383,7 @@ def evaluate_property(
     brave_attempt_limit: int = 9,
     census_attempt_limit: int = 0,
     census_principal: str | None = None,
+    official_ref: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Drive one discovered property through the existing coordinator.
 
@@ -1400,9 +1426,40 @@ def evaluate_property(
     prop = get_property(target)
     if prop is None:
         return {"outcome": "skipped", "reason": "property row missing"}
+    # Official path is chosen explicitly by the retained envelope/ref;
+    # it never falls back to a forced Brave call. When no explicit ref
+    # is supplied but the property has retained official discovery,
+    # the caller may pass official_ref="auto" to resolve it.
+    resolved_official = official_ref
+    if official_ref == "auto":  # type: ignore[comparison-overlap]
+        resolved_official = None
+        try:
+            from app.agents.gabriel.sources.official_records import (
+                find_retained_official_in_transaction)
+            from app.properties_db import get_connection as _gc
+            _conn = _gc()
+            try:
+                found = find_retained_official_in_transaction(_conn, property_id=pid)
+            finally:
+                _conn.close()
+            if found is not None:
+                resolved_official = {
+                    "discovery_run_id": found["discovery_run_id"],
+                    "event_id": found["event_id"],
+                    "property_id": pid,
+                    "evidence_digest": found["evidence_digest"],
+                }
+        except Exception:
+            return {"outcome": "blocked", "reason": "retained official evidence lookup failed",
+                    "brave_attempts": 0, "census_attempts": 0}
+        if resolved_official is None:
+            return {"outcome": "blocked", "reason": "retained official evidence unavailable",
+                    "brave_attempts": 0, "census_attempts": 0}
     query = build_evaluation_query(prop)
-    if query is None:
+    if query is None and resolved_official is None:
         return {"outcome": "skipped", "reason": "no usable address"}
+    if query is None:
+        query = f"official:{pid}"
     assignment_id = f"runner:{scope}:{pid}"
     brave_before = _brave_used_for(assignment_id, query)
     census_before = _census_used_for(assignment_id, query)
@@ -1413,6 +1470,8 @@ def evaluate_property(
             brave_attempt_limit=brave_attempt_limit,
             census_attempt_limit=census_attempt_limit,
             census_principal=census_principal,
+            official_ref=resolved_official if isinstance(resolved_official, dict) else None,
+            stop_after_raphael=isinstance(resolved_official, dict),
         )
     except WorkflowError as exc:
         spent = max(0, _brave_used_for(assignment_id, query) - brave_before)
@@ -1620,10 +1679,16 @@ def run_worker(
             )
 
         def _real(cell: RunnerCell, run_id: str, limit: int) -> Any:
+            from app.agents.gabriel.schemas import SourceSelectionAttestation
+            from app.agents.gabriel.sources.source_selection import bootstrap_selection
             south, west, north, east = cell.bbox
+            selection = cell.selection or bootstrap_selection(
+                source=cell.source, jurisdiction=cell.jurisdiction or cell.county)
             return run_discovery(
                 DiscoveryRunRequest(
                     source=cell.source,
+                    jurisdiction=cell.jurisdiction or selection["mission"]["jurisdiction"],
+                    selection=SourceSelectionAttestation.model_validate(selection),
                     bbox=BoundingBoxInput(
                         south=south, west=west, north=north, east=east
                     ),
@@ -1661,12 +1726,15 @@ def run_worker(
                     census_limit = 0
                     if config.census_request_bound > 0:
                         report["census_preempted"] = "census request bound reached"
+                official_mode = "auto" if any(
+                    c.source in ("dcad_bulk",) for c in config.cells) else None
                 return evaluate_property(
                     scope, pid, approved=approved,
                     timeout_seconds=timeout,
                     brave_attempt_limit=attempt_limit,
                     census_attempt_limit=census_limit,
                     census_principal=f"runner:{scope}",
+                    official_ref=official_mode,  # type: ignore[arg-type]
                 )
 
             evaluate_fn = _default_evaluate
@@ -1759,6 +1827,7 @@ def run_worker(
     burst_evaluated = 0
     burst_qualified = 0
     overpass_baseline = int(checkpoint.get("overpass_requests", 0))
+    local_baseline = int(checkpoint.get("local_discovery_passes", 0))
     brave_baseline = int(checkpoint.get("brave_requests", 0))
     census_baseline = int(checkpoint.get("census_requests", 0))
     counts_before: dict[tuple[str, str], int] | None = None
@@ -1779,6 +1848,7 @@ def run_worker(
 
     def _usage() -> dict[str, Any]:
         return {
+            "local_discovery_passes": int(checkpoint.get("local_discovery_passes", 0)) - local_baseline,
             "runner_version": RUNNER_VERSION,
             "passes": burst_passes,
             "created": burst_created,
@@ -1887,6 +1957,7 @@ def run_worker(
         ]
 
     def _tally() -> None:
+        report["local_discovery_passes"] = int(checkpoint.get("local_discovery_passes", 0)) - local_baseline
         report["passes"] = burst_passes
         report["created"] = burst_created
         report["evaluated"] = burst_evaluated
@@ -1917,7 +1988,9 @@ def run_worker(
         if preempt_state is not None and preempt_state["stop_requested"]:
             return "operator stop observed"
         spent = int(checkpoint.get("brave_requests", 0)) - brave_baseline
-        if spent >= bounds["brave_requests"]:
+        if (bounds["brave_requests"] > 0 and spent >= bounds["brave_requests"]) or (
+            bounds["brave_requests"] == 0 and spent > 0
+        ):
             return "brave request bound reached"
         return None
 
@@ -2071,7 +2144,7 @@ def run_worker(
                 return report
             continue
         spent_overpass = int(checkpoint.get("overpass_requests", 0)) - overpass_baseline
-        if spent_overpass >= bounds["overpass_requests"]:
+        if any(c.source != "dcad_bulk" for c in config.cells) and spent_overpass >= bounds["overpass_requests"]:
             if not _drain_or_finish("overpass request budget exhausted"):
                 return report
             continue
@@ -2144,9 +2217,7 @@ def run_worker(
             except DatabaseNotConfiguredError:
                 # No database: nothing could have committed, but
                 # the attempt itself still counts.
-                checkpoint["overpass_requests"] = (
-                    int(checkpoint.get("overpass_requests", 0)) + 1
-                )
+                _record_discovery_attempt(checkpoint, cell.source)
                 checkpoint["passes"] = int(checkpoint.get("passes", 0)) + 1
                 failed_state = _unit_state(checkpoint, cell.unit_key)
                 failed_state["passes"] = int(failed_state.get("passes", 0)) + 1
@@ -2172,7 +2243,7 @@ def run_worker(
             sleep(backoff)
             continue
         consecutive_failures = 0
-        checkpoint["overpass_requests"] = int(checkpoint.get("overpass_requests", 0)) + 1
+        _record_discovery_attempt(checkpoint, cell.source)
         burst_passes += 1
         burst_created += created
         checkpoint["passes"] = int(checkpoint["passes"]) + 1
@@ -2383,6 +2454,15 @@ def envelope_config_from_json(
     return config
 
 
+def _pilot_readiness_preview() -> dict[str, Any]:
+    """Read-only pilot readiness (no DB, no provider, no launch)."""
+    try:
+        from app.pilot import pilot_readiness
+        return pilot_readiness()
+    except Exception as exc:  # preview must stay truthful, not crash
+        return {"goal_claimed_met": False, "error": type(exc).__name__}
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: run|status|stop|preview. ``run`` executes one bounded burst only."""
     import sys
@@ -2539,6 +2619,7 @@ def main(argv: list[str] | None = None) -> int:
                 "acquire_approved": config.acquire_approved,
                 "max_passes": config.max_passes,
                 "max_duration_seconds": config.max_duration_seconds,
+                "pilot_readiness": _pilot_readiness_preview(),
             }, default=str))
             return 0
         report = run_worker(_connect, config)

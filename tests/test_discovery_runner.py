@@ -423,6 +423,18 @@ def test_two_hour_preset_is_documented_not_launched() -> None:
     assert TIMED_TWO_HOUR_PRESET["policy"] == "timed"
 
 
+def test_runner_cell_selection_bypass_refused() -> None:
+    cell = RunnerCell(county="dallas county", category="high_rise", bbox=(32.0, -97.0, 33.0, -96.0),
+                      source="overpass", jurisdiction="Travis County", selection=None)
+    with pytest.raises(RunnerError):
+        RunnerConfig(scope="s", policy="pilot", cells=[cell]).validate()
+    from app.agents.gabriel.sources.source_selection import bootstrap_selection
+    ok = bootstrap_selection(source="overpass", jurisdiction="Travis County")
+    cell2 = RunnerCell(county="dallas county", category="high_rise", bbox=(32.0, -97.0, 33.0, -96.0),
+                       source="overpass", jurisdiction="Travis County", selection=ok)
+    RunnerConfig(scope="s", policy="pilot", cells=[cell2]).validate()
+
+
 def test_config_validation() -> None:
     with pytest.raises(RunnerError):
         RunnerConfig(scope="", policy="pilot", cells=_cells()).validate()
@@ -2756,11 +2768,11 @@ def test_dallas_envelope_mocked_compliance() -> None:
     spent: dict[str, int] = {"brave": 0, "census": 0}
 
     def _eval(scope: str, pid: str) -> dict[str, Any]:
-        spent["brave"] += 1
+        # Retained DCAD records are inspected without a Brave search.
         spent["census"] += 1
         return {
             "outcome": "evaluated", "qualified": 0,
-            "brave_attempts": 1, "census_attempts": 1,
+            "brave_attempts": 0, "census_attempts": 1,
         }
 
     report = run_worker(
@@ -2770,9 +2782,10 @@ def test_dallas_envelope_mocked_compliance() -> None:
         evaluate_fn=_eval,
     )
     assert report["outcome"] == "completed"
-    assert report["overpass_requests"] == 3  # one attempt per unit
+    assert report["overpass_requests"] == 0
+    assert report["local_discovery_passes"] == 3  # one local read per unit
     assert report["created"] == 4  # H:2 + C:2 + W:0, within the 6 total
-    assert report["brave_requests"] == 4
+    assert report["brave_requests"] == 0
     assert report["census_requests"] == 4
     assert len(calls) == 3
     assert sorted(calls) == [
@@ -2810,7 +2823,7 @@ def test_cli_preview_and_run_share_envelope(
     assert code == 0
     preview = json.loads(capsys.readouterr().out)
     assert preview["request_bounds"] == {
-        "overpass_requests": 3, "brave_requests": 6, "census_requests": 6,
+        "overpass_requests": 0, "brave_requests": 0, "census_requests": 6,
     }
     assert preview["max_created_total"] == 6
     assert preview["max_created_per_unit"] == 2

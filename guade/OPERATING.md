@@ -85,3 +85,22 @@ Provider transports and engineering subprocesses are faked; one harmless local P
 ```
 
 These tests do not replace live compatibility validation or the owner-controlled deployed Ubuntu/PostgreSQL gate. Daily windows, quota recovery, automatic Git promotion and autonomous deployment are not implemented.
+
+## Source-pilot orchestration update
+
+The owner authorized the three source-selection/adapter/144-pilot milestones.
+Every engineer prompt and coach call now receives the versioned Grow Up
+architecture contract. Its digest is bound to the campaign ledger. Discovery
+assignments must run both source-policy regression files. Coach review receives
+the full approved assignment, actual diff, deterministic results and the bounded
+engineer completion report; passing old tests alone is not completion. Muse
+terminal state and reported token usage are retained; incomplete terminal states
+cannot pass. Reports redact inherited credential values.
+
+The source-pilot continuation inherits consumed counters and the original
+five-hour deadline from state-campaign; it does not grant a fresh allocation.
+The old STOP/history are retained. Step allowance is redistributed to 60 steps
+per dispatch with a reduced total dispatch ceiling of 8 and coach-call ceiling
+of 16, 1,000,000 local token units and $5 estimated Baseten planning exposure.
+Meta dollars remain unverified. A live pilot still requires configured evidence,
+development service access and the owner-controlled Git/deployment checkpoint.

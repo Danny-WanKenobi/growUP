@@ -30,6 +30,7 @@ Run: ``python -m app.agents.gabriel.sources.dcad_convert IN OUT``
 from __future__ import annotations
 
 import csv
+import json
 import math
 import struct
 import sys
@@ -242,7 +243,14 @@ def convert(extracted_dir: Path, out_dir: Path) -> dict[str, int]:
             if account and account not in appraisal:
                 appraisal[account] = row
 
+    # All improvements per account are preserved. The primary (largest
+    # area) improvement supplies area/class/year/stories as one paired
+    # unit -- another improvement's story count is never paired with
+    # the primary's area or class. Every improvement's verbatim
+    # description/area/stories/year is kept in ``improvements`` so
+    # mixed or ambiguous buildings stay visible downstream.
     commercial: dict[str, dict[str, str]] = {}
+    improvements: dict[str, list[dict[str, str]]] = {}
     with (extracted_dir / "COM_DETAIL.CSV").open(
         newline="", encoding="utf-8-sig", errors="replace"
     ) as handle:
@@ -251,6 +259,7 @@ def convert(extracted_dir: Path, out_dir: Path) -> dict[str, int]:
             if not account:
                 continue
             stats["commercial_details"] += 1
+            improvements.setdefault(account, []).append(row)
             current = commercial.get(account)
             if current is None or _num(row.get("GROSS_BLDG_AREA")) > _num(
                 current.get("GROSS_BLDG_AREA")
@@ -267,6 +276,7 @@ def convert(extracted_dir: Path, out_dir: Path) -> dict[str, int]:
             "account", "situs_address", "city", "zip_code", "land_use",
             "improvement_description", "improvement_area_sqft", "year_built",
             "latitude", "longitude", "appraised_value", "value_year_label",
+            "num_stories", "improvement_count", "improvements",
         ])
         seen: set[str] = set()
         for row in csv.DictReader(handle):
@@ -308,6 +318,9 @@ def convert(extracted_dir: Path, out_dir: Path) -> dict[str, int]:
                 "",
                 (appr.get("TOT_VAL") or "").strip(),
                 f"{year} Certified" if year else "",
+                (detail.get("NUM_STORIES") or "").strip(),
+                str(len(improvements.get(account, []))),
+                json.dumps(improvements.get(account, []), sort_keys=True),
             ])
             stats["accounts"] += 1
     stats["joined_coordinates"] = stats["parcels"]

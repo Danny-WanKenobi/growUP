@@ -56,5 +56,6 @@ guade/state-operating/
 guade/state-overnight-*/
 guade/state-validation/
 guade/state-campaign/
+guade/state-source-pilot/
 guade/mission.lock
 guade/tasks.*.approved.json

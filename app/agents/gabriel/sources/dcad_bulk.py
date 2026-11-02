@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,7 +62,7 @@ _COMMERCIAL_TOKENS = (
 )
 
 
-def map_land_use(land_use: str, improvement_description: str) -> str:
+def map_land_use(land_use: str, improvement_description: str, num_stories: str = "") -> str:
     """Map appraisal land-use text to a canonical category hint.
 
     Appraisal classifications describe the appraisal district's use
@@ -69,6 +70,13 @@ def map_land_use(land_use: str, improvement_description: str) -> str:
     verification policy and default to ``other`` when unclear.
     """
     text = f"{land_use} {improvement_description}".lower()
+    stories = _float_or_none(num_stories)
+    # Same discovery threshold as OSM; only a preliminary category hint.
+    # The paired primary improvement, not an unrelated structure, supplies height.
+    if stories is not None and stories >= 8 and any(
+        token in text for token in (*_WAREHOUSE_TOKENS, *_COMMERCIAL_TOKENS)
+    ):
+        return "high_rise"
     if any(token in text for token in _WAREHOUSE_TOKENS):
         return "warehouse_industrial"
     if any(token in text for token in _COMMERCIAL_TOKENS):
@@ -78,7 +86,8 @@ def map_land_use(land_use: str, improvement_description: str) -> str:
 
 def _float_or_none(value: str | None) -> float | None:
     try:
-        return float(str(value).strip())
+        number = float(str(value).strip())
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -143,7 +152,7 @@ def parse_exchange(data_dir: Path, retrieved_at: str) -> list[RawListing]:
                 city=str(row.get("city", "") or "").strip() or None,
                 state="TX",
                 zip_code=str(row.get("zip_code", "") or "").strip() or None,
-                category_hint=map_land_use(land_use, improvement),
+                category_hint=map_land_use(land_use, improvement, str(row.get("num_stories") or "")),
                 latitude=_float_or_none(row.get("latitude")),
                 longitude=_float_or_none(row.get("longitude")),
                 retrieved_at=retrieved_at,
@@ -153,6 +162,9 @@ def parse_exchange(data_dir: Path, retrieved_at: str) -> list[RawListing]:
                     "account": account,
                     "land_use": land_use,
                     "improvement_description": improvement,
+                    "num_stories": str(row.get("num_stories") or ""),
+                    "improvement_count": str(row.get("improvement_count") or ""),
+                    "improvements": str(row.get("improvements") or ""),
                     "improvement_area_sqft": str(
                         row.get("improvement_area_sqft", "") or ""
                     ).strip(),

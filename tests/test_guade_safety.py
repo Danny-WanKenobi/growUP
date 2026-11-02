@@ -73,6 +73,7 @@ def test_review_receives_actual_diff_and_replay_refuses(tmp_path):
     result = run_cycle(task, coach, dispatcher, ledger, tmp_path, passing_tests)
     assert result["status"] == "completed"
     review = calls[1]["messages"][1]["content"]
+    assert task["prompt"] in review and "APPROVED ASSIGNMENT" in review
     assert "+actual engineer change" in review and "after/result.md" in review
     assert ledger.counters["wonder_dispatches"] == 1
     with pytest.raises(GuadeError):
@@ -339,3 +340,18 @@ def test_real_windows_child_timeout_cleanup(tmp_path):
                            capture_output=True, text=True, timeout=10)
     assert query.returncode == 0
     assert f'","{pid}",' not in query.stdout
+
+
+def test_muse_terminal_and_usage_retained_without_credentials(monkeypatch):
+    from guade.runtime import parse_jsonl
+    monkeypatch.setenv("BASETEN_API_KEY", "private-fixture-key")
+    text = '\n'.join(json.dumps({"payload": item}) for item in [
+        {"kind": "run_usage", "models": [{"model": "wonder", "input_tokens": 50, "calls": 2}]},
+        {"kind": "run_terminal", "terminal": "failed", "reason": "step_limit",
+         "text": "Incomplete. private-fixture-key"},
+    ])
+    parsed = parse_jsonl(text)
+    assert parsed["terminal"] == "failed" and parsed["terminal_reason"] == "step_limit"
+    assert parsed["model_usage"][0]["input_tokens"] == 50
+    assert "Incomplete" in parsed["engineer_report"]
+    assert "private-fixture-key" not in parsed["engineer_report"]

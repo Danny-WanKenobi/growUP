@@ -243,6 +243,13 @@ def _build_candidate_event(
             "message": message,
             "mutation_status": mutation_status,
             "observed": _observed_from_item(item),
+            **({"structured": {
+                key: str(item.tags[key])[:65536] for key in (
+                    "dataset", "exchange_file", "account", "land_use", "improvement_description",
+                    "improvement_area_sqft", "year_built", "num_stories", "improvement_count",
+                    "improvements", "appraised_value", "value_year_label",
+                ) if key in item.tags
+            }} if item.source == "dcad_bulk" else {}),
             "inferred": _inferred_for(item, payload, dedup_key_value),
             "considered_property_ids": list(considered),
             "conflicting_property_ids": list(conflicting),
@@ -612,7 +619,32 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
         )
 
     try:
-        source = get_source(request.source)
+        from app.agents.gabriel.sources.source_selection import (
+            BOOTSTRAP_SUPPLEMENTAL_SCOPE, bootstrap_selection,
+            build_selection_event, enforce_selection,
+        )
+        # Every collection passes through a decision: the caller's
+        # retained decision, or (only when no jurisdiction is claimed)
+        # a bootstrap the server itself constructs for the source it
+        # resolved from its own registry, with the explicit
+        # supplemental scope. An arbitrary/unknown source, a
+        # non-supplemental source without jurisdiction, or an explicit
+        # jurisdiction without a selection is a bypass and refuses.
+        resolved_source = None
+        if request.selection is not None:
+            selection = request.selection.model_dump(exclude_unset=True)
+        elif request.jurisdiction:
+            selection = None
+        else:
+            resolved_source = get_source(request.source)
+            selection = bootstrap_selection(
+                source=request.source, jurisdiction=BOOTSTRAP_SUPPLEMENTAL_SCOPE,
+                server_source=resolved_source)
+        enforce_selection(source=request.source,
+                          jurisdiction=request.jurisdiction or selection["mission"]["jurisdiction"],
+                          selection=selection)
+        _persist_decision_dedicated(build_selection_event(selection, run_id=run_id))
+        source = resolved_source if resolved_source is not None else get_source(request.source)
         resolved_source = source.name
         listings = source.search(bbox, categories, request.limit, request.timeout_seconds)
 

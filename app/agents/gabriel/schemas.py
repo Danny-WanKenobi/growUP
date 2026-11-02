@@ -49,10 +49,33 @@ class BoundingBoxInput(BaseModel):
         return value
 
 
+class SourceSelectionAttestation(BaseModel):
+    """Persisted source-selection decision carried into collection."""
+
+    status: str = Field(min_length=1, max_length=50)
+    selected_adapter: str | None = Field(default=None, max_length=100)
+    selected_candidate: str | None = Field(default=None, max_length=200)
+    digest: str = Field(min_length=8, max_length=128)
+    policy_version: str = Field(default="", max_length=100)
+    mission: dict | None = None
+    ranked: list[dict] | None = None
+    blockers: list[str] | None = None
+    bootstrap: bool = False
+    bootstrap_descriptor: str | None = Field(default=None, max_length=100)
+    scope_note: str | None = Field(default=None, max_length=500)
+    assignment_key: str | None = Field(default=None, max_length=128)
+    run_id: str | None = Field(default=None, max_length=36)
+    mission_fingerprint: str | None = Field(default=None, max_length=64)
+    evidence_digest: str | None = Field(default=None, max_length=64)
+
+
 class DiscoveryRunRequest(BaseModel):
     """Request body for POST /discovery/runs."""
 
     source: str = Field(default="overpass", min_length=1, max_length=100)
+    jurisdiction: str | None = Field(default=None, max_length=200)
+    record_types: list[str] | None = Field(default=None, max_length=8)
+    selection: SourceSelectionAttestation | None = None
     bbox: BoundingBoxInput
     categories: list[str] | None = Field(default=None, max_length=10)
     limit: int = Field(default=10, ge=1, le=MAX_RUN_LIMIT)

@@ -45,6 +45,7 @@ from app.agents.raphael.acquire import (
 from app.agents.raphael.service import authorize_in_transaction
 from app.custody_db import (
     create_version_in_transaction,
+    current_custody_in_transaction,
     issue_receipt_in_transaction,
     snapshot_in_transaction,
 )
@@ -391,6 +392,26 @@ def load_census_evidence_for_dossier(
     }
 
 
+def _official_gabriel_stage(
+    conn: Any, run_id: UUID, official_ref: dict[str, Any], property_id: str | None = None,
+    census: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str], dict[str, Any] | None]:
+    """Admit retained official discovery without any Brave call."""
+    from app.agents.gabriel.sources.official_records import (
+        admit_official_in_transaction, load_retained_official_in_transaction)
+
+    target = str(official_ref.get("property_id") or property_id or "")
+    if property_id and target and str(property_id) != target:
+        raise WorkflowError("official evidence property does not match evaluation property")
+    retained = load_retained_official_in_transaction(
+        conn, discovery_run_id=str(official_ref.get("discovery_run_id", "")),
+        event_id=str(official_ref.get("event_id", "")),
+        property_id=target,
+        expected_digest=official_ref.get("evidence_digest"))
+    keys, outcomes = admit_official_in_transaction(conn, run_id, retained, census=census)
+    return keys, outcomes, None
+
+
 def _gabriel_stage(
     conn: Any,
     run_id: UUID,
@@ -615,6 +636,8 @@ def evaluate_real(
     simulation_key: str | None = None,
     property_id: str | None = None,
     census: dict[str, Any] | None = None,
+    stop_after_raphael: bool = False,
+    official_ref: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run or resume the real-property evaluation (caller owns commit).
 
@@ -634,17 +657,68 @@ def evaluate_real(
     transaction; direct callers on PostgreSQL must do the same.
     """
     _require_enabled()
+    if not isinstance(stop_after_raphael, bool):
+        raise WorkflowError("stop_after_raphael must be a boolean")
     run = get_run_in_transaction(conn, run_id)
     if run is None:
         raise WorkflowError(f"unknown workflow run {run_id}")
     if run.status == "stopped":
         raise WorkflowError("run is stopped")
     summary: dict[str, Any] = {"run_id": str(run_id), "synthetic": False}
+    if official_ref is not None and run.stage != "created":
+        from app.agents.gabriel.sources.official_records import load_retained_official_in_transaction
+        artifacts = [record for record in list_records_in_transaction(conn, run_id, KIND_RESEARCH_ARTIFACT)
+                     if (record.payload or {}).get("collection_provenance") == "official_retained"]
+        if len(artifacts) != 1:
+            raise WorkflowError("official replay lacks one retained evidence binding")
+        artifact = artifacts[0]
+        bound = artifact.payload
+        for name in ("discovery_run_id", "event_id", "property_id"):
+            supplied = official_ref.get(name) or (property_id if name == "property_id" else None)
+            if str(supplied or "") != str(bound.get(name) or ""):
+                raise WorkflowError("official replay cannot change its evidence identity")
+        if (property_id and str(property_id) != str(bound["property_id"])) or (
+            official_ref.get("evidence_digest") and official_ref["evidence_digest"] != bound["evidence_digest"]
+        ):
+            raise WorkflowError("official replay evidence digest/property mismatch")
+        _require_record_integrity(artifact, "official artifact")
+        load_retained_official_in_transaction(
+            conn, discovery_run_id=bound["discovery_run_id"], event_id=bound["event_id"],
+            property_id=bound["property_id"], expected_digest=bound["evidence_digest"])
+        summary["official"] = {name: bound[name] for name in
+                               ("discovery_run_id", "event_id", "property_id", "evidence_digest")}
+    if (run.stage == "raphael" and run.status == "complete_inspected") or (
+        run.stage == "done" and run.status == "complete_stopped"
+    ):
+        target = _select_custody_target(conn, run_id, dossier_key)
+        decision_record = next((record for record in list_records_in_transaction(
+            conn, run_id, "raphael_decision") if (record.payload or {}).get("dossier_key") == target), None)
+        decision = decision_record.payload if decision_record is not None else {}
+        link, _ = _link_in_transaction(conn, run_id, target)
+        summary.update(stage=run.stage, dossier_key=target,
+                       dossier_id=(link or {}).get("dossier_id"),
+                       decision=decision.get("outcome"), decision_basis=decision.get("basis", []))
+        summary["qualification"] = {r.record_key: (r.payload or {}).get("outcome")
+                                    for r in list_records_in_transaction(conn, run_id, "qualification")}
+        if link and link.get("dossier_id"):
+            custody = current_custody_in_transaction(conn, UUID(str(link["dossier_id"])))
+            summary["current_holder"] = (custody or {}).get("holder")
+        summary["feedback_reason"] = next(iter(decision.get("basis") or []), decision.get("outcome"))
+        return summary
     if run.stage == "created":
-        keys, outcomes, review = _gabriel_stage(
-            conn, run_id, assignment_id, query, approved, timeout_seconds,
-            property_id=property_id, census=census,
-        )
+        if official_ref is not None:
+            keys, outcomes, review = _official_gabriel_stage(
+                conn, run_id, official_ref, property_id=property_id, census=census)
+            summary["official"] = {
+                "discovery_run_id": str(official_ref.get("discovery_run_id", "")),
+                "event_id": str(official_ref.get("event_id", "")),
+                "property_id": str(official_ref.get("property_id") or property_id or ""),
+            }
+        else:
+            keys, outcomes, review = _gabriel_stage(
+                conn, run_id, assignment_id, query, approved, timeout_seconds,
+                property_id=property_id, census=census,
+            )
         advance_stage_in_transaction(conn, run_id, "created", "gabriel")
         summary["dossier_keys"] = keys
         summary["qualification"] = dict(zip(keys, outcomes))
@@ -722,6 +796,13 @@ def evaluate_real(
             )
             advance_stage_in_transaction(conn, run_id, "gabriel", "done", status="complete_stopped")
             summary["stage"] = "done"
+            summary["current_holder"] = "gabriel"
+            summary["feedback_reason"] = decision["basis"][0] if decision["basis"] else decision["outcome"]
+            return summary
+        if stop_after_raphael or (getattr(run, "limits", {}) or {}).get("stop_after_raphael"):
+            advance_stage_in_transaction(conn, run_id, "gabriel", "raphael", status="complete_inspected")
+            summary["stage"] = "raphael"
+            summary["current_holder"] = "raphael"
             return summary
         _ensure_receipt_in_transaction(
             conn, run_id, target, dossier_id=dossier_uuid,
@@ -936,6 +1017,8 @@ def start_evaluation_audited(
     brave_attempt_limit: int = DEFAULT_ATTEMPT_LIMIT,
     census_attempt_limit: int = 0,
     census_principal: str | None = None,
+    stop_after_raphael: bool = False,
+    official_ref: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one assignment in committed phases plus an audited chain.
 
@@ -973,19 +1056,45 @@ def start_evaluation_audited(
     from app.workflow_db import create_run
 
     _require_enabled()
-    if not assignment_id or not query:
+    if not isinstance(stop_after_raphael, bool):
+        raise WorkflowError("stop_after_raphael must be a boolean")
+    if not assignment_id or (not query and official_ref is None):
         raise WorkflowError("assignment_id and query are required")
+    if official_ref is not None and not query:
+        query = assignment_id
     limit = validate_attempt_limit(brave_attempt_limit)
     census_limit = validate_census_attempt_limit(census_attempt_limit)
     if census_limit > 0 and not str(census_principal or "").strip():
         raise WorkflowError("census collection requires an authenticated principal")
     key = evaluation_key(assignment_id, query)
     event = _evaluation_event(assignment_id, query, key)
-    run = create_run(idempotency_key=key, limits={"brave_attempts": limit})
-    ensure_artifact_owned(
-        run.run_id, assignment_id, query,
-        approved=approved, timeout_seconds=timeout_seconds,
-    )
+    limits = {"brave_attempts": limit}
+    if stop_after_raphael:
+        limits["stop_after_raphael"] = True
+    if official_ref is not None:
+        from app.properties_db import get_connection as _official_connection
+        from app.agents.gabriel.sources.official_records import load_retained_official_in_transaction
+        with _official_connection() as conn:
+            retained = load_retained_official_in_transaction(
+                conn, discovery_run_id=str(official_ref.get("discovery_run_id") or ""),
+                event_id=str(official_ref.get("event_id") or ""),
+                property_id=str(property_id or official_ref.get("property_id") or ""),
+                expected_digest=official_ref.get("evidence_digest"))
+        official_ref = {name: retained[name] for name in
+                        ("discovery_run_id", "event_id", "property_id", "evidence_digest")}
+        limits["official_ref"] = official_ref
+    run = create_run(idempotency_key=key, limits=limits)
+    if bool((run.limits or {}).get("stop_after_raphael", False)) != stop_after_raphael:
+        raise WorkflowError("evaluation replay cannot change its inspection boundary")
+    if (run.limits or {}).get("official_ref") != official_ref:
+        raise WorkflowError("evaluation replay cannot change its official evidence binding")
+    if official_ref is None:
+        # Official admission replays retained evidence: no Brave call,
+        # no provider budget charge, no snippet reconstruction.
+        ensure_artifact_owned(
+            run.run_id, assignment_id, query,
+            approved=approved, timeout_seconds=timeout_seconds,
+        )
     census_status: dict[str, Any] | None = None
     census_bindings: dict[str, Any] | None = None
     if census_limit > 0 and property_id is not None:
@@ -1006,7 +1115,8 @@ def start_evaluation_audited(
             site_inputs=site_inputs, approved=approved,
             timeout_seconds=timeout_seconds, reviewed_by=reviewed_by,
             run_simulation=run_simulation, simulation_key=simulation_key,
-            property_id=property_id, census=census_bindings,
+            property_id=property_id, census=census_bindings, stop_after_raphael=stop_after_raphael,
+            official_ref=official_ref,
         )
 
     result = run_consequential_transaction(

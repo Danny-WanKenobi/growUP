@@ -301,6 +301,23 @@ def insert_record_if_absent_in_transaction(
     return _record_from_row(dict(row)) if row is not None else None
 
 
+def get_record_by_digest_in_transaction(
+    conn: Any, kind: str, digest: str
+) -> WorkflowRecord | None:
+    """Read one record by its stored content digest (cross-run lookup)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM workflow_records WHERE kind = %(kind)s "
+                "AND digest = %(digest)s ORDER BY created_at LIMIT 1",
+                {"kind": kind, "digest": digest},
+            )
+            row = cur.fetchone()
+    except _DRIVER_ERRORS as exc:
+        raise _wrap_driver(exc) from exc
+    return _record_from_row(dict(row)) if row is not None else None
+
+
 def get_run_by_key_in_transaction(conn: Any, idempotency_key: str) -> WorkflowRun | None:
     """Read one run by idempotency key (read-only, no creation)."""
     try:

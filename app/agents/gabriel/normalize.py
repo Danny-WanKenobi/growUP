@@ -61,6 +61,21 @@ def normalize_listing(item: RawListing, bbox_label: str) -> dict[str, Any] | Non
     if item.latitude is not None and item.longitude is not None:
         observed.append(f"position {item.latitude:.5f},{item.longitude:.5f}")
     observed.append(f"provider category signal {item.category_hint}")
+    tags = item.tags or {}
+    # Preserve source-recorded (unverified) story/height and mixed
+    # improvement evidence verbatim; never invent a floor count.
+    for key, label in (("num_stories", "recorded stories"),
+                       ("height_m", "recorded height_m")):
+        value = str(tags.get(key, "") or "").strip()
+        if value:
+            observed.append(f"{label} {value} (source claim, unverified)")
+    descs = str(tags.get("improvement_descriptions", "") or "").strip()
+    if descs:
+        observed.append(f"improvements (source claims, unverified): {descs[:800]}")
+    elif str(tags.get("improvement_description", "") or "").strip():
+        observed.append(
+            f"improvement {str(tags['improvement_description']).strip()} "
+            "(source claim, unverified)")
     notes = f"{MISSING_NOTE} Observed: {'; '.join(observed)}."
     return {
         "name": name[:300],

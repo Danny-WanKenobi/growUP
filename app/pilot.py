@@ -504,7 +504,7 @@ def pilot_report_in_transaction(
     # Aggregate from per-cell deficits: an overfilled cell must never
     # conceal another cell's shortfall.
     aggregate_shortfall = sum(_shortfall(cell) for cell in cells)
-    return {
+    report = {
         "status": state["status"],
         "weights": state["weights"],
         "cells": len(cells),
@@ -518,6 +518,61 @@ def pilot_report_in_transaction(
             "month": observed.get("month"),
         },
         "rows": rows,
+    }
+    report["readiness"] = pilot_readiness(report)
+    return report
+
+
+def pilot_readiness(report: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Truthful bounded pilot readiness (pure/read-only, no launch).
+
+    Distinguishes raw discovered, research-qualified, county-cell
+    credited, and Raphael assessed/authorized/needs_evidence
+    (ledger ``incomplete``)/rejected/returned counts. Unsupported
+    county/category cells and missing staged DCAD data are named
+    honestly; the 144 goal is never claimed met from raw candidates
+    or a Dallas-only subset.
+    """
+    import os
+    from pathlib import Path
+
+    from app.agents.gabriel.sources.discovery import pilot_source_plan
+
+    plan = pilot_source_plan()
+    unsupported = [p for p in plan if not p.get("selected_adapter")]
+    supported = [p for p in plan if p.get("selected_adapter")]
+    totals = (report or {}).get("totals") or {}
+    rows = (report or {}).get("rows") or []
+    goal_met = bool(rows) and all(
+        int(r.get("qualified", 0)) >= TARGET_QUALIFIED_PER_CELL for r in rows
+    ) and len(rows) >= PILOT_CELL_COUNT
+    dcad_dir = os.environ.get("DCAD_BULK_DATA_DIR", "").strip()
+    dcad_present = bool(dcad_dir) and (Path(dcad_dir) / "dcad_accounts.csv").is_file()
+    return {
+        "target_qualified": PILOT_QUALIFIED_TARGET,
+        "cells": PILOT_CELL_COUNT,
+        "target_per_cell": TARGET_QUALIFIED_PER_CELL,
+        "goal_claimed_met": goal_met,
+        "goal_met": goal_met,
+        "supported_cells": len(supported),
+        "unsupported_cells": len(unsupported),
+        "unsupported_cell_refs": [f"{p['county']}/{p['category']}" for p in unsupported],
+        "missing_adapters": sorted({p["county"] for p in unsupported}),
+        "dcad_bulk_data_dir": dcad_dir or None,
+        "dcad_data_present": dcad_present,
+        "missing_dcad_dir": not dcad_present,
+        "raw_created": None,
+        "raw_discovered": None,
+        "research_qualified": None,
+        "county_cell_credited": totals.get("qualified") if report else None,
+        "raphael_assessed": totals.get("assessed") if report else None,
+        "raphael_authorized": totals.get("authorized") if report else None,
+        "raphael_needs_evidence": None,
+        "raphael_rejected": totals.get("rejected") if report else None,
+        "raphael_returned": None,
+        "ledger_discovered": totals.get("discovered") if report else None,
+        "ledger_incomplete": totals.get("incomplete") if report else None,
+        "note": "Ledger totals cover credited county cells only. Global raw/research totals and receipt-based return counts are not queried (null); incomplete includes research shortfalls and is not a Raphael outcome count.",
     }
 
 
@@ -596,6 +651,8 @@ def source_note_for(county: str, category: str) -> dict[str, Any]:
     return {
         "top_source": top.get("name"),
         "top_status": top.get("status"),
+        "selection_status": "selected" if result["selected_adapter"] else (
+            "needs_review" if top.get("status") == "needs_review" else "no_supported_adapter"),
         "selected_adapter": result["selected_adapter"],
         "authority_basis": result["authority_basis"],
         "blockers": result["blockers"],

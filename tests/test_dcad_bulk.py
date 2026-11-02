@@ -118,3 +118,38 @@ def test_registered_in_canonical_registry():
     source = get_source("dcad_bulk")
     assert source.name == "dcad_bulk"
     assert source.requires_credentials is False
+
+
+# Independent adapter acceptance: synthetic test rows, never real-property data.
+def test_all_three_categories_from_paired_recorded_story_evidence(tmp_path):
+    import csv
+    fields = HEADER.strip().split(",") + ["num_stories"]
+    path = tmp_path / "dcad_accounts.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for account, use, desc, stories in [
+            ("10000000000000001", "Office", "OFFICE BUILDING", "12"),
+            ("10000000000000002", "Retail", "SHOPPING CENTER", "2"),
+            ("10000000000000003", "Industrial", "STORAGE WAREHOUSE", "1"),
+        ]:
+            writer.writerow({"account": account, "situs_address": account[:3] + " TEST ST",
+                             "city": "Dallas", "zip_code": "75201", "land_use": use,
+                             "improvement_description": desc, "num_stories": stories,
+                             "latitude": "32.78", "longitude": "-96.80"})
+    listings = parse_exchange(tmp_path, "2026-11-02T00:00:00Z")
+    assert [x.category_hint for x in listings] == ["high_rise", "commercial_property", "warehouse_industrial"]
+    assert str(listings[0].tags.get("num_stories")) == "12"
+
+
+@pytest.mark.parametrize("stories", ["", "unknown", "-1", "nan", "infinity"])
+def test_invalid_or_unknown_stories_never_invent_highrise(tmp_path, stories):
+    import csv
+    fields = HEADER.strip().split(",") + ["num_stories"]
+    with (tmp_path / "dcad_accounts.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow({"account": "10000000000000001", "situs_address": "1 TEST ST",
+                         "land_use": "Office", "improvement_description": "OFFICE BUILDING",
+                         "num_stories": stories})
+    assert parse_exchange(tmp_path, "2026-11-02T00:00:00Z")[0].category_hint != "high_rise"

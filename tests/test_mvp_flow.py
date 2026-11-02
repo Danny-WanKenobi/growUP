@@ -17,7 +17,7 @@ class _Conn:
 
 
 def _run(stage: str, status: str = "open", errors: Any = None) -> SimpleNamespace:
-    return SimpleNamespace(run_id=uuid4(), stage=stage, status=status, errors=errors or [])
+    return SimpleNamespace(run_id=uuid4(), stage=stage, status=status, errors=errors or [], limits={})
 
 
 @pytest.fixture()
@@ -254,7 +254,7 @@ def test_audited_start_binds_permanent_event(monkeypatch, _enabled: None) -> Non
 
     def _create_run(**kwargs: Any) -> Any:
         seen["run_limits"] = kwargs.get("limits")
-        return SimpleNamespace(run_id=uuid4())
+        return SimpleNamespace(run_id=uuid4(), limits=kwargs["limits"])
 
     monkeypatch.setattr(workflow_db, "create_run", _create_run)
     monkeypatch.setattr(
@@ -281,7 +281,7 @@ def test_audited_start_honors_explicit_attempt_limit(monkeypatch, _enabled: None
 
     def _create_run(**kwargs: Any) -> Any:
         seen["run_limits"] = kwargs.get("limits")
-        return SimpleNamespace(run_id=uuid4())
+        return SimpleNamespace(run_id=uuid4(), limits=kwargs["limits"])
 
     monkeypatch.setattr(workflow_db, "create_run", _create_run)
     monkeypatch.setattr(

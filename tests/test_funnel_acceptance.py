@@ -808,3 +808,52 @@ def test_live_full_chain_coordinator_then_wondrue(
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_inspection_only_holds_authorized_dossier_at_raphael(monkeypatch):
+    from app import mvp as mvp_module
+    from app.custody_db import current_custody_in_transaction, verify_chain_in_transaction
+    db, run_id, prop = _seed_run(monkeypatch)
+    conn = _FakeConn(db)
+    summary = mvp_module.evaluate_real(conn, run_id, "a1", "q", stop_after_raphael=True)
+    assert summary["decision"] == "authorized"
+    assert summary["stage"] == "raphael"
+    assert [(r["kind"], r["from_agent"], r["to_agent"]) for r in db["receipts"]] == [
+        ("forward", "gabriel", "raphael")]
+    assert current_custody_in_transaction(conn, dossier_id_for_property(prop))["holder"] == "raphael"
+    assert verify_chain_in_transaction(conn, dossier_id_for_property(prop)) == 1
+    assert not db["packages"] and not db["conversions"]
+    assert not any(r["kind"] in ("scenario", "financial_assessment") for r in db["records"])
+    replay = mvp_module.evaluate_real(conn, run_id, "a1", "q", stop_after_raphael=True)
+    assert replay["decision"] == "authorized"
+    # A default/full-chain call cannot silently cross the persisted hold.
+    assert mvp_module.evaluate_real(conn, run_id, "a1", "q")["stage"] == "raphael"
+    assert len(db["receipts"]) == 1
+
+
+@pytest.mark.parametrize("outcome", ["needs_evidence", "rejected"])
+def test_coordinator_returns_same_dossier_to_gabriel_with_no_downstream(monkeypatch, outcome):
+    from app import mvp as mvp_module
+    from app.custody_db import current_custody_in_transaction, verify_chain_in_transaction
+    from app.workflow import digest_payload
+    db, run_id, prop = _seed_run(monkeypatch)
+    record = next(r for r in db["records"] if r["kind"] == "dossier_version")
+    if outcome == "needs_evidence":
+        record["payload"].pop("candidate_verification")
+    else:
+        record["payload"]["dossier"]["category_attribution"] = {
+            "status": "contradictory", "conflicting_values": ["warehouse_industrial", "commercial_property"]}
+    record["digest"] = digest_payload(record["payload"])
+    conn = _FakeConn(db)
+    summary = mvp_module.evaluate_real(conn, run_id, "a1", "q", stop_after_raphael=True)
+    assert summary["decision"] == outcome
+    assert [(r["kind"], r["from_agent"], r["to_agent"]) for r in db["receipts"]] == [
+        ("forward", "gabriel", "raphael"), ("return", "raphael", "gabriel")]
+    dossier = dossier_id_for_property(prop)
+    assert summary["dossier_id"] == str(dossier)
+    assert current_custody_in_transaction(conn, dossier)["holder"] == "gabriel"
+    assert verify_chain_in_transaction(conn, dossier) == 2
+    assert len(db["versions"]) == 1 and len(db["snapshots"]) == 1
+    assert not db["packages"] and not db["conversions"]
+    mvp_module.evaluate_real(conn, run_id, "a1", "q", stop_after_raphael=True)
+    assert len(db["receipts"]) == 2

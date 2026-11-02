@@ -347,8 +347,13 @@ def test_tracked_create_commits_atomically(monkeypatch: pytest.MonkeyPatch, disc
     assert event["property_id"] == result.created_ids[0]
     prop_pos = _positions(disc_store, lambda q: q.startswith("INSERT INTO properties"))
     obs_pos = _positions(disc_store, lambda q: "INSERT INTO source_observations" in q)
-    audit_pos = _positions(disc_store, lambda q: "INSERT INTO agent_events" in q)
-    commit_pos = _positions(disc_store, lambda q: q == "--commit--")
+    # Source-selection audit commits before collection, on a separate connection.
+    # The candidate's property/observation/decision must still commit together.
+    audit_pos = [i for i, q in enumerate(disc_store.queries)
+                 if "INSERT INTO agent_events" in q
+                 and disc_store.params[i].get("event_type") == "gabriel.discovery.decision"]
+    commit_pos = [i for i in _positions(disc_store, lambda q: q == "--commit--")
+                  if disc_store.conn_ids[i] == disc_store.conn_ids[prop_pos[0]]]
     assert len(prop_pos) == 1
     assert prop_pos[0] < obs_pos[0] < audit_pos[0] < commit_pos[0]
     conn_ids = disc_store.conn_ids
@@ -368,8 +373,11 @@ def test_untracked_create_commits_atomically(monkeypatch: pytest.MonkeyPatch, di
     assert details["mutation_status"] == "COMMITTED"
     assert details["result"]["observation_id"] is None
     prop_pos = _positions(disc_store, lambda q: q.startswith("INSERT INTO properties"))
-    audit_pos = _positions(disc_store, lambda q: "INSERT INTO agent_events" in q)
-    commit_pos = _positions(disc_store, lambda q: q == "--commit--")
+    audit_pos = [i for i, q in enumerate(disc_store.queries)
+                 if "INSERT INTO agent_events" in q
+                 and disc_store.params[i].get("event_type") == "gabriel.discovery.decision"]
+    commit_pos = [i for i in _positions(disc_store, lambda q: q == "--commit--")
+                  if disc_store.conn_ids[i] == disc_store.conn_ids[prop_pos[0]]]
     assert prop_pos[0] < audit_pos[0] < commit_pos[0]
     conn_ids = disc_store.conn_ids
     assert conn_ids[prop_pos[0]] == conn_ids[audit_pos[0]] == conn_ids[commit_pos[0]]
@@ -811,7 +819,7 @@ def test_intake_discovery_coexistence(monkeypatch: pytest.MonkeyPatch, disc_stor
     intake_event = disc_store.events_for_run(intake_result.run_id)[0]
     assert intake_event["event_type"] == "gabriel.intake.decision"
     discovery_types = {event["event_type"] for event in disc_store.events_for_run(discovery_result.run_id)}
-    assert discovery_types == {"gabriel.discovery.decision", "gabriel.discovery.run"}
+    assert discovery_types == {"gabriel.discovery.decision", "gabriel.discovery.run", "gabriel.source_selection"}
 
 
 # --- Live PostgreSQL provenance (GROWUP_PG_INTEGRATION=1) ---
