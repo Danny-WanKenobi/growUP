@@ -36,10 +36,12 @@ def _task(tmp_path, verify=None):
     prompt.write_text("do the harmless thing", encoding="utf-8")
     return {"id": "t1", "title": "demo", "prompt": "do the harmless thing",
             "prompt_file": str(prompt), "test_command": ["fake-tests"],
+            "allowed_files": ["result.md"],
             "verify": verify}
 
 
 def _ok_runner(cmd, timeout, cwd):
+    (Path(cwd) / "result.md").write_text("result\n", encoding="utf-8")
     return SimpleNamespace(returncode=0, stdout='{"payload":{"kind":"x"}}\n',
                            stderr="")
 
@@ -61,7 +63,7 @@ def test_authorization_rejects_unknown_fields():
 def test_cycle_completes_within_budget(tmp_path):
     ledger = _ledger(tmp_path)
     calls: list = []
-    coach = Coach(ledger, transport=_transport(["APPROVE ok"] * 3, calls),
+    coach = Coach(ledger, transport=_transport(["APPROVE - ok"] * 3, calls),
                   api_key="test-key")
     dispatcher = Dispatcher(ledger, runner=_ok_runner)
     result = run_cycle(_task(tmp_path), coach, dispatcher, ledger,
@@ -75,7 +77,7 @@ def test_cycle_completes_within_budget(tmp_path):
 
 def test_coach_stop_blocks_dispatch(tmp_path):
     ledger = _ledger(tmp_path)
-    coach = Coach(ledger, transport=_transport(["STOP unsafe"], []),
+    coach = Coach(ledger, transport=_transport(["STOP - unsafe"], []),
                   api_key="test-key")
 
     def forbidden(cmd, timeout, cwd):
@@ -91,7 +93,7 @@ def test_coach_stop_blocks_dispatch(tmp_path):
 def test_retry_bound_enforced(tmp_path):
     ledger = _ledger(tmp_path)
     coach = Coach(ledger, transport=_transport(
-        ["APPROVE", "REVISE fix it", "REVISE still bad"], []), api_key="k")
+        ["APPROVE", "REVISE - fix it", "REVISE - still bad"], []), api_key="k")
 
     def failing(cmd, timeout, cwd):
         return SimpleNamespace(returncode=1, stdout="", stderr="boom")
@@ -132,6 +134,9 @@ def test_windows_meta_invocation_preserves_provider_value(tmp_path,
                         lambda name: r"C:\Tools\muse.cmd")
     monkeypatch.setattr("guade.runtime._subprocess_runner", fake_runner)
     dispatcher = Dispatcher(ledger)
+    # Exercise Windows command construction without requiring a real mission
+    # or process: this dispatcher uses a monkeypatched offline subprocess.
+    ledger.check_allowed = lambda *args, **kwargs: None
     prompt = tmp_path / "p.md"
     prompt.write_text("x", encoding="utf-8")
     dispatcher.dispatch(prompt, tmp_path)
@@ -161,7 +166,7 @@ def test_exhausted_retry_allowance_never_redispatches(tmp_path):
     """Preflight: with retries already consumed, no second dispatch occurs."""
     ledger = _ledger(tmp_path)
     ledger.reserve_retry()
-    coach = Coach(ledger, transport=_transport(["APPROVE", "REVISE fix"], []),
+    coach = Coach(ledger, transport=_transport(["APPROVE", "REVISE - fix"], []),
                   api_key="k")
 
     def failing(cmd, timeout, cwd):
@@ -184,11 +189,17 @@ def test_coach_unavailable_fail_closed(tmp_path):
 
 
 def test_coach_token_ceiling_fail_closed(tmp_path):
-    ledger = _ledger(tmp_path, max_coach_total_tokens=1100,
+    from dataclasses import replace
+    ledger = _ledger(tmp_path, max_coach_total_tokens=10000,
                      coach_max_tokens_per_call=1024)
     coach = Coach(ledger, transport=_transport(["APPROVE"] * 3, []),
                   api_key="k")
     coach.decide("assignment", "one")
+    reserved = next(json.loads(line)["reserved_units"]
+                    for line in ledger.audit_path.read_text().splitlines()
+                    if json.loads(line)["event"] == "coach_call_reserved")
+    ledger.authorization = replace(ledger.authorization,
+                                   max_coach_total_tokens=reserved + 50)
     with pytest.raises(BudgetExhausted):
         coach.decide("review", "two")
 
@@ -229,7 +240,7 @@ def test_coach_missing_and_empty_content_are_stop(tmp_path):
 
 def test_coach_content_parts_are_joined(tmp_path):
     message = {"content": [{"type": "text", "text": "APPROVE"},
-                           {"type": "text", "text": " proceed"}]}
+                           {"type": "text", "text": " - proceed"}]}
     _ledger_unused, coach = _raw_coach(tmp_path, _chat(message))
     assert coach.decide("assignment", "x")["decision"] == "APPROVE"
 

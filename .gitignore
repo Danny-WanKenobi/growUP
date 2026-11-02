@@ -54,3 +54,7 @@ htmlcov/
 guade/state/
 guade/state-operating/
 guade/state-overnight-*/
+guade/state-validation/
+guade/state-campaign/
+guade/mission.lock
+guade/tasks.*.approved.json

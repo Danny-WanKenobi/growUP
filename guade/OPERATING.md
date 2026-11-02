@@ -1,84 +1,87 @@
-# GUADE operating envelope — owner-approved 2026-11-02
+# GUADE operating instructions — November 2, 2026
 
-Status: **APPROVED with limits below; no billable run yet executed
-under it.** The activation envelope (`guade/config.example.json`,
-ledger in `guade/state/`) is exhausted (3/3 dispatches, 6/6 coach
-calls, 7,066 tokens) and is retained as read-only activation
-evidence. It must never be reset or reused. The earlier proposed
-$50/month configuration was **not** activated.
+Windows hosts development and GUADE execution. Git/GitHub transfers owner-approved revisions. Ubuntu verifies the deployed application and PostgreSQL. Do not install or authenticate an engineering CLI on Ubuntu for GUADE execution.
 
-## Approved operating ceiling (owner, 2026-11-02)
+## History and authorization
 
-- **Separate ledger:** `guade/state-operating/` (git-ignored),
-  configured by `guade/config.operating.example.json`.
-- **Baseten Super-Coach:** maximum **$10** additional spend,
-  maximum **10 calls**, 100k token ceiling, 1,024 tokens/call.
-- **Muse Wonder:** maximum **5 dispatches**, 20 steps/task,
-  1 correction retry/task.
-- **Scope:** Dallas P1 integration and Gabriel → Raphael
-  engineering. Development only.
+The retained activation audit records completion at 2026-11-02T07:18:05Z: coach approval, Wonder exit 0 (93 events), passing validation, final coach approval. The trial artifact is committed. The activation ledger is exhausted: 3 dispatches, 6 coach calls, 7,066 reported tokens, 1 retry. Preserve guade/state/, state-operating/ and the historical overnight ledger. CLI mutation commands refuse these historical directories.
 
-## Dollar enforceability
+The runtime correction task authorizes local implementation and offline tests only. **No new live validation, campaign, provider spending, Git promotion or deployment is authorized.** Config comments and --approved-live acknowledge a grant; they cannot create owner permission. The new example envelopes are proposals. Do not recreate the activation.
 
-Published Baseten pricing for `meta-models/muse-spark-open-1026`
-($1.25 per 1M input tokens, $4.25 per 1M output; multiply
-corroborated on 2026-11-02, not confirmed on a Baseten invoice)
-bounds worst-case spend under these ceilings to a few cents:
-10 calls × 1,024 output tokens ≈ $0.05 of output, plus bounded
-prompt input. The call/token ceilings are therefore the binding
-controls and keep usage reliably within $10. Usage is still
-reserved before every call and reconciled from response usage.
+## Bounded tasks and evidence
 
-## Credential loading (permanent fix, 2026-11-02)
+run-task accepts exactly one task; run-campaign processes a finite owner-reviewed list in order. It stops on the first non-completion, exhausted allowance, stop request, deadline or completed list. No generated follow-on work. Each JSON task requires id, title, prompt, exact allowed_files and tests (existing repository pytest files, never shell commands). See tasks.validation.example.json. Each task must address README synchronization in its prompt and allowlist, or justify no change in its report.
 
-GUADE resolves `BASETEN_API_KEY` through `guade/credentials.py`
-(first non-empty source wins; the value is never printed or logged):
+Only uppercase APPROVE, optionally followed by ' - reason', authorizes assignment dispatch. REVISE/STOP, ambiguous or malformed responses and provider failures cannot. Review receives actual bounded unified diffs, changed paths, before/after digests and test results. No file changes means no completion. Review REVISE may use the finite correction allowance; STOP ends execution.
 
-1. The process environment.
-2. Windows only: the persistent user environment
-   (`HKCU\Environment`), which recovers shells, editors, and agent
-   hosts started before the variable was installed.
-3. A restricted env file: `$GUADE_ENV_FILE`, then
-   `~/.config/growup/guade.env`, then
-   `/var/www/growup/shared/growup.env` when readable. Files accept
-   `BASETEN_API_KEY`, falling back to `META_API_KEY` only when that
-   key is bound to the Baseten endpoint (no non-Baseten
-   `META_API_URL` configured; GUADE always calls Baseten, so a
-   `META_API_KEY` paired with another endpoint is refused). On
-   POSIX, group/other-readable secret files are refused.
+Workspace snapshots include added, deleted and untracked files. Exact allowlists are checked before and after tests. Runtime controls and secret paths cannot be allowed. Unexpected edits stop execution and remain for owner inspection; no rollback discards work. Complete diff evidence must fit 48,000 UTF-8 bytes; binary/oversized evidence requires owner review. After engineering, the controller checks ledger/grant/mission integrity and unexpected audit-history changes.
 
-Root causes repaired: on Windows the key existed only in the user
-environment while GUADE read the (possibly stale) process
-environment; on Ubuntu the key existed only in
-`~/.config/growup/guade.env` (mode 0600), which no shell or launcher
-loaded, while the app service reads a different `growup`-owned file.
-Verify without exposing the value:
+**These are fail-closed completion checks, not an OS sandbox.** They cannot prevent writes outside the checkout or external actions through other tools. .git, virtual environments and Python/tool caches are excluded from inventory; active controller state is checked separately. Directory links are inventoried without following their targets; allowed files cannot use linked paths. Do not treat --disable-shell or prompts as OS permissions. Use an owner-reviewed workspace and keep production credentials/services outside the engineering environment. The audit is local evidence, not an external tamper-proof log.
+
+## Accounting
+
+Before sending, each coach call reserves serialized prompt UTF-8 bytes + 1,024 framing units + maximum completion tokens. These conservative local planning units are not an exact provider tokenizer. Valid reported total usage reconciles the reservation. Missing/malformed usage, failures and uncertain calls retain it. Usage exceeding the reservation records actual usage and blocks further calls pending owner reconciliation. Dispatch, call, retry and local token-unit limits are enforced.
+
+baseten_budget_usd_cap is a legacy field name: it limits **estimated cumulative planning exposure**, not provider billing. Exposure uses reserved units times planning_usd_per_million_units (default 8.5, a provisional buffered assumption), with no refunds. It is not an invoice or verified live price. No provider-enforced dollar ceiling is installed here. Meta dollar spend is not tracked or enforced: dispatch/step limits cannot guarantee a dollar cap. Review provider account controls and reconcile usage before authorizing another run.
+
+## Mission controls and interruption
+
+A workspace-wide guade/mission.lock covers the whole task/campaign. Authorization is bound in authorization.json and tasks are retained in tasks.json. Policy/task-list changes refuse. The persisted deadline does not reset on restart; a monotonic bound also applies within the process. max_runtime_seconds cannot exceed 18,000. Five hours is a maximum; work stops earlier when the finite list completes or a limit is reached.
+
+STOP/deadline checks occur before/after coach calls, before dispatch, during subprocess polling, before tests and between tasks. An in-flight synchronous HTTP call may take its configured timeout (capped to mission time remaining) to return; no next operation starts afterward. Windows interruption attempts taskkill /T /F process-tree termination. Unconfirmed cleanup retains the workspace lock for owner investigation. Hard process/host termination leaves a stale lock and running task. No automatic stale-lock removal or task replay is allowed. Confirm relevant processes stopped and reconcile ledger/provider outcomes before resolving a lock. Cleanup may need a short grace period beyond the deadline. Muse auto-update and interactive login are disabled in child processes; the controller installs nothing.
+
+## Credentials and no-spend readiness
+
+The existing loader reads BASETEN_API_KEY from process environment, Windows user environment, then GUADE_ENV_FILE / ~/.config/growup/guade.env / the readable Ubuntu shared file. Its existing file alias META_API_KEY uses the endpoint-binding rule. Readiness never prints keys. It does not directly read Windows Credential Manager. Presence is not live authentication.
+
+From the Windows project root:
 
 ```powershell
-# Windows (project venv, from the repo root)
-.venv\Scripts\python.exe -m guade.cli --state-dir guade/state-operating --config guade/config.operating.example.json check
+Set-Location -LiteralPath 'C:\Code\growUP'
+.\.venv\Scripts\python.exe -B -m guade.cli --state-dir guade/state-validation --config guade/config.validation.example.json check
 ```
 
-```bash
-# Ubuntu (after deploying a release containing guade/credentials.py)
-~/.config/growup/guade.env must stay mode 600; then any fresh
-python3 -m guade.cli ... check reports source env_file:guade.env.
+check is read-only: no ledger creation, Muse execution, authentication or provider call. It reports configuration/headroom, not spending authority. Global options precede the subcommand.
+
+## Prepared validation — separate approval required
+
+The proposed task improves INSTALLATION.md and its README link, not the activation artifact. Review tasks.validation.example.json and config.validation.example.json before approving: one Wonder dispatch, two coach calls, zero correction retries, 100,000 local token units, $1 provisional planning exposure, 30 minutes maximum.
+
+```powershell
+Set-Location -LiteralPath 'C:\Code\growUP'
+.\.venv\Scripts\python.exe -B -m guade.cli --state-dir guade/state-validation --config guade/config.validation.example.json run-task --tasks guade/tasks.validation.example.json --approved-live
+if ($LASTEXITCODE -ne 0) { throw 'STOP: inspect the ledger; never reset or retry automatically.' }
+git status --short
+git diff --stat
 ```
 
-The persistent Windows user variable stores the key as a user-scoped
-registry value (readable by that user's processes); Windows
-Credential Manager or another OS secret store is the stronger
-long-term home. GUADE never creates or rotates keys: when every
-source is absent, `check` prints the exact owner step and exits 2
-without any provider call. `check` also refuses (exit 2) when the
-selected ledger's envelope is exhausted instead of reporting READY
-against a spent ledger.
+## Prepared campaign — separate approval after validation
 
-## Not built (deferred unless separately tasked)
+config.campaign.example.json proposes 18,000 seconds, 20 Wonder dispatches, 40 coach calls, 2 aggregate correction retries, 2,000,000 local token units and $50 Baseten provisional planning exposure. The separate $50 Meta target has no controller dollar enforcement. These are proposed finite ceilings, not permission. Approve the actual task list at guade/tasks.campaign.approved.json first; the runtime deliberately does not invent it. No Brave, outreach, Git or deployment authority is included.
 
-Daily-window counters and a `report` CLI command were proposed
-earlier and remain unbuilt; the approved envelope above does not
-include daily limits. Engineering under this ceiling currently
-proceeds directly (no billable GUADE dispatch is required to do
-the work), and every billable run must state its ledger headroom
-before starting.
+```powershell
+Set-Location -LiteralPath 'C:\Code\growUP'
+if (-not (Test-Path -LiteralPath 'guade/tasks.campaign.approved.json')) { throw 'STOP: owner-reviewed campaign task list required.' }
+.\.venv\Scripts\python.exe -B -m guade.cli --state-dir guade/state-campaign --config guade/config.campaign.example.json run-campaign --tasks guade/tasks.campaign.approved.json --approved-live
+if ($LASTEXITCODE -ne 0) { throw 'STOP: inspect the ledger; never reset or retry automatically.' }
+```
+
+Emergency stop from another PowerShell window:
+
+```powershell
+Set-Content -LiteralPath 'C:\Code\growUP\guade\state-validation\STOP' -Value 'owner stop'
+# For the separately approved campaign instead:
+# Set-Content -LiteralPath 'C:\Code\growUP\guade\state-campaign\STOP' -Value 'owner stop'
+```
+
+Inspect ledger.json, audit.jsonl, authorization.json, tasks.json and mission.json in that state directory. Do not reset spent ledgers, remove STOP or increase limits to bypass reconciliation.
+
+## Offline regression
+
+Provider transports and engineering subprocesses are faked; one harmless local Python sleeper separately verifies real Windows timeout/tree cleanup. Temporary workspaces exercise changes, interruption and diff evidence.
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_guade_runtime.py tests/test_guade_mission.py tests/test_guade_credentials.py tests/test_guade_safety.py tests/test_discovery_precedence.py -q -p no:cacheprovider
+```
+
+These tests do not replace live compatibility validation or the owner-controlled deployed Ubuntu/PostgreSQL gate. Daily windows, quota recovery, automatic Git promotion and autonomous deployment are not implemented.

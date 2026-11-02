@@ -1,13 +1,7 @@
-"""One-time overnight mission controls for GUADE (development only).
+"""Development-only mission lock, immutable grant, deadline and stop guard.
 
-Minimal safety layer over the existing runtime: an immutable
-authorization snapshot, an exclusive mission lock, a persisted
-wall-clock deadline checked on a monotonic clock, an emergency
-stop file, and a preflight report. This module contains no
-provider logic and grants no authority: billable execution stays
-disabled unless the snapshot itself records verified billing
-enforcement, which tonight's snapshot does not (see
-``authorization.json`` written beside the mission ledger).
+These controls constrain execution; configuration files do not grant owner
+permission. Historical overnight ledgers remain readable and are never reset.
 """
 from __future__ import annotations
 
@@ -57,6 +51,7 @@ class MissionLock:
     def __init__(self, directory: Path) -> None:
         self.path = Path(directory) / "mission.lock"
         self.acquired = False
+        self.retain = False
 
     def acquire(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +68,7 @@ class MissionLock:
         self.acquired = True
 
     def release(self) -> None:
-        if self.acquired:
+        if self.acquired and not self.retain:
             self.path.unlink(missing_ok=True)
             self.acquired = False
 
@@ -81,7 +76,7 @@ class MissionLock:
 class Mission:
     """Deadline + emergency-stop guard over one mission directory."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, max_runtime_seconds: float = MAX_RUNTIME_SECONDS) -> None:
         self.dir = Path(directory)
         self.state_path = self.dir / "mission.json"
         if self.state_path.exists():
@@ -90,12 +85,19 @@ class Mission:
         else:
             now = time.time()
             self.state = {
-                "mission_id": MISSION_ID,
+                "mission_id": self.dir.name,
                 "started_at": now,
-                "deadline_at": now + MAX_RUNTIME_SECONDS,
+                "deadline_at": now + max_runtime_seconds,
                 "status": "created",
             }
             self._save()
+        self._monotonic_deadline = time.monotonic() + max(
+            0, float(self.state["deadline_at"]) - time.time())
+
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, min(float(self.state["deadline_at"]) - time.time(),
+                            self._monotonic_deadline - time.monotonic()))
 
     def _save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +112,7 @@ class Mission:
 
     @property
     def deadline_exceeded(self) -> bool:
-        return time.time() >= float(self.state["deadline_at"])
+        return self.remaining_seconds <= 0
 
     @property
     def stop_requested(self) -> bool:

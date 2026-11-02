@@ -1,0 +1,9 @@
+[
+  {
+    "id": "windows-guade-installation-guide",
+    "title": "Document the Windows GUADE operator workflow in the installation guide",
+    "prompt": "Add a concise Windows GUADE section to INSTALLATION.md using actual guade CLI and operating documentation as read-only references. Cover the project venv, credential presence check without secret values, separate spending approval, exact task allowlists, STOP-file handling and the Windows-to-Git-to-Ubuntu boundary. Preserve all existing application deployment instructions. Link this section from README.md. Do not recreate the activation trial artifact. README impact check is mandatory: update only the relevant installation link, validate both documents against actual commands, and report README: UPDATED / NO CHANGE (reason) / BLOCKED.",
+    "allowed_files": ["INSTALLATION.md", "README.md"],
+    "tests": ["tests/test_guade_credentials.py", "tests/test_guade_safety.py"]
+  }
+]

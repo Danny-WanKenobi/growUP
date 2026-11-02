@@ -1,0 +1,14 @@
+{
+  "comment": "PREPARED, NOT AUTHORIZED: up to five hours or the end of the owner-reviewed finite task list, whichever comes first. Separate Baseten $50 provisional planning envelope; Meta $50 target is NOT enforced by this controller and needs separate owner/provider controls. No Brave, outreach, Git or deployment authority.",
+  "max_wonder_dispatches": 20,
+  "max_steps_per_task": 20,
+  "max_correction_retries": 2,
+  "max_coach_calls": 40,
+  "max_coach_total_tokens": 2000000,
+  "coach_max_tokens_per_call": 2048,
+  "baseten_budget_usd_cap": 50.0,
+  "planning_usd_per_million_units": 8.5,
+  "dispatch_timeout_seconds": 900,
+  "coach_timeout_seconds": 60,
+  "max_runtime_seconds": 18000
+}
