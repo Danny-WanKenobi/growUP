@@ -463,6 +463,7 @@ def test_collect_oversize_refused(monkeypatch: pytest.MonkeyPatch, _dcad_env: No
 def test_collect_timeout_is_single_attempt(monkeypatch: pytest.MonkeyPatch, _dcad_env: None) -> None:
     import httpx
 
+    _patch_dns(monkeypatch)  # deterministic public resolution; timeout comes from HTTP
     calls = {"count": 0}
 
     def _timeout(*args: Any, **kwargs: Any) -> None:
