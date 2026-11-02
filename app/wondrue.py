@@ -50,6 +50,7 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_inference_usage",
         "preview_dcad_collection",
         "preview_successor",
+        "inspect_pipeline",
     }
 )
 CONSEQUENTIAL_INTENTS = frozenset(
@@ -876,6 +877,32 @@ def _execute_real(
             return {"stopped": str(args.get("run_id"))}
         mvp_module.stop_run(conn, UUID(str(args.get("run_id"))))
         return {"stopped": str(args.get("run_id"))}
+    if intent == "inspect_pipeline":
+        if conn is None:
+            raise WondrueError("real target requires a database connection")
+        from app.pipeline_view import build_pipeline_summary
+
+        run_id = UUID(str(args.get("run_id")))
+
+        def _payload(kind: str, key: str) -> dict[str, Any] | None:
+            record = get_record_in_transaction(conn, run_id, kind, key)
+            return record.payload if record else None
+
+        stages: dict[str, Any] = {
+            "gabriel": _payload(
+                "dossier_version", str(args.get("key", "main"))),
+            "raphael": _payload(
+                "raphael_decision", str(args.get("decision_key", ""))),
+        }
+        scenario = _payload(
+            "scenario", str(args.get("scenario_key", "s1")))
+        if scenario:
+            stages["onesimus"] = {
+                field: value for field, value in scenario.items()
+                if field != "financial_assessment"
+            }
+            stages["michael"] = scenario.get("financial_assessment") or {}
+        return {"pipeline": build_pipeline_summary(stages)}
     if intent == "inspect_packages":
         if conn is None:
             raise WondrueError("real target requires a database connection")

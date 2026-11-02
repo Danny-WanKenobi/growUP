@@ -155,6 +155,7 @@ INTENTS = frozenset(
         "collect_dcad_evidence",
         "preview_successor",
         "commit_successor",
+        "inspect_pipeline",
     }
 )
 
