@@ -5,5 +5,6 @@ reflects the available sources.
 """
 
 from app.agents.gabriel.sources import dcad_bulk as dcad_bulk  # noqa: F401
+from app.agents.gabriel.sources import generic_open_data as generic_open_data  # noqa: F401
 from app.agents.gabriel.sources import osm_api as osm_api  # noqa: F401
 from app.agents.gabriel.sources import overpass as overpass  # noqa: F401

@@ -306,6 +306,25 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
     return decision
 
 
+def discover_sources_anywhere(
+    jurisdiction: str, category: str, *, http_get=None
+) -> dict[str, Any]:
+    """Nationwide path: any US jurisdiction, zero preliminary research.
+
+    Delegates to the national-catalog discovery (Socrata, ArcGIS
+    Hub, data.gov CKAN) and the generic platform adapters. The DFW
+    pilot path above stays curated; this path never enrolls a
+    publisher and reports catalog failure honestly.
+    """
+    if category not in CATEGORIES:
+        raise ValueError(f"unknown pilot category: {category!r}")
+    from app.agents.gabriel.sources.us_discovery import discover_us_sources
+
+    result = discover_us_sources(jurisdiction, http_get=http_get)
+    result["category"] = category
+    return result
+
+
 def qualified_adapter(county: str, category: str) -> str | None:
     """The adapter the workflow may use for a cell, or None."""
     return discover_sources(county, category)["selected_adapter"]

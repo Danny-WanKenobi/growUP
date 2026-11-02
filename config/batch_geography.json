@@ -1,0 +1,40 @@
+{
+  "contract": "gabriel-batch-geography-1",
+  "description": "Permanent dynamic batch geography for Gabriel 144-dossier batches (owner directive 2026-11-02). No batch geography is hard-coded to Dallas: for a requested state, Gabriel resolves (1) the most populated city, (2) the 12 most populated counties of that city's metropolitan area (OMB metropolitan + combined statistical area counties), and (3) a diversity matrix of 4 candidates x 3 canonical property categories x 12 counties = 144. Legacy Dallas/DFW searches keep the existing DFW roster (app/agents/gabriel/geography.py) and the existing pilot ledger; this contract governs new batches. Population data must be refreshed from Census releases; rankings are computed, never edited by hand without updating provenance.",
+  "population_basis": "2020 United States Census (decennial). City figures: Census 2020 via List of municipalities in Texas. County figures: Census 2020 via Greater Houston county table and Census QuickFacts. Retrieved and corroborated 2026-11-02.",
+  "categories": ["high_rise", "commercial_property", "warehouse_industrial"],
+  "candidates_per_cell": 4,
+  "county_count": 12,
+  "states": {
+    "TX": {
+      "cities_by_population": [
+        {"name": "Houston", "population_2020": 2301572},
+        {"name": "San Antonio", "population_2020": 1434625},
+        {"name": "Dallas", "population_2020": 1304379},
+        {"name": "Austin", "population_2020": 961855},
+        {"name": "Fort Worth", "population_2020": 918915}
+      ],
+      "metros": {
+        "Houston": {
+          "area_name": "Greater Houston (Houston-Pasadena-The Woodlands MSA + Houston CSA micropolitan counties)",
+          "counties_by_population": [
+            {"county": "harris county", "population_2020": 4731145},
+            {"county": "fort bend county", "population_2020": 822779},
+            {"county": "montgomery county", "population_2020": 620443},
+            {"county": "brazoria county", "population_2020": 372031},
+            {"county": "galveston county", "population_2020": 350682},
+            {"county": "liberty county", "population_2020": 91628},
+            {"county": "walker county", "population_2020": 76400},
+            {"county": "waller county", "population_2020": 56794},
+            {"county": "chambers county", "population_2020": 46571},
+            {"county": "wharton county", "population_2020": 41570},
+            {"county": "matagorda county", "population_2020": 36255},
+            {"county": "washington county", "population_2020": 35805},
+            {"county": "austin county", "population_2020": 30167},
+            {"county": "san jacinto county", "population_2020": 27402}
+          ]
+        }
+      }
+    }
+  }
+}
