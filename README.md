@@ -130,6 +130,8 @@ The MVP will distinguish verified information, estimates, assumptions, and synth
 
 ## 🔧 Installation and Development
 
+For the Windows-only GUADE operator workflow (project venv, credential presence check, separate spending approval, exact task allowlists, and STOP-file handling), see [Windows GUADE in the installation guide](INSTALLATION.md#windows-guade-windows-development-only).
+
 Prerequisites: Python 3.12+ and PostgreSQL (for the real-property path; the synthetic demonstration needs no database).
 
 ```bash
