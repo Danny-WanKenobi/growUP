@@ -1,0 +1,74 @@
+{
+  "catalog": "dallas-county-official-sources-1",
+  "status": "Research-verified 2026-11-02. Categories A-D integrated as adapters (offline-tested); live bulk downloads still require a declared collection envelope. Category E excluded for discovery (see reason).",
+  "precedence_tier": 1,
+  "notes": "All sources feed the one canonical Gabriel pipeline. Parcel existence never establishes vacancy or market availability; commercial-use classification from appraisal land-use codes is a claim requiring the shared verification policy, not a verified fact.",
+  "sources": [
+    {
+      "name": "dcad_parcel_geometry",
+      "authority": "Dallas Central Appraisal District (DCAD)",
+      "url": "https://www.dallascad.org/GISDataProducts.aspx",
+      "coverage": "DCAD appraisal district (Dallas County)",
+      "attributes": ["parcel boundary geometry", "parcel/account identifiers"],
+      "access": "Free anonymous bulk ZIP download (shapefile; current file PARCEL_GEOM.zip). DCAD robots guidance disallows crawling per-account pages; bulk files are the intended path.",
+      "licensing": "Public record; no published terms restricting reuse found; provided as-is without warranty. Re-verify at ingestion time.",
+      "update_frequency": "Current appraisal-year file; replaced as DCAD publishes updates",
+      "role": "discovery",
+      "establishes": {"commercial_use": false, "vacancy": false, "availability": false},
+      "status": "integrated via dcad_bulk exchange (app/agents/gabriel/sources/dcad_bulk.py); shapefile-to-exchange conversion is an offline preprocessing step over lawfully downloaded archives"
+    },
+    {
+      "name": "dcad_appraisal_roll",
+      "authority": "Dallas Central Appraisal District (DCAD)",
+      "url": "https://www.dallascad.org/DataProducts.aspx",
+      "coverage": "DCAD appraisal district (Dallas County), account level",
+      "attributes": ["situs address", "owner name (public roll variants)", "land-use code", "improvement descriptions/areas", "year built", "appraised values (labeled by year; not sale prices)"],
+      "access": "Free anonymous bulk download (ZIP archives with field documentation; join to parcel geometry on account number). A 'No Values - Most Current Ownership' variant exists.",
+      "licensing": "Public record; provided as-is. Re-verify at ingestion time.",
+      "update_frequency": "Annual certified roll plus current-year files",
+      "role": "both",
+      "establishes": {"commercial_use": "claim_only", "vacancy": false, "availability": false},
+      "status": "integrated via dcad_bulk exchange (same adapter as parcel geometry)"
+    },
+    {
+      "name": "city_of_dallas_gis",
+      "authority": "City of Dallas (Enterprise GIS / Sustainable Development & Construction)",
+      "url": "https://gis.dallascityhall.com/",
+      "coverage": "City of Dallas only",
+      "attributes": ["zoning districts", "certified tax parcels (DallasTaxParcels service)", "city limits and reference layers"],
+      "access": "Shapefile downloads and ArcGIS REST services (public)",
+      "licensing": "Municipal open GIS; re-verify terms at ingestion time",
+      "update_frequency": "SDC layers typically updated weekly (per portal notes)",
+      "role": "enrichment",
+      "establishes": {"commercial_use": false, "vacancy": false, "availability": false},
+      "status": "integrated enrichment: zoning_at_point() against sdc_public/Zoning MapServer layer 15 (Base Zoning), verified live 2026-11-02 (app/agents/gabriel/sources/dallas_gis.py)"
+    },
+    {
+      "name": "dallas_open_data_socrata",
+      "authority": "City of Dallas Open Data (Socrata)",
+      "url": "https://www.dallasopendata.com/",
+      "coverage": "City of Dallas (some layers include a one-mile multi-county buffer)",
+      "attributes": ["zoning-related SDC layers", "certified tax parcels", "permits and code-compliance datasets (varies by layer; some are historical)"],
+      "access": "Socrata SODA API and downloads (public; app token recommended for volume)",
+      "licensing": "City open-data terms per dataset; re-verify at ingestion time",
+      "update_frequency": "Varies by dataset",
+      "role": "enrichment",
+      "establishes": {"commercial_use": false, "vacancy": false, "availability": false},
+      "status": "integrated enrichment: query_dataset() SODA client; default dataset Base Zoning f3t3-a5rd verified via the portal data.json catalog 2026-11-02 (app/agents/gabriel/sources/dallas_open_data.py)"
+    },
+    {
+      "name": "dallas_county_records",
+      "authority": "Dallas County (Tax Office / County Clerk / GIS)",
+      "url": "https://www.dallascountytx.org/",
+      "coverage": "Dallas County",
+      "attributes": ["tax account status", "recorded instruments (deeds/liens) where published"],
+      "access": "County web portals; bulk/API availability not yet verified",
+      "licensing": "Public records; fees may apply to some records - do not use fee-based access without owner approval",
+      "update_frequency": "unknown",
+      "role": "enrichment",
+      "establishes": {"commercial_use": false, "vacancy": false, "availability": false},
+      "status": "excluded_for_discovery",
+      "exclusion_reason": "Property appraisal and parcel records for Dallas County are administered by DCAD and are already integrated above. The County itself publishes per-record web portals (tax/clerk) with no verified free bulk download or API endpoint, and some records are fee-based (paid access needs separate owner approval). Revisit only if the County publishes a bulk/API endpoint."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "status": "PROPOSED - not active; requires explicit owner approval of every limit",
+  "comment": "Proposed ongoing GUADE operating envelope, separate from the exhausted activation envelope in config.example.json. The activation ledger (guade/state/) must never be reset or reused; operating runs use guade/state-operating/. Dollar figures are planning estimates only: the Baseten price for meta-models/muse-spark-open-1026 is unverified, so the binding controls are the call, token, and dispatch ceilings below. Runtime support for daily windows and cumulative periods must be implemented and tested before this envelope can be activated.",
+  "authorization": {
+    "max_wonder_dispatches": 100,
+    "max_steps_per_task": 20,
+    "max_correction_retries": 1,
+    "max_coach_calls": 200,
+    "max_coach_total_tokens": 1500000,
+    "coach_max_tokens_per_call": 1024,
+    "baseten_budget_usd_cap": 50.0,
+    "dispatch_timeout_seconds": 900,
+    "coach_timeout_seconds": 60
+  },
+  "operating_controls_proposed": {
+    "coach_calls_per_day": 20,
+    "coach_tokens_per_day": 150000,
+    "wonder_dispatches_per_day": 10,
+    "period": "calendar month, UTC",
+    "on_limit_exhausted": "fail closed; no automatic replenishment; owner approval required for any increase"
+  },
+  "boundaries": {
+    "environment": "development only",
+    "production_access": false,
+    "git_writes": "owner-authorized commits only; no autonomous push or deploy",
+    "live_property_acquisition": "separately authorized envelopes only (e.g. M03A); never implied by this envelope"
+  }
+}

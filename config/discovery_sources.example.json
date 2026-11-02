@@ -12,7 +12,15 @@
           "status": "catalog_required",
           "requires_credentials": false,
           "requires_budget_authorization": false,
-          "notes": "Appraisal/assessor districts, parcel and GIS datasets, local open-data portals, tax/property records, zoning. No DFW discovery dataset is cataloged yet; cataloging (authority, coverage, access, licensing, update frequency, provenance, reliability) is a prerequisite, not an integration."
+          "notes": "Appraisal/assessor districts, parcel and GIS datasets, local open-data portals, tax/property records, zoning. Dallas County candidates are cataloged in config/dallas_official_sources.example.json; each jurisdiction still requires its own catalog entry before integration."
+        },
+        {
+          "name": "dcad_bulk",
+          "kind": "official_dataset",
+          "status": "existing",
+          "requires_credentials": false,
+          "requires_budget_authorization": false,
+          "notes": "Implemented P1 discovery for Dallas County: DCAD bulk appraisal/parcel exchange ingestion (app/agents/gabriel/sources/dcad_bulk.py). Reads only a staged, lawfully downloaded exchange (DCAD_BULK_DATA_DIR) and fails closed when unconfigured. Land use is a category hint, never verified use, vacancy, or availability."
         }
       ]
     },

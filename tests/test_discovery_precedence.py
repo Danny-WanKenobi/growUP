@@ -36,6 +36,7 @@ def _raw() -> dict[str, Any]:
 def test_shipped_declaration_loads_in_owner_order() -> None:
     contract = load_precedence_contract(str(_EXAMPLE))
     assert contract.tier_of("official_datasets") == 1
+    assert contract.tier_of("dcad_bulk") == 1
     assert contract.tier_of("searxng") == 2
     assert contract.tier_of("brave") == 3
     assert contract.tier_of("overpass") is None  # retained index, undeclared tier
