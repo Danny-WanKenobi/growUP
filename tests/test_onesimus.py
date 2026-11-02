@@ -329,3 +329,28 @@ def test_run_scenario_embeds_michael_assessment() -> None:
     assert finance["assessed"] is True
     assert finance["assessment"]["complete"] is True
     assert finance["assessment"]["outputs"]["operating_net_usd_per_year"] == "17890.40"
+
+
+def test_optional_physical_quantifications_flagged_not_zeroed() -> None:
+    result = evaluate_scenario("bench", crop_profile(), _site())
+    assert result["not_quantified"] == [
+        "hvac_energy", "nutrient_volume", "labor_hours"]
+    assert "hvac_kwh_per_year" not in result["outputs"]
+
+    crop = crop_profile()
+    crop["nutrient_ml_per_site_cycle"] = ClassifiedInput(
+        name="nutrient_ml_per_site_cycle", value=100.0, unit="mL/site/cycle",
+        provenance="test", classification="experimental")
+    crop["labor_min_per_site_cycle"] = ClassifiedInput(
+        name="labor_min_per_site_cycle", value=2.0, unit="min/site/cycle",
+        provenance="test", classification="experimental")
+    site = _site()
+    site["hvac_w_per_m2"] = ClassifiedInput(
+        name="hvac_w_per_m2", value=10.0, unit="W/m2",
+        provenance="test", classification="assumed")
+    result = evaluate_scenario("bench", crop, site)
+    assert result["not_quantified"] == []
+    out = result["outputs"]
+    assert out["nutrient_l_per_year"] == 2500.0
+    assert out["labor_hours_per_year"] == pytest.approx(833.3, abs=0.1)
+    assert out["hvac_kwh_per_year"] == 8760.0

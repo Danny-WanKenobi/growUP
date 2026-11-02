@@ -76,8 +76,10 @@ def test_assess_bench_hand_check() -> None:
     assert out["operating_net_usd_per_year"] == "-21109.60"
     assert out["opex_breakdown_usd"]["labor"] == "46800.00"
     assert out["simple_payback_years"] is None
-    assert out["breakeven_kg_per_year"] is None
+    assert out["breakeven_kg_per_year"] == pytest.approx(6388.7, abs=0.1)
+    assert out["breakeven_price_usd_per_kg"] == "13.63"
     assert "break-even" in out["breakeven_note"].lower()
+    assert out["occupancy_quantified"] is False
     assert out["sensitivity"]["yield_plus_20pct_net_usd"] == "-15109.60"
 
 
@@ -195,3 +197,38 @@ def test_default_market_inputs_are_assumed() -> None:
     for item in defaults.values():
         assert item.classification == "assumed"
         assert item.scenario == "bench"
+
+
+def test_occupancy_included_only_when_provided() -> None:
+    from app.michael import FinancialInput
+
+    bundle = _finance()
+    bundle["occupancy_usd_per_m2_year"] = FinancialInput(
+        name="occupancy_usd_per_m2_year", value=Decimal("10"),
+        classification="estimated", scenario="bench")
+    result = assess("bench", _engineering("bench"), bundle)
+    out = result["outputs"]
+    assert out["occupancy_quantified"] is True
+    assert out["opex_breakdown_usd"]["occupancy"] == "1000.00"
+    assert out["opex_usd_per_year"] == "52109.60"
+
+
+def test_energy_sensitivity_and_scenarios() -> None:
+    from app.michael import assess_scenarios
+
+    result = assess("bench", _engineering("bench"), _finance())
+    sensitivity = result["outputs"]["sensitivity"]
+    # Electricity is 1839.60 USD/yr in the hand-check bundle.
+    assert sensitivity["energy_cost_plus_20pct_net_usd"] == "-21477.52"
+    assert sensitivity["energy_cost_minus_20pct_net_usd"] == "-20741.68"
+    bundles = {
+        "conservative": _finance(price_per_kg="6.0"),
+        "base": _finance(),
+        "optimistic": _finance(price_per_kg="10.0"),
+    }
+    scenarios = assess_scenarios("bench", _engineering("bench"), bundles)
+    nets = {
+        name: Decimal(item["outputs"]["operating_net_usd_per_year"])
+        for name, item in scenarios["scenarios"].items()
+    }
+    assert nets["conservative"] < nets["base"] < nets["optimistic"]

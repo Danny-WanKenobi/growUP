@@ -183,7 +183,34 @@ def evaluate_scenario(
         "lighting_kwh_per_year": round(kwh_year, 1),
         "water_plus_structure_kg": round(water_kg + structure_kg, 1),
     }
-    return {**base, "complete": True, "missing": [], "outputs": outputs}
+    # Optional physical quantifications: computed only from supplied
+    # classified inputs; absence is flagged, never silently zero.
+    not_quantified: list[str] = []
+    hvac_w = site.get("hvac_w_per_m2")
+    if hvac_w is not None and hvac_w.value is not None:
+        outputs["hvac_kwh_per_year"] = round(
+            growing_m2 * float(hvac_w.value) * 24.0 * 365.0 / 1000.0, 1)
+    else:
+        not_quantified.append("hvac_energy")
+    nutrient_ml = crop.get("nutrient_ml_per_site_cycle")
+    if nutrient_ml is not None and nutrient_ml.value is not None:
+        outputs["nutrient_l_per_year"] = round(
+            sites * float(nutrient_ml.value) / 1000.0 * cycles, 1)
+    else:
+        not_quantified.append("nutrient_volume")
+    labor_min = crop.get("labor_min_per_site_cycle")
+    if labor_min is not None and labor_min.value is not None:
+        outputs["labor_hours_per_year"] = round(
+            sites * float(labor_min.value) * cycles / 60.0, 1)
+    else:
+        not_quantified.append("labor_hours")
+    return {
+        **base,
+        "complete": True,
+        "missing": [],
+        "not_quantified": not_quantified,
+        "outputs": outputs,
+    }
 
 
 def validate_overrides(overrides: dict[str, Any]) -> dict[str, Any]:

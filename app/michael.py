@@ -263,7 +263,18 @@ def assess(
     labor_cost = labor_h * growing * Decimal(52) * labor_usd
     hvac_cost = hvac * growing
     other_cost = other * growing
-    opex = electricity_usd + water_cost + nutrient_cost + labor_cost + hvac_cost + other_cost
+    occupancy_cost = Decimal(0)
+    occupancy_quantified = False
+    occupancy_input = financial.get("occupancy_usd_per_m2_year")
+    if occupancy_input is not None and occupancy_input.value is not None:
+        try:
+            occupancy_rate = Decimal(str(occupancy_input.value))
+        except (InvalidOperation, ValueError):
+            occupancy_rate = None
+        if occupancy_rate is not None and occupancy_rate.is_finite():
+            occupancy_cost = occupancy_rate * growing
+            occupancy_quantified = True
+    opex = electricity_usd + water_cost + nutrient_cost + labor_cost + hvac_cost + other_cost + occupancy_cost
     capex = (
         growing * Decimal(str(rates["rack_capex_usd_per_m2_tier"]))
         + growing * Decimal(str(rates["lighting_capex_usd_per_m2_tier"]))
@@ -279,6 +290,8 @@ def assess(
         "hvac": money(hvac_cost),
         "other": money(other_cost),
     }
+    if occupancy_quantified:
+        breakdown["occupancy"] = money(occupancy_cost)
     ranked = sorted(breakdown.items(), key=lambda item: item[1], reverse=True)
     drivers = [
         f"{name} cost {format(amount, 'f')} USD/yr" for name, amount in ranked[:3]
@@ -291,6 +304,11 @@ def assess(
         for name, item in sorted(financial.items())
         if item.classification != "verified"
     ]
+    if not occupancy_quantified:
+        evidence_requests.append(
+            "occupancy cost not provided; excluded from opex "
+            "(flagged, never assumed zero)"
+        )
     verdict = VERDICT_FAVORABLE if net > 0 else VERDICT_UNFAVORABLE
     return {
         **base,
@@ -311,15 +329,53 @@ def assess(
             "revenue_usd_per_year": money_str(revenue),
             "operating_net_usd_per_year": money_str(net),
             "simple_payback_years": float(payback.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if payback is not None else None,
-            "breakeven_kg_per_year": None,
-            "breakeven_note": "No fixed/variable cost split modeled; break-even output undefined.",
+            "occupancy_quantified": occupancy_quantified,
+            "breakeven_kg_per_year": (
+                float((opex / price).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+                if price > 0 else None
+            ),
+            "breakeven_price_usd_per_kg": (
+                money_str(opex / kg) if kg > 0 else None
+            ),
+            "breakeven_note": (
+                "Operating break-even: annual revenue must cover total "
+                "opex at the stated price/yield (no fixed/variable "
+                "cost split modeled)."
+            ),
             "sensitivity": {
                 "yield_plus_20pct_net_usd": money_str(revenue * Decimal("1.2") - opex),
                 "yield_minus_20pct_net_usd": money_str(revenue * Decimal("0.8") - opex),
                 "price_plus_20pct_net_usd": money_str(revenue * Decimal("1.2") - opex),
                 "price_minus_20pct_net_usd": money_str(revenue * Decimal("0.8") - opex),
+                "energy_cost_plus_20pct_net_usd": money_str(
+                    revenue - (opex + electricity_usd * Decimal("0.2"))),
+                "energy_cost_minus_20pct_net_usd": money_str(
+                    revenue - (opex - electricity_usd * Decimal("0.2"))),
             },
         },
+    }
+
+
+def assess_scenarios(
+    config_name: str,
+    engineering: dict[str, Any],
+    bundles: dict[str, dict[str, FinancialInput]],
+) -> dict[str, Any]:
+    """Run the same engineering through named assumption bundles.
+
+    Conservative/base/optimistic are caller-supplied assumption
+    sets, not forecasts: every verdict stays conditional on its
+    bundle, and all arithmetic remains in :func:`assess`.
+    """
+    return {
+        "scenarios": {
+            name: assess(config_name, engineering, bundle)
+            for name, bundle in bundles.items()
+        },
+        "note": (
+            "Scenario labels describe assumption bundles only; no "
+            "scenario is a verified outcome."
+        ),
     }
 
 
