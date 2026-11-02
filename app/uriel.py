@@ -261,6 +261,155 @@ def list_packages_in_transaction(
     ]
 
 
+# --- Opportunity ranking (deterministic, preparation-only) -----------------
+#
+# Ranking never sends anything and never upgrades evidence: it orders
+# evaluated candidates by documented criteria so an operator can see
+# what is outreach-ready, what is evidence-pending, and what is not
+# ready. Verified facts outrank every projection; a favorable
+# financial verdict under assumptions earns less than a verified
+# category fact, and unresolved gaps always cost points.
+
+RANKING_WEIGHTS = {
+    "category_verified": 30,
+    "raphael_authorized": 25,
+    "raphael_needs_evidence": 5,
+    "engineering_complete": 10,
+    "finance_complete": 10,
+    "finance_favorable": 15,
+    "contact_known": 5,
+    "evidence_gap_each": -2,
+    "evidence_gap_floor": -10,
+}
+
+
+def _candidate_key(candidate: dict[str, Any]) -> str:
+    account = str(candidate.get("account") or "").strip()
+    if account:
+        return f"account:{account}"
+    return f"property:{candidate.get('property_id')}"
+
+
+def rank_opportunities(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Rank evaluated candidates deterministically (no side effects)."""
+    seen: dict[str, dict[str, Any]] = {}
+    duplicates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        key = _candidate_key(candidate)
+        if key in seen:
+            duplicates.append({"key": key, "reason": "duplicate candidate"})
+            continue
+        seen[key] = candidate
+
+    ranked: list[dict[str, Any]] = []
+    for key, candidate in seen.items():
+        gaps = [str(gap) for gap in candidate.get("evidence_gaps") or []]
+        breakdown = {
+            "category_verified": (
+                RANKING_WEIGHTS["category_verified"]
+                if candidate.get("category_verified") else 0
+            ),
+            "raphael": (
+                RANKING_WEIGHTS["raphael_authorized"]
+                if candidate.get("raphael_outcome") == "authorized"
+                else RANKING_WEIGHTS["raphael_needs_evidence"]
+                if candidate.get("raphael_outcome") == "needs_evidence"
+                else 0
+            ),
+            "engineering": (
+                RANKING_WEIGHTS["engineering_complete"]
+                if candidate.get("engineering_complete") else 0
+            ),
+            "finance": (
+                RANKING_WEIGHTS["finance_complete"]
+                if candidate.get("finance_complete") else 0
+            ) + (
+                RANKING_WEIGHTS["finance_favorable"]
+                if candidate.get("finance_verdict")
+                == "favorable_under_assumptions" else 0
+            ),
+            "contact": (
+                RANKING_WEIGHTS["contact_known"]
+                if candidate.get("owner_contact") else 0
+            ),
+            "evidence_gaps": max(
+                RANKING_WEIGHTS["evidence_gap_floor"],
+                RANKING_WEIGHTS["evidence_gap_each"] * len(gaps),
+            ),
+        }
+        verified = bool(candidate.get("category_verified"))
+        authorized = candidate.get("raphael_outcome") == "authorized"
+        contact = bool(candidate.get("owner_contact"))
+        if verified and authorized and contact:
+            readiness = "outreach_ready"
+        elif verified and authorized:
+            readiness = "evidence_pending"
+        else:
+            readiness = "not_ready"
+        ranked.append({
+            "key": key,
+            "property_id": candidate.get("property_id"),
+            "account": candidate.get("account"),
+            "address": candidate.get("address"),
+            "score": sum(breakdown.values()),
+            "score_breakdown": breakdown,
+            "readiness": readiness,
+            "missing_data": gaps + (
+                [] if contact else ["owner contact not identified"]
+            ) + (
+                [] if verified else ["category not verified"]
+            ) + (
+                [] if authorized else ["Raphael authorization outstanding"]
+            ),
+        })
+    tier_order = {"outreach_ready": 0, "evidence_pending": 1, "not_ready": 2}
+    ranked.sort(key=lambda item: (
+        tier_order[item["readiness"]], -item["score"], item["key"]))
+    return {
+        "ranked": ranked,
+        "duplicates": duplicates,
+        "criteria": dict(RANKING_WEIGHTS),
+        "note": (
+            "Ranking is preparation only: it sends nothing, and no "
+            "score upgrades an unverified fact."
+        ),
+    }
+
+
+def draft_outreach(entry: dict[str, Any]) -> dict[str, Any]:
+    """Draft (never send) outreach for one outreach-ready entry.
+
+    The text may cite only the verified category fact and the
+    address; it must not claim vacancy, availability, suitability,
+    or owner circumstances the evidence does not establish.
+    """
+    if entry.get("readiness") != "outreach_ready":
+        raise UrielError("outreach draft requires an outreach-ready entry")
+    address = str(entry.get("address") or "").strip()
+    if not address:
+        raise UrielError("outreach draft requires a property address")
+    return {
+        "status": "draft_not_sent",
+        "to": entry.get("owner_contact"),
+        "subject": f"Interest in {address}",
+        "body": (
+            f"Hello — we are evaluating underused commercial space in "
+            f"Dallas for a preliminary indoor-growing concept. Public "
+            f"appraisal records for {address} record a commercial "
+            f"classification that our verification process has "
+            f"confirmed at the recorded-fact level. If you are open "
+            f"to a brief conversation about the property's future, "
+            f"we would welcome it. This note is exploratory; it "
+            f"assumes nothing about the property's availability or "
+            f"your plans for it."
+        ),
+        "facts_used": ["recorded commercial classification (verified)"],
+        "facts_not_claimed": [
+            "vacancy", "availability", "current use", "suitability",
+        ],
+    }
+
+
 def _owned(fn: Any, *args: Any, config: DatabaseConfig | None = None, **kwargs: Any) -> Any:
     conn = get_connection(config)
     try:
