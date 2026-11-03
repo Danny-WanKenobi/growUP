@@ -50,7 +50,10 @@ from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
 MAX_BODY_BYTES = 1_000_000
 MAX_CSV_ROWS = 5000
 
-_ID = ("account", "parcel_id", "parcelid", "apn", "pin", "id", "objectid", "fid", "property_id")
+_ID = ("account", "parcel_id", "parcelid", "apn", "pin", "id", "objectid", "fid", "property_id",
+       "taxparcelidentificationnumber", "tax_parcel_identification_number",
+       "parcelidentificationnumber", "parcel_number", "parcelnumber", "parcel_no",
+       "propertyid", "taxparcel", "folio", "reid")
 _ADDRESS = ("situs_address", "address", "street_address", "full_address", "addr",
             "property_address", "location_address")
 _CITY = ("city", "municipality", "town")
