@@ -500,7 +500,21 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
             except SourceSelectionError as exc:
                 last_error = exc
         if collected:
-            return _dedupe_identity(collected)[:mission.budget.max_results]
+            # Interleave providers round-robin before capping: a
+            # chatty first catalog must not starve later P1 catalogs
+            # out of the shared result budget entirely.
+            deduped = _dedupe_identity(collected)
+            by_provider: dict[str, list] = {}
+            for item in deduped:
+                by_provider.setdefault(item.provider, []).append(item)
+            queues = list(by_provider.values())
+            merged: list = []
+            while queues and len(merged) < mission.budget.max_results:
+                for queue in queues:
+                    if queue and len(merged) < mission.budget.max_results:
+                        merged.append(queue.pop(0))
+                queues = [q for q in queues if q]
+            return merged
         catalog = ""  # P1 exhausted; fall through to P2/P3 below.
 
     def _searxng() -> list[FoundCandidate]:
