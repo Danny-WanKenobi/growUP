@@ -55,6 +55,9 @@ def test_whole_route_and_upstream_gap(monkeypatch):
         payload['dossier']['assessment_inputs'] = {
             'site': {k: v.model_dump(mode='json') for k, v in demo._site().items()},
             'financial': {k: v.model_dump(mode='json') for k, v in demo._demo_financial_inputs('bench').items()}}
+        for name, value in (('occupancy_usd_per_m2_year','10'), ('maintenance_usd_per_year','100')):
+            payload['dossier']['assessment_inputs']['financial'][name] = {
+                'value':value,'classification':'assumed','source':'fictional test input'}
         return demo.sealed({k:v for k,v in payload.items() if k!='digest'})
     monkeypatch.setattr(demo, '_fixture', fixture)
     conn = Conn(_new_db())

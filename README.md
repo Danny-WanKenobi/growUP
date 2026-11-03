@@ -4691,3 +4691,55 @@ These use disposable synthetic SQL doubles; deployed PostgreSQL and operational
 real-data acceptance must be reported separately.
 
 Coordinator recovery acceptance: `test_live_coordinator_interruption_and_concurrent_replay` is gated to `growup_mvp_gate`. It interrupts after a real report/snapshot append and checks rollback, then races two identical requests and checks exactly one stage commit and one replay. Disposable properties/workflow rows are cleaned; immutable test custody rows remain under the established gate-database retention convention. No operational records or providers are used. Live execution results must be reported separately.
+
+## Financial planning cases and quantified engineering inputs
+
+The bounded PostgreSQL coordinator recovery proof passed on `ede4541`: the
+full gate suite returned **2,707 passed, 2 skipped**. This includes rollback of
+an interrupted real report/snapshot transaction and two concurrent same-sequence
+requests yielding one committed stage and one replay. No live provider was used.
+The coordinator now takes its dossier lock before validating multi-query custody
+state, avoiding a mixed read during another worker's commit.
+
+`assessment_inputs.crop` accepts classified quantities from Onesimus's existing
+crop-unit catalog: labor minutes/site/cycle (hours/site/cycle converts), nutrient
+concentrate mL/L of solution or mL/site/cycle, PPFD, fixture efficacy and the
+existing crop assumptions. Unknown names refuse; raw claimed verified inputs
+are treated as assumptions. The baseline crop profile remains explicit; this
+is not automatic crop research or selection. `assessment_inputs.site` additionally
+accepts HVAC operating hours/day (0–24) and fixed annual labor hours. Geometry,
+units, provenance, passive Kratky root-zone requirements and unknown capacity
+boundaries remain in the inherited report. HVAC W/m2 is still a planning
+allowance, not a psychrometric or dehumidification capacity design.
+
+Physical outputs now distinguish normalized `site_floor_area_m2` from stacked
+`growing_m2`. Occupancy uses supplied floor area when present, never the number
+of tiers; it is a planning area basis, not evidence of an actual lease. Legacy
+records without it retain their disclosed growing-area fallback. Supply the
+relevant assessment floor area explicitly before interpreting occupancy costs.
+
+Michael v4 preserves optional raw `occupancy_usd_per_m2_year` (USD/m2/year) and
+`maintenance_usd_per_year` (USD/year) inputs. Negative/non-finite costs refuse.
+`planning_cases` requires both, including explicit documented zero assumptions;
+missing costs produce no planning totals. Existing direct `assess` calls retain
+legacy behavior with explicit excluded-cost flags. Other opex must exclude
+separately supplied maintenance. Monthly operating cash flow is annual operating
+net divided by twelve under uniform timing; no debt, tax, seasonality or working
+capital model is implied.
+
+The coordinator's Michael report includes conservative/base/optimistic planning
+cases per engineering alternative. Conservative applies 0.8 to saleable yield
+and price and 1.2 to selected cost rates; optimistic applies 1.2/1.2/0.8;
+base uses unchanged inputs. Occupancy and capex stay fixed. These are deterministic
+stress assumptions, not probabilities or guaranteed bounds. Changed inputs are
+labeled assumed and retain baseline provenance. Only a complete favorable base
+assessment permits preliminary forward routing; optimistic results alone do not.
+Missing financial inputs return to Onesimus. Uriel inherits base assessments and
+all planning cases through the canonical dossier.
+
+Focused checks: `python -m pytest tests/test_planning_quantities.py tests/test_dossier_coordinator.py tests/test_michael.py tests/test_onesimus.py -q`.
+No autonomous discovery, email, market-price acquisition or inference is enabled.
+
+Physical formula changes are identified by `mvp-onesimus-3`; historical results retain their stored version. The privacy regression uses a distinct excluded-price sentinel rather than a three-digit substring that can randomly occur in an unrelated UUID.
+
+Local acceptance for the planning/quantity changes: **2,564 passed, 150 skipped**, 16 warnings. PostgreSQL recovery acceptance above is independently proven; deployed regression of the new formulas follows the development checkpoint.

@@ -44,9 +44,22 @@ def _build(agent, payload):
         inspection = reports.get('raphael') or {}
         if inspection.get('outcome') != 'authorized':
             raise WorkflowError('authorized Raphael report required')
+        from app.agents.onesimus.engineering import CROP_UNITS
+        from app.agents.onesimus.service import ClassifiedInput
+        crop = crop_profile()
+        overrides = inputs.get('crop') or {}
+        if not isinstance(overrides, dict) or set(overrides) - set(CROP_UNITS):
+            raise WorkflowError('unsupported crop input')
+        for name, raw in overrides.items():
+            if not isinstance(raw, dict):
+                raise WorkflowError('crop input requires classification, unit and provenance')
+            item = ClassifiedInput.model_validate({**raw, 'name':name})
+            if item.classification == 'verified':
+                item = item.model_copy(update={'classification':'assumed'})
+            crop[name] = item
         scenarios = {}
         for config in ('bench', 'rack3'):
-            scenario = evaluate_scenario(config, crop_profile(), _site_inputs(inspection.get('physical_inputs') or {}))
+            scenario = evaluate_scenario(config, crop, _site_inputs(inspection.get('physical_inputs') or {}))
             scenario['dossier_digest'] = payload['digest']
             scenarios[config] = scenario
         report = build_engineering_report(scenarios, inspection=inspection,
@@ -55,14 +68,18 @@ def _build(agent, payload):
         reasons = [] if eligible else report.get('missing') or ['no plausible preliminary layout']
     elif agent == 'michael':
         engineering = reports.get('onesimus') or {}
-        assessments = {name: assess(name, item['scenario'], financial_inputs_from_raw(
+        from app.michael import planning_cases
+        cases = {name: planning_cases(name, item['scenario'], financial_inputs_from_raw(
             inputs.get('financial') or {}, scenario=name))
             for name, item in (engineering.get('alternatives') or {}).items()}
+        assessments = {name: case.get('cases',{}).get('base') or {
+            'complete':False,'verdict':'insufficient_evidence','missing':case['missing'],'outputs':{}}
+            for name, case in cases.items()}
         eligible = any(a.get('complete') and a.get('verdict') == 'favorable_under_assumptions'
                        for a in assessments.values())
         reasons = [] if eligible else ['no complete financially favorable scenario under stated assumptions']
         report = {'schema_version': 'michael-finance-report-1', 'assessments': assessments,
-                  'source_engineering_digest': engineering.get('digest'), 'missing': reasons}
+                  'source_engineering_digest': engineering.get('digest'), 'missing': reasons, 'planning_cases':cases}
     else:
         report = build_report(agent, payload)
         eligible = not report['missing']
@@ -87,7 +104,11 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
     if isinstance(expected_sequence, bool) or not isinstance(expected_sequence, int) or expected_sequence < 0:
         raise WorkflowError('expected_sequence must be a non-negative integer')
     run_id = UUID(str(run_id))
-    source, did = _load(conn, run_id, dossier_key)
+    initial = get_record_in_transaction(conn, run_id, 'dossier_version', dossier_key)
+    if initial is None:
+        raise WorkflowError('stored dossier not found')
+    from app.custody import dossier_id_for_property
+    did = dossier_id_for_property(initial.payload.get('property_id'))
     from app.custody_db import lock_dossier_in_transaction
     lock_dossier_in_transaction(conn, did)
     source, did = _load(conn, run_id, dossier_key)

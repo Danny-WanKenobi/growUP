@@ -11,6 +11,7 @@ SITE_UNITS = {
     "aisle_width_m": "m", "service_clearance_m": "m", "tier_pitch_m": "m",
     "ceiling_clearance_m": "m", "hvac_w_per_m2": "W/m2",
     "cleaning_l_per_site_cycle": "L/site/cycle",
+    "hvac_hours_per_day": "h/day", "fixed_labor_hours_per_year": "h/year",
 }
 CROP_UNITS = {
     "spacing_m": "m", "cycles_per_year": "cycles/year",
@@ -70,6 +71,8 @@ def calculate(config, crop, site, *, tenant_consolidation, observed_occupancy,
         raise WorkflowError("photoperiod cannot exceed 24 hours/day")
     if cv["cycles_per_year"] is not None and cv["cycles_per_year"] > 365:
         raise WorkflowError("cycles_per_year exceeds the supported daily-cycle bound")
+    if sv["hvac_hours_per_day"] is not None and sv["hvac_hours_per_day"] > 24:
+        raise WorkflowError("HVAC operating hours cannot exceed 24 hours/day")
     air = cv["root_zone_air_fraction"]
     if air is not None and not 0 < air < 1:
         raise WorkflowError("root_zone_air_fraction must be between zero and one")
@@ -153,6 +156,7 @@ def calculate(config, crop, site, *, tenant_consolidation, observed_occupancy,
         base["assumptions"].append("PPFD/fixture efficacy estimates light power at the crop; optical losses remain unverified.")
     outputs = {
         "sites": sites, "containers": sites, "tiers": config.tiers,
+        "site_floor_area_m2": round(area, 3),
         "growing_m2": round(growing, 3), "rack_footprint_m2": round(floor_area, 3),
         "heads_per_year": sites*cycles, "kg_per_year": round(sites*cycles*cv["saleable_kg_per_head"], 3),
         "reservoir_l_total": round(fill, 3), "water_l_per_year": round(water, 3),
@@ -168,9 +172,9 @@ def calculate(config, crop, site, *, tenant_consolidation, observed_occupancy,
     else:
         not_quantified.append("crop_light_delivery")
     for name, value in (
-        ("hvac_kwh_per_year", None if sv["hvac_w_per_m2"] is None else growing*sv["hvac_w_per_m2"]*24*365/1000),
+        ("hvac_kwh_per_year", None if sv["hvac_w_per_m2"] is None else growing*sv["hvac_w_per_m2"]*(sv["hvac_hours_per_day"] if sv["hvac_hours_per_day"] is not None else 24)*365/1000),
         ("nutrient_l_per_year", None if cv["nutrient_ml_per_site_cycle"] is None else sites*cycles*cv["nutrient_ml_per_site_cycle"]/1000),
-        ("labor_hours_per_year", None if cv["labor_min_per_site_cycle"] is None else sites*cycles*cv["labor_min_per_site_cycle"]/60),
+        ("labor_hours_per_year", None if cv["labor_min_per_site_cycle"] is None else sites*cycles*cv["labor_min_per_site_cycle"]/60+(sv["fixed_labor_hours_per_year"] or 0)),
     ):
         if value is None:
             not_quantified.append({"hvac_kwh_per_year": "hvac_energy", "nutrient_l_per_year": "nutrient_volume", "labor_hours_per_year": "labor_hours"}[name])
@@ -179,13 +183,17 @@ def calculate(config, crop, site, *, tenant_consolidation, observed_occupancy,
     if "nutrient_l_per_year" not in outputs and cv["nutrient_ml_per_l_solution"] is not None:
         outputs["nutrient_l_per_year"] = round(solution_water*cv["nutrient_ml_per_l_solution"]/1000, 3)
         not_quantified.remove("nutrient_volume")
+    base["formulas"].update({"labor_hours_per_year":"sites * cycles/year * labor_min_per_site_cycle / 60 + supplied fixed annual hours",
+        "hvac_kwh_per_year":"growing_m2 * HVAC W/m2 * operating hours/day * 365 / 1000",
+        "nutrient_l_per_year":"solution liters/year * supplied mL concentrate/L / 1000, or supplied mL/site/cycle basis"})
+    base["assumptions"].append("HVAC defaults to 24 operating hours/day only when hours are absent; this is an allowance, not a load calculation. Fixed labor is excluded unless supplied.")
     base["assumptions"].append("Container capacity reserves the specified air fraction; refill procedures must not submerge established air roots.")
     return {**base, "crop_allocation": [{"crop_id": "butterhead_lettuce_kratky_mvp1", "share": 1.0,
                                           "sites": sites, "cycles_per_year": cycles}],
             "complete": True, "calculation_complete": True,
             "layout": layout, "layout_status": layout["status"], "missing": [],
             "not_quantified": not_quantified, "outputs": outputs,
-            "output_units": {"sites": "count", "containers": "count", "growing_m2": "m2",
+            "output_units": {"site_floor_area_m2":"m2", "sites": "count", "containers": "count", "growing_m2": "m2",
                              "water_l_per_year": "L/year", "nutrient_l_per_year": "L concentrate/year",
                              "nutrient_solution_l_per_year": "L solution/year",
                              "tiers": "count", "rack_footprint_m2": "m2", "heads_per_year": "heads/year",

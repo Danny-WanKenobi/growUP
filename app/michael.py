@@ -24,7 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-MICHAEL_CALC_VERSION = "michael-3"
+MICHAEL_CALC_VERSION = "michael-4"
 
 CLASSIFICATIONS = ("verified", "estimated", "experimental", "assumed", "unknown")
 
@@ -110,7 +110,14 @@ FINANCIAL_PERIODS={"price_per_kg":{"per-kg","per-kg-saleable"},
     "other_opex_usd_per_m2_year":{"per-year","annual","per-m2-year"}}
 
 
+FINANCIAL_UNITS.update({"occupancy_usd_per_m2_year":"USD/m2/year", "maintenance_usd_per_year":"USD/year"})
+FINANCIAL_PERIODS.update({name:{"per-year", "annual"} for name in ("occupancy_usd_per_m2_year", "maintenance_usd_per_year")})
+
+
 def validate_financial_input(item):
+    if item.name in ("occupancy_usd_per_m2_year", "maintenance_usd_per_year") and item.value is not None:
+        if not item.value.is_finite() or item.value < 0:
+            raise MichaelError(f"{item.name} must be finite and nonnegative")
     if item.classification not in CLASSIFICATIONS:
         raise MichaelError("unknown financial input classification")
     if item.currency != "USD":
@@ -342,15 +349,18 @@ def assess(
     occupancy_cost = Decimal(0)
     occupancy_quantified = False
     occupancy_input = financial.get("occupancy_usd_per_m2_year")
-    if occupancy_input is not None and occupancy_input.value is not None:
+    if occupancy_input is not None and occupancy_input.value is not None and occupancy_input.classification != "unknown":
         try:
             occupancy_rate = Decimal(str(occupancy_input.value))
         except (InvalidOperation, ValueError):
             occupancy_rate = None
         if occupancy_rate is not None and occupancy_rate.is_finite():
-            occupancy_cost = occupancy_rate * growing
+            occupancy_cost = occupancy_rate * (_quantity(outputs, "site_floor_area_m2") if outputs.get("site_floor_area_m2") is not None else growing)
             occupancy_quantified = True
-    opex = electricity_usd + water_cost + nutrient_cost + labor_cost + hvac_cost + other_cost + occupancy_cost
+    maintenance_missing = []
+    maintenance = _need(financial, "maintenance_usd_per_year", maintenance_missing) if "maintenance_usd_per_year" in financial else None
+    maintenance_cost = maintenance if maintenance is not None else Decimal(0)
+    opex = electricity_usd + water_cost + nutrient_cost + labor_cost + hvac_cost + other_cost + occupancy_cost + maintenance_cost
     capex = (
         growing * Decimal(str(rates["rack_capex_usd_per_m2_tier"]))
         + growing * Decimal(str(rates["lighting_capex_usd_per_m2_tier"]))
@@ -368,6 +378,8 @@ def assess(
     }
     if occupancy_quantified:
         breakdown["occupancy"] = money(occupancy_cost)
+    if maintenance is not None:
+        breakdown["maintenance"] = money(maintenance_cost)
     ranked = sorted(breakdown.items(), key=lambda item: item[1], reverse=True)
     drivers = [
         f"{name} cost {format(amount, 'f')} USD/yr" for name, amount in ranked[:3]
@@ -385,6 +397,9 @@ def assess(
             "occupancy cost not provided; excluded from opex "
             "(flagged, never assumed zero)"
         )
+    if maintenance is None:
+        evidence_requests.append("maintenance cost not provided; excluded from legacy totals; planning cases require it explicitly")
+    base['assumptions'].append('Separately supplied maintenance is additional to other opex; the other-cost allowance must exclude maintenance to avoid double counting.')
     verdict = VERDICT_FAVORABLE if net > 0 else VERDICT_UNFAVORABLE
     return {
         **base,
@@ -400,6 +415,9 @@ def assess(
         "evidence_requests": evidence_requests,
         "outputs": {
             "capex_usd": money_str(capex),
+            "monthly_operating_cashflow_usd": money_str(net / Decimal(12)),
+            "monthly_cashflow_basis": "Uniform monthly accrual/cash timing planning assumption; no seasonality, working capital, financing or tax model.",
+            "maintenance_quantified": maintenance is not None,
             "opex_usd_per_year": money_str(opex),
             "opex_breakdown_usd": {name: format(amount, "f") for name, amount in breakdown.items()},
             "revenue_usd_per_year": money_str(revenue),
@@ -411,6 +429,8 @@ def assess(
                               "price_period": "per-liter-solution" if legacy_nutrient else nutrient_period,
                               "legacy_assumption": legacy_nutrient},
                 "labor": labor_basis, "hvac": hvac_basis,
+                "occupancy": "supplied USD/m2/year times site_floor_area_m2 when available; legacy growing-area fallback otherwise",
+                "maintenance": "explicit annual allowance; excluded from other opex",
             },
             "breakeven_kg_per_year": (
                 float((opex / price).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
@@ -469,7 +489,7 @@ def financial_inputs_from_raw(
     Missing names become explicit unknown inputs (never silent zeros).
     """
     bundle: dict[str, FinancialInput] = {}
-    for name in FINANCIAL_NAMES:
+    for name in (*FINANCIAL_NAMES, *(name for name in ("occupancy_usd_per_m2_year", "maintenance_usd_per_year") if name in (raw or {}))):
         entry = (raw or {}).get(name)
         if isinstance(entry, dict) and entry.get("value") is not None:
             try:
@@ -498,3 +518,42 @@ def financial_inputs_from_raw(
     for item in bundle.values():
         validate_financial_input(item)
     return bundle
+
+
+def planning_cases(config_name, engineering, financial):
+    """Explicit deterministic stress cases, not market forecasts or confidence bounds."""
+    from copy import deepcopy
+    for item in financial.values():
+        validate_financial_input(item)
+    missing = []
+    for name in ("occupancy_usd_per_m2_year", "maintenance_usd_per_year"):
+        _need(financial, name, missing)
+    if missing:
+        return {"complete":False, "missing":sorted(set(missing)), "cases":{},
+                "basis":"Occupancy and maintenance must be supplied explicitly, including sourced zero assumptions."}
+    result = {}
+    for name, revenue_factor, cost_factor in (("conservative",Decimal('0.8'),Decimal('1.2')),
+                                             ("base",Decimal(1),Decimal(1)),
+                                             ("optimistic",Decimal('1.2'),Decimal('0.8'))):
+        scenario = deepcopy(engineering)
+        if scenario.get('outputs',{}).get('kg_per_year') is not None:
+            scenario['outputs']['kg_per_year'] = str(Decimal(str(scenario['outputs']['kg_per_year'])) * revenue_factor)
+        bundle = {key:value.model_copy(deep=True) for key,value in financial.items()}
+        for key, item in bundle.items():
+            factor = revenue_factor if key == 'price_per_kg' else (cost_factor if key in (
+                'nutrient_usd_per_l','electricity_usd_per_kwh','water_usd_per_l','labor_usd_per_h',
+                'hvac_usd_per_m2_year','other_opex_usd_per_m2_year','maintenance_usd_per_year') else Decimal(1))
+            if item.value is not None:
+                item.value *= factor
+                if factor != 1:
+                    item.classification = 'assumed'
+                    item.uncertainty = f'{name} planning stress multiplier {factor}; baseline source: '+item.source
+                item.scenario = name
+        assessment = assess(config_name, scenario, bundle)
+        assessment['stress_assumptions'] = {'saleable_yield_multiplier':str(revenue_factor),
+            'sale_price_multiplier':str(revenue_factor),'variable_rate_multiplier':str(cost_factor),
+            'occupancy_and_capex':'held constant; provided planning basis',
+            'scope':'Independent planning cases; not probabilities, predictions or guaranteed returns.'}
+        result[name] = assessment
+    return {'complete':all(case['complete'] for case in result.values()), 'cases':result,
+            'missing':sorted({gap for case in result.values() for gap in case.get('missing',[])})}

@@ -788,7 +788,7 @@ def test_observed_inferred_separation(monkeypatch: pytest.MonkeyPatch, disc_stor
 
 
 def test_sensitive_field_exclusion(monkeypatch: pytest.MonkeyPatch, disc_store: _Store) -> None:
-    listing = _listing(tags={"owner": "Quiet LLC", "password": "hunter2", "price": "999"})
+    listing = _listing(tags={"owner": "Quiet LLC", "password": "hunter2", "price": "private-price-do-not-retain-999"})
     result = _run(monkeypatch, [listing])
     (event,) = _decisions(disc_store, result.run_id)
     details = _details(event)
@@ -819,7 +819,7 @@ def test_sensitive_field_exclusion(monkeypatch: pytest.MonkeyPatch, disc_store: 
         "retrieved_at",
     }
     blob = json.dumps(details)
-    for secret in ("Quiet LLC", "hunter2", "999", "owner", "password"):
+    for secret in ("Quiet LLC", "hunter2", "private-price-do-not-retain-999", "owner", "password"):
         assert secret not in blob
 
 
