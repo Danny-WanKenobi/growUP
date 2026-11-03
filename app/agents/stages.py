@@ -98,6 +98,20 @@ def build_report(agent, payload):
         result["tracking"] = {"runtime":"app.priscilla.metrics_in_transaction",
                               "actual_engagement":"unknown; read recorded events, never infer from prepared outreach",
                               "simulated_events_created":0}
+    if agent == "nicole":
+        from app.agents.nicole import assess
+        result["regulatory_assessment"] = assess(payload["property_id"], supplied)
+        for gap in result["regulatory_assessment"]["missing"]:
+            if gap not in missing:
+                missing.append(gap)
+                result["owner_review_requests"].append({"requirement":gap,
+                    "reason":"Nicole regulatory intake remains unresolved.", "status":"pending",
+                    "authority":"human_owner", "grants_permission":False})
+        result["owner_review_requests"].extend(result["regulatory_assessment"]["owner_review_requests"])
+        result["status"] = "needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"] = ["Obtain or resolve "+name for name in missing]
+        if not missing:
+            result["next_steps"].append("Preliminary underwriting may inspect this report; regulatory clearance remains unestablished.")
     result["digest"] = digest_payload(result)
     return result
 

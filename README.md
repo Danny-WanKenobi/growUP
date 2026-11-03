@@ -4994,3 +4994,59 @@ activation. The webhook path stays `/integrations/resend/webhook`; keep enrollme
 and Wondrue private. Existing VM disk-space and PostgreSQL validation requirements
 still apply. Production deployment, public routing, outbound sends and live-event
 compatibility remain unperformed and unproven by this preparation.
+
+
+### Nicole regulatory-evidence assessment
+
+`app.agents.nicole.assess` now powers Nicole's existing shared specialist report
+builder (`preview_agent_report`, `prepare_in_transaction` / `prepare_audited`).
+It consumes the retained dossier only: no discovery, current-law research,
+provider requests, permit applications or external actions. It uses the same
+property UUID, report digest, append-only dossier/snapshot services and owner
+review queue as the other agents. The durable coordinator still stops on delivery
+to Nicole; this change strengthens her report primitive, not the coordinator's
+route or a new unattended specialist worker.
+
+Nicole's `specialist_inputs` retain the existing value/evidence_refs wrappers:
+
+- `jurisdiction.value`: property_id, jurisdiction_id, authority_name, city, state;
+  source references must be HTTP(S) URLs without credentials.
+- `proposed_use.value`: property_id, scope=`indoor_farming`, method=`passive_kratky`.
+  This describes intent and does not establish permitted use.
+- `official_requirements.value`: at most 100 source-linked records. Each has
+  property_id, jurisdiction_id, topic, record_id, requirement, source_url,
+  record_date (ISO calendar date), state and disposition. source_url must occur
+  in that input's retained evidence_refs list. States: required, not_required,
+  unknown. Dispositions: pending, claimed_approved, conditional, denied,
+  not_applicable. A required/not_applicable pair refuses readiness.
+
+Screening topics are zoning_use, building_change_of_use, fire_life_safety,
+electrical, water_wastewater, food_safety, business_licensing. These are intake
+prompts, **not assertions of jurisdiction-specific permit requirements**. Missing
+coverage, unknown claims, wrong property/jurisdiction, invalid provenance/date,
+contradictory required/not-required claims, reused record identities with changed
+contents, and denials yield needs_evidence. Valid contradictory records remain
+visible rather than being overwritten. Agreeing exact duplicates are deduplicated.
+
+All supplied records remain provided_unverified. Claimed approvals never become
+authenticated merely because the caller labels them approved. Required approvals,
+conditions and denials produce owner-review requests; missing evidence also
+enters the existing owner queue when the report is persisted. A complete intake
+may be ready_for_preliminary_underwriting / prepared_not_approved, but
+regulatory_clearance and permit_approval_authenticated remain false. Record dates
+are not evidence of current law, valid permits, structural/electrical capacity,
+occupancy or permitted agricultural use. Current authoritative research/adapters
+and applications remain deferred.
+
+Reports append to the full canonical dossier with the existing immutable snapshot
+before release. No schema migration, separate regulatory dossier or new custody
+system is introduced. Historical reports are not rewritten. The isolated handoff
+fixture contract is now handoff-fixtures-5 with explicitly fictional structured
+Nicole records; v1–v4 remain inspectable and cannot advance under the new contract.
+This is synthetic software-contract evidence, not legal clearance.
+
+Focused checks: `python -m pytest tests/test_nicole.py
+ tests/test_agent_v1_contracts.py tests/test_handoff_demo.py -q -p no:cacheprovider`
+(on one command line). Checks cover property/jurisdiction binding, contradictory
+claims, missing/legacy input, source/date validation, approval-scope separation,
+report sealing and the existing isolated GO/NO-GO custody scenarios.
