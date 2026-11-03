@@ -480,6 +480,49 @@ def bootstrap_selection(*, source: str, jurisdiction: str | None = None,
     return _retain(payload)
 
 
+_PROPERTY_FIELD_TOKENS = (
+    "address", "parcel", "account", "situs", "latitude", "longitude",
+    "lat", "lon", "apn", "pin",
+)
+
+
+def _property_relevance(item: FoundCandidate) -> tuple[int, int, int]:
+    """Observed property-relevance tiers for executable candidates.
+
+    (name states a property subject, fields carry parcel/account
+    identity, fields carry address/coordinates). Incident or staff
+    datasets with mere locations rank below property datasets.
+    """
+    import re as _re
+
+    def parts_of(text: str) -> list[str]:
+        return [p for p in _re.split(r"[^a-z]+", text.lower()) if p]
+
+    name_parts = parts_of(item.candidate.name)
+    name_signal = any(
+        part in ("parcel", "parcels", "property", "properties", "building",
+                 "buildings", "assessment", "assessments", "appraisal",
+                 "land", "realestate") or part.startswith("building")
+        for part in name_parts)
+    strong = False
+    located = False
+    for field in (item.resource or {}).get("fields") or []:
+        parts = parts_of(str(field))
+        if any(part in ("parcel", "account", "situs", "apn", "pin")
+               or part.startswith(("parcel", "account", "situs"))
+               for part in parts):
+            strong = True
+        if any(part in _PROPERTY_FIELD_TOKENS
+               or part.startswith(("latitude", "longitude", "address"))
+               for part in parts):
+            located = True
+    return (1 if name_signal else 0, 1 if strong else 0, 1 if located else 0)
+
+
+def _has_property_fields(item: FoundCandidate) -> bool:
+    return _property_relevance(item) != (0, 0, 0)
+
+
 def select_sources(mission: SourceMission, found: list[FoundCandidate],
                    *, supported_adapters: Any = None) -> dict[str, Any]:
     """Rank found candidates and select one executable adapter, if any."""
@@ -493,6 +536,7 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
                                 needed_record_types=tuple(x.lower() for x in mission.record_types))
     by_identity = {id(f.candidate): f for f in found}
     ranked: list[dict[str, Any]] = []
+    executable: list[tuple[FoundCandidate, tuple[int, int, int]]] = []
     selected: FoundCandidate | None = None
     selected_adapter: str | None = None
     blockers: list[str] = []
@@ -551,8 +595,15 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
             "executable_blockers": executable_blockers,
             "resource": dict(item.resource or {}),
         })
-        if selected is None and not executable_blockers:
-            selected, selected_adapter = item, item.adapter
+        if not executable_blockers:
+            executable.append((item, _property_relevance(item)))
+    # Among executable candidates, prefer observed property relevance
+    # (property subject, parcel identity, then location): a qualified
+    # budget, wage, or incident dataset must not outrank a qualified
+    # property dataset for a property mission.
+    if executable:
+        best = max(executable, key=lambda pair: pair[1])
+        selected, selected_adapter = best[0], best[0].adapter
     if selected is not None:
         status = SELECTED
     elif saw_needs_review or any(r["status"] == "needs_review" for r in ranked):

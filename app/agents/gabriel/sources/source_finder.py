@@ -136,6 +136,28 @@ def _bool_or(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _jurisdiction_from_observed(raw: dict, domain: str, mission: SourceMission) -> str:
+    """Jurisdiction from the candidate's own observed metadata.
+
+    Established only when the mission jurisdiction text appears in
+    the dataset's observed name, publisher, or portal domain (e.g.
+    "Allegheny County Property Assessments", data.seattle.gov). The
+    search query alone never establishes jurisdiction.
+    """
+    stated = str(raw.get("jurisdiction") or "").strip()
+    if stated:
+        return stated
+    wanted = " ".join(str(mission.jurisdiction or "").lower().split())
+    if not wanted:
+        return ""
+    observed = " ".join([
+        str(raw.get("name") or raw.get("title") or "").lower(),
+        str(raw.get("publisher_name") or raw.get("publisher") or "").lower(),
+        domain.lower(),
+    ])
+    return str(mission.jurisdiction) if wanted in observed else ""
+
+
 def _candidate(raw: dict, mission: SourceMission, *, tier: int, provider: str) -> FoundCandidate:
     domain = str(raw.get("publisher_domain") or "").strip()
     url = str(raw.get("provenance_url") or raw.get("url") or "").strip()
@@ -148,9 +170,10 @@ def _candidate(raw: dict, mission: SourceMission, *, tier: int, provider: str) -
         name=str(raw.get("name") or raw.get("title") or domain or "unnamed candidate")[:200],
         publisher_name=str(raw.get("publisher_name") or raw.get("publisher") or "")[:200],
         publisher_domain=domain[:200], claimed_official=_bool_or(raw.get("claimed_official"), False),
-        # Observed metadata only: jurisdiction/country are never filled
-        # from the search query or mission context.
-        jurisdiction=str(raw.get("jurisdiction") or "")[:200],
+        # Observed metadata only: jurisdiction comes from the
+        # candidate's own stated metadata or its observed title,
+        # publisher, or portal domain -- never from the query alone.
+        jurisdiction=_jurisdiction_from_observed(raw, domain, mission)[:200],
         country=str(raw.get("country") or "")[:20],
         record_types=tuple(str(x) for x in record_types)[:8] if isinstance(record_types, list) else (),
         access_method=str(raw.get("access_method") or "portal_search")[:50],
@@ -177,8 +200,11 @@ def _candidate(raw: dict, mission: SourceMission, *, tier: int, provider: str) -
 # review. Any other observed license id is recorded as observed only
 # (license_clear stays False); absence never becomes clearance.
 _KNOWN_CLEAR_LICENSES = frozenset({
-    "cc0-1.0", "cc0", "cc-by-4.0", "cc-by", "odc-by-1.0", "odc-by",
-    "open-government-licence", "ogl-uk-3.0",
+    "cc0-1.0", "cc0", "cc-zero", "cc-by-4.0", "cc-by", "odc-by-1.0",
+    "odc-by", "open-government-licence", "ogl-uk-3.0",
+    # Observed portal license labels whose terms are known-clear.
+    "public domain", "public-domain", "us public domain",
+    "u.s. public domain",
 })
 
 
@@ -448,8 +474,17 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
             attempts += 1
             try:
                 url = _validate_endpoint(str(raw_url), name=str(provider_name or "catalog"))
-                params = ({"q": mission.jurisdiction, "page[size]": 5} if kind == "arcgis"
-                          else {"q": mission.jurisdiction, "limit": mission.budget.max_results})
+                # Property subject terms steer catalog full-text
+                # search to property datasets instead of generic city
+                # data (catalogs match plain subjects, not record-type
+                # jargon; ArcGIS/CKAN keep the record-type phrasing).
+                catalog_query = (
+                    f"{mission.jurisdiction} property buildings"
+                    if kind == "socrata"
+                    else f"{mission.jurisdiction} {' '.join(mission.record_types)}"
+                ).strip()
+                params = ({"q": catalog_query, "page[size]": 5} if kind == "arcgis"
+                          else {"q": catalog_query, "limit": mission.budget.max_results})
                 payload = _get_json(url, params, mission, http_get,
                                     evidence_sink=evidence_sink, provider=str(provider_name))
                 parsed = parsers.get(str(kind), lambda p, m: None)(payload, mission)

@@ -219,6 +219,30 @@ def test_generic_adapters_registered_and_fail_closed_unbound():
         SOURCES["generic_socrata"].search(BBOX, [], 1, 1.0)
 
 
+def test_jurisdiction_from_observed_title_and_domain_only():
+    from app.agents.gabriel.sources.source_finder import _candidate
+    from app.agents.gabriel.sources.source_selection import SourceMission
+
+    mission = SourceMission(jurisdiction="Seattle", approved=True)
+    by_domain = _candidate(
+        {"name": "Building Benchmarking", "publisher_domain": "cos-data.seattle.gov",
+         "provenance_url": "https://cos-data.seattle.gov/resource/x.json"},
+        mission, tier=1, provider="socrata_catalog")
+    assert by_domain.candidate.jurisdiction == "Seattle"
+    unrelated = _candidate(
+        {"name": "Wage Data", "publisher_domain": "data.example.org",
+         "provenance_url": "https://data.example.org/resource/x.json"},
+        mission, tier=1, provider="socrata_catalog")
+    assert unrelated.candidate.jurisdiction == ""
+
+
+def test_public_domain_and_cc_zero_licenses_are_known_clear():
+    from app.agents.gabriel.sources.source_finder import _KNOWN_CLEAR_LICENSES
+
+    assert "public domain" in _KNOWN_CLEAR_LICENSES
+    assert "cc-zero" in _KNOWN_CLEAR_LICENSES
+
+
 def test_discovery_module_nationwide_entry_point():
     from app.agents.gabriel.sources.discovery import discover_sources_anywhere
 
