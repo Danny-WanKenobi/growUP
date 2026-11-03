@@ -98,6 +98,8 @@ def _append_version_in_transaction(
     """Append the next version for a dossier (no commit)."""
     if not isinstance(payload, dict):
         raise CustodyError("version payload must be an object")
+    from app.handoff_demo_domain import guard_payload
+    guard_payload(conn, payload)
     check_jsonable(payload)
     if not (created_by or "").strip():
         raise CustodyError("created_by is required")
@@ -243,6 +245,8 @@ def snapshot_in_transaction(conn: Any, *, dossier_id: UUID, version: int) -> Cus
     stored = get_version_in_transaction(conn, dossier_id, version)
     if stored is None:
         raise CustodyError("cannot snapshot a missing dossier version")
+    from app.handoff_demo_domain import guard_payload
+    guard_payload(conn, stored.payload)
     digest = snapshot_digest(stored.payload)
     snapshot_id = uuid4()
     try:
@@ -421,6 +425,8 @@ def issue_receipt_in_transaction(
     stored = get_version_in_transaction(conn, dossier_id, version)
     if stored is None:
         raise CustodyError("cannot hand off a missing dossier version")
+    from app.handoff_demo_domain import guard_payload
+    guard_payload(conn, stored.payload)
     latest = latest_version_in_transaction(conn, dossier_id)
     assert latest is not None
     is_latest = version == latest.version

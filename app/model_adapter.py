@@ -163,6 +163,9 @@ INTENTS = frozenset(
         "preview_agent_report",
         "inspect_owner_queue",
         "inspect_lead_metrics",
+        "start_handoff_demo",
+        "advance_handoff_demo",
+        "inspect_handoff_demo",
     }
 )
 

@@ -1,5 +1,151 @@
 # 🌱 Grow Up
 
+## Permanent synthetic canonical-handoff demonstration (November 3, 2026)
+
+The owner approved fictional test records to prove the canonical handoff system
+without waiting for a real property to qualify. This is a permanent, explicitly
+isolated demonstration facility, not an exception that lets synthetic evidence
+enter the real pipeline. All fourteen operational roles share **one** demo
+database and the same canonical custody implementation:
+
+Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole →
+Theresia Keys → Simeon → Solomon → Elmer → Yoseph → Deborah → Dan.
+
+`app/handoff_demo.py` generates one fully labeled GO scenario and a distinct
+missing-input NO-GO scenario for every checkpoint. Successful reports are attached
+to full inherited copies of the same canonical dossier. Each forward transfer
+uses `app/custody_db.py` and its real version, snapshot, latest-holder, HMAC and
+predecessor-chain rules. A rejection stays at its checkpoint, then returns **one
+agent at a time** through the intervening stages to Gabriel, preserving its reason
+and the enhanced dossier. The Dan NO-GO case proves the entire reverse route.
+Gabriel's own NO-GO has no upstream recipient and terminates at Gabriel.
+
+The fixture suite has **15 scenarios**, **195 verified receipts** in total:
+13 forward receipts for the all-GO case, plus the forward/return paths for all
+14 rejection cases. IDs, stored records, reports, decisions, viewer responses and
+exports are explicitly synthetic. Fictional sources use `fiction.example` and
+are never fetched. The isolated fixture registry never modifies the production
+source registry. Raphael reuses the shared verification/evaluation policy over
+fictional fixture evidence; Onesimus and Michael reuse their deterministic
+calculations. The ten version-one downstream roles reuse their implemented
+report/intake checks. Their GO means **synthetic intake acceptance**, not a permit,
+legal opinion, signed contract, financing approval, insurance coverage, actual
+lead conversion, construction authorization or asset ownership.
+
+### Isolation and durable contracts
+
+The only permitted target is PostgreSQL **`growup_handoff_demo`**, role
+**`growup_demo`**, configured exclusively through `HANDOFF_DEMO_DATABASE_*`.
+No operational `DATABASE_*` credential fallback exists. Real connections must
+confirm their actual database and role before any demonstration writes. A separate
+`HANDOFF_DEMO_HMAC_KEY` signs receipts in an exception-safe context local to that
+request; it never replaces the operational signing key or leaks into another
+request. Both the demo entrypoints and shared synthetic payload write guards
+refuse an operational database. Internal UUIDs use the normal canonical identity
+algorithm inside the isolated database; public run keys begin `demo-handoff-`.
+There is no automatic promotion/import into operational property records.
+
+All agent state, versions, snapshots, receipts and permanent audit events stay in
+this single demo database. No agent has its own store. The existing append-only
+custody tables protect history. Progress and rejection reasons survive refresh,
+process restart and interruption; a sequence-bound retry does not repeat a
+handoff. Mutations and their permanent events commit together, and a failed step
+rolls back. Start replay refuses changed scenarios; concurrent steps serialize
+on the shared run/dossier locks. Resetting the old in-memory demo does not delete
+this database or its records. No reset/delete command is installed.
+
+### Owner-controlled installation and proof
+
+First use the normal owner-controlled Git → GitHub → development deployment
+checkpoint and run the Ubuntu regression suites. Nothing is deployed or provisioned
+by local implementation tests. The reviewed setup script, when explicitly run
+with `--apply` on **securecode-dev**, creates the restricted demo role/database,
+keeps generated secrets in root-owned mode-0600
+`/var/www/growup/shared/handoff-demo.env`, initializes the **demo database only**
+with the existing migrations, and adds a service environment-file drop-in.
+It preserves existing credentials and refuses role/ownership/configuration
+conflicts. No operational schema migration is added. Enabling the drop-in restarts
+`growup.service` and checks readiness; no scenarios automatically launch.
+
+After deployment, the owner can provision the demo and run the complete bounded
+PostgreSQL proof in one Ubuntu block:
+
+```bash
+bash <<'BASH'
+set -Eeuo pipefail
+trap 'echo "STOP: synthetic demo setup/proof failed; preserve output and records." >&2' ERR
+sudo -v
+release_dir="$(sudo -u growup readlink -f /var/www/growup/current)"
+[[ "$release_dir" == /var/www/growup/releases/* ]]
+sudo /usr/bin/python3 "$release_dir/deployment/setup-handoff-demo.py" \
+  --release "$release_dir" --apply
+proof_key="demo-handoff-owner-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo systemd-run --wait --pipe --collect --quiet \
+  -p User=growup -p Group=growup \
+  -p "WorkingDirectory=$release_dir" \
+  -p EnvironmentFile=/var/www/growup/shared/handoff-demo.env \
+  /usr/bin/env PYTHONDONTWRITEBYTECODE=1 OBS_ENABLED=0 \
+  "$release_dir/.venv/bin/python" -B -m app.handoff_demo suite \
+  --run-key "$proof_key" \
+  | tee "/home/ubuntu/${proof_key}.json"
+echo "SYNTHETIC POSTGRESQL PROOF COMPLETE: $proof_key"
+echo "No discovery, provider spending, operational property writes or external execution."
+BASH
+```
+
+**First dedicated PostgreSQL execution and browser visual acceptance are pending**
+until the owner performs that checkpoint. Local success does not claim the demo
+DB/role/drop-in has already been installed or that its PostgreSQL proof passed.
+The prior owner health check passed on release `fdad42a`; skipped-test investigation
+and genuine-property preview remain separately deferred.
+
+### Observable product demonstration
+
+Open **`https://securecodeusa.local:8443/wondrue/handoff-demo`** after installation.
+Enter the existing Wondrue operator key, choose all-GO or a specific NO-GO stage,
+and press **New scenario**. **Advance one checkpoint** demonstrates each receipt;
+**Play to completion** sends a bounded series of internal steps. **Stop playback**
+prevents further requests after the current request finishes. **Inspect stored
+run** loads existing progress without a write, including after refresh/restart.
+The timeline shows the agent, GO/NO-GO, recipient, dossier version and rejection
+reason. Details retain all reports and label limitations. The access key is never
+saved in browser storage or included in run records/URLs. No live-inference control
+is offered on this page.
+
+The existing Wondrue server-side reader/operator grants still apply. Structured
+commands require `target: "demo"`, `use_live: false`:
+
+- `start_handoff_demo`: `run_key`, optional `fail_at`; mutation, bounded fixture
+  creation only.
+- `advance_handoff_demo`: `run_key`, `expected_sequence`; one mutation/step.
+- `inspect_handoff_demo`: `run_key`; read-only, verifies the stored chain.
+
+Ask-mode approval tokens bind the operator and exact stored arguments; reader mode
+cannot mutate. The CLI also supports `init`, `start`, `advance --sequence N`,
+`inspect`, bounded `run`, and the 15-scenario `suite`, all through the same isolated
+service. No additional scheduler, GUADE worker or discovery engine is introduced.
+The older in-memory `app/demo.py` remains compatible and is not mistaken for this
+persistent PostgreSQL proof.
+
+### Checks and scope of evidence
+
+Windows offline checks exercise the **actual canonical DAO/report functions**
+against a disposable SQL test double, including all 15 scenarios, exact reverse
+routing, immutable-copy preservation, replay, sequence limits, wrong DB/role
+refusal, signing-key scope restoration, tamper rejection and authenticated viewer
+commands. The durable PostgreSQL proof is a separate owner-run acceptance step.
+A sanitized offline proof artifact is generated at ignored
+`tmp/handoff-demo-proof.json`; it explicitly identifies the offline test-double
+backend. It is not evidence of real-world property verification. No real outreach,
+professional approval or conversion is claimed anywhere in this milestone.
+
+Validation: **2,544 passed, 149 skipped, 16 warnings**, zero failures in the
+Windows offline suite. The focused canonical/demo regression passed **98 tests**
+with five PostgreSQL-gated skips before the final suite-orchestration check was
+added. Python syntax, extracted viewer JavaScript syntax and `git diff --check`
+passed. No database setup, operational migration, deployment or provider call
+was performed during implementation.
+
 ## Downstream agent foundations, version one (November 3, 2026)
 
 Grow Up is a **single-owner autonomous system**, not a multi-user product. Normal
@@ -103,8 +249,10 @@ compliance/suppression checks and limits; no sender is enabled merely by setting
 Live Mode. Demo-mode sends/conversions remain explicitly simulated by the existing
 separate mechanism, and that mechanism has not been invoked here.
 
-**Current boundary:** discovery remains paused. Database health/skip investigation
-and real stored-dossier preview remain owner-deferred. No new genuine or synthetic
+**Initial agent-foundation checkpoint boundary (superseded by the synthetic
+demo section above):** discovery remains paused. The owner subsequently passed
+database/application health checks; skipped-test investigation and the real
+stored-dossier preview remain deferred. No new genuine or synthetic
 business dossier, conversion, custody receipt or demonstration data was created.
 Only contract/pure routing checks and the existing offline regression are run for
 this task; no new-agent handoff proof is claimed. Owner Git/deployment and Ubuntu

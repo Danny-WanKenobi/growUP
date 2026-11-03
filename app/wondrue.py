@@ -56,6 +56,7 @@ READ_ONLY_INTENTS = frozenset(
         "preview_agent_report",
         "inspect_owner_queue",
         "inspect_lead_metrics",
+        "inspect_handoff_demo",
         "preview_retained_assessment",
     }
 )
@@ -65,6 +66,8 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "release_engineering",
         "commit_retained_assessment",
         "start_demo",
+        "start_handoff_demo",
+        "advance_handoff_demo",
         "compare_scenarios",
         "stop",
         "run_simulation",
@@ -219,6 +222,10 @@ def preview_intent(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Concrete preview for ask mode (operations, effects, cost bounds)."""
+    if intent in ("start_handoff_demo","advance_handoff_demo"):
+        return {"operations":["one bounded synthetic custody step in the isolated demo database"],
+            "inputs":dict(args),"effects":"synthetic append-only records only; no operational property or external action",
+            "cost_bounds":{"provider_calls":0,"outreach":0,"operational_writes":0}}
     if intent == "commit_retained_assessment":
         return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
                 "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
@@ -462,6 +469,11 @@ def _synthetic_gate() -> None:
 
 
 def _execute_demo(intent: str, args: dict[str, Any], store: DemoStore) -> dict[str, Any]:
+    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
+        from app.handoff_demo import service
+        action={"start_handoff_demo":"start","advance_handoff_demo":"advance","inspect_handoff_demo":"inspect"}[intent]
+        return service(action,run_key=args.get("run_key"),fail_at=args.get("fail_at") or None,
+                       expected_sequence=args.get("expected_sequence"),principal=args.get("_handoff_principal") or "unknown")
     if intent == "start_demo":
         _synthetic_gate()
         summary = run_demo_workflow(store, _demo_run_key(args))
@@ -575,7 +587,7 @@ def _help_text() -> str:
         "Priscilla cohort simulations, start/stop/resume/inspect "
         "bounded discovery, explain stored results and economics, "
         "analyze evidence, draft Uriel copy, inspect inference "
-        "usage, inspect the agent roster, preview specialist intake, read the owner queue and lead metrics, "
+        "usage, start/advance/inspect the isolated synthetic handoff demonstration, inspect the agent roster, preview specialist intake, read the owner queue and lead metrics, "
         "preview/commit retained evidence reassessments, or preview/collect DCAD evidence and preview/commit "
         "same-dossier successors, or release an authorized inspection hold to engineering (release_engineering). Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits). "
@@ -1284,6 +1296,10 @@ def handle_command(
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
+    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
+        if target!="demo" or use_live:
+            raise WondrueError("handoff demonstrations require synthetic target and live inference disabled")
+        args["_handoff_principal"] = principal
     approval_via_token = False
     if intent in CONSEQUENTIAL_INTENTS:
         if mode == "read-only":
@@ -1333,6 +1349,8 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
+            if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
+                raise WondrueAuthError("handoff demo approval belongs to a different operator")
             if intent in ("release_engineering","commit_retained_assessment") and args.get("_release_principal") != principal:
                 raise WondrueAuthError("engineering release approval belongs to a different operator")
             if intent in INFERENCE_INTENTS:

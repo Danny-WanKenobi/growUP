@@ -492,3 +492,10 @@ restoreProfile();
 def get_page() -> str:
     """Serve the compact Wondrue interface (static page; no user echo)."""
     return _PAGE.replace("__DEMO_LABEL__", html.escape(DEMO_LABEL))
+
+
+@router.get("/wondrue/handoff-demo", response_class=HTMLResponse)
+def handoff_demo_page():
+    """Static shell only; private demo data still requires Wondrue authentication."""
+    from app.handoff_demo_page import page
+    return HTMLResponse(page())

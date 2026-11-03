@@ -70,6 +70,9 @@ def create_run_in_transaction(
     """Insert a run, or return the existing one for a repeated key (no commit)."""
     if not idempotency_key:
         raise WorkflowError("idempotency_key is required")
+    if idempotency_key.startswith("demo-handoff-"):
+        from app.handoff_demo_domain import guard_payload, DOMAIN
+        guard_payload(conn, {"domain":DOMAIN})
     run_id = uuid4()
     try:
         with conn.cursor() as cur:
@@ -212,6 +215,8 @@ def put_record_in_transaction(
     digest: str,
 ) -> WorkflowRecord:
     """Insert one versioned record; identical replays return the existing row."""
+    from app.handoff_demo_domain import guard_payload
+    guard_payload(conn, payload)
     if kind not in RECORD_KINDS:
         raise WorkflowError(f"unknown record kind: {kind}")
     if not record_key:
