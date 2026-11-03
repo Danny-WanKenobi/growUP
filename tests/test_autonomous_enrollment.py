@@ -446,6 +446,32 @@ def test_item_scoped_authority_enrolls_shared_host_item():
     assert decision["criteria"]["item_scoped_authority"] is True
 
 
+def test_item_record_credit_binds_identity_without_directory():
+    decision = decide_enrollment(
+        _evidence(domain="services2.arcgis.com", publisher_name="CCAD_Maps",
+                  attribution="CCAD Parcel Feature Set",
+                  dataset_name="CCAD Parcel Feature Set",
+                  item_bound=True,
+                  item_credit="Collin Central Appraisal District",
+                  item_tags=("Collin", "CCAD", "Texas", "Parcels"),
+                  sample_geo_values=()),
+        jurisdiction="Collin County")
+    assert decision["status"] == "enrolled"
+    assert decision["item_identity"] is True
+    assert decision["authority_scope"] == "item"
+
+
+def test_item_credit_without_acronym_match_stays_blocked():
+    decision = decide_enrollment(
+        _evidence(domain="services2.arcgis.com", publisher_name="random_user",
+                  item_bound=True,
+                  item_credit="Collin Central Appraisal District",
+                  item_tags=("Collin",), sample_geo_values=()),
+        jurisdiction="Collin County")
+    assert decision["status"] == "needs_more_evidence"
+    assert decision["item_identity"] is False
+
+
 def test_item_scoped_authority_requires_identity_binding():
     decision = decide_enrollment(
         _evidence(domain="services2.arcgis.com", item_bound=True,

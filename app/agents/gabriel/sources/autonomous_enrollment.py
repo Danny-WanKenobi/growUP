@@ -69,6 +69,8 @@ class PublisherEvidence:
     license_basis: str = ""  # dataset_metadata | data_json | portal_terms | ""
     terms_digest: str = ""
     item_bound: bool = False  # ArcGIS item record fetched and bound to this layer
+    item_credit: str = ""  # item accessInformation (publisher-stated credit)
+    item_tags: tuple[str, ...] = ()
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -348,6 +350,8 @@ def verify_arcgis_resource(
     dataset_name = str(layer.get("name") or "")
     item_digest = ""
     item_bound = False
+    item_credit = ""
+    item_tags: tuple[str, ...] = ()
     if dataset_id and re.fullmatch(r"[0-9a-fA-F]{32}", dataset_id):
         try:
             item = json.loads(_get(
@@ -362,6 +366,8 @@ def verify_arcgis_resource(
             layer_service = layer_url.rsplit("/", 1)[0] if layer_url.rsplit("/", 1)[-1].isdigit() else layer_url
             item_bound = bool(item_url) and (
                 item_url == layer_url or item_url == layer_service)
+            item_credit = re.sub(r"<[^>]+>", " ", str(item.get("accessInformation") or "")).strip()
+            item_tags = tuple(str(t) for t in (item.get("tags") or []) if t)
             publisher_name = str(item.get("owner") or publisher_name)
             attribution = str(item.get("title") or dataset_name or attribution)
             dataset_name = str(item.get("title") or dataset_name)
@@ -403,6 +409,7 @@ def verify_arcgis_resource(
         "dataset_name": dataset_name, "attribution": attribution,
         "license_id": license_text[:200], "license_basis": license_basis,
         "terms_digest": item_digest, "item_bound": item_bound,
+        "item_credit": item_credit, "item_tags": list(item_tags),
         "freshness_days": freshness,
         "fields": list(fields), "sample_rows": sample_rows,
         "sample_geo_values": geo_values[:10],
@@ -419,7 +426,7 @@ def verify_arcgis_resource(
         ).hexdigest(),
         retrieved_at=retrieved,
         license_basis=license_basis, terms_digest=item_digest,
-        item_bound=item_bound,
+        item_bound=item_bound, item_credit=item_credit, item_tags=item_tags,
     )
 
 
@@ -673,6 +680,22 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
         (evidence_directory or {}).get("matched")
         and (evidence_directory or {}).get("matched_domain") == evidence.domain)
     identity_bound = bool((evidence_directory or {}).get("identity_matched"))
+    # Publisher-served item identity: the ArcGIS item record itself
+    # credits a full publisher name containing the jurisdiction, and
+    # the acronym formed by that name's initials is the acronym the
+    # item publisher uses (owner/title/tags). The record that binds
+    # the layer also binds the identity -- no website hop required.
+    item_identity = False
+    if evidence.item_bound and evidence.item_credit:
+        credit = evidence.item_credit
+        credit_initials = "".join(
+            word[0] for word in re.split(r"[^A-Za-z]+", credit) if word).upper()
+        acronyms = _acronyms_of(evidence.publisher_name, evidence.dataset_name,
+                                " ".join(evidence.item_tags))
+        item_identity = bool(
+            any(tok in credit.lower() for tok in tokens)
+            and credit_initials in acronyms)
+    identity_bound = identity_bound or item_identity
     shared_host = evidence.domain == "arcgis.com" or evidence.domain.endswith(".arcgis.com")
     item_scoped = bool(evidence.item_bound and shared_host and identity_bound)
     criteria = {
@@ -711,6 +734,7 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
         "missing": missing,
         "license_basis": evidence.license_basis,
         "authority_scope": "item" if item_scoped else "domain",
+        "item_identity": item_identity,
         "directory_evidence": dict(evidence_directory or {}),
         "evidence_digest": evidence.evidence_digest,
         "retrieved_at": evidence.retrieved_at,
