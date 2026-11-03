@@ -117,6 +117,14 @@ def authorize_in_transaction(
     if not record.digest or _dossier_digest(record.payload) != record.digest:
         raise WorkflowError(f"dossier version {dossier_key} failed digest binding")
     verdict = evaluate_dossier(record.payload)
+    prior = get_record_in_transaction(conn, run_id, KIND_RAPHAEL_DECISION, record.digest, 1)
+    if prior is not None:
+        if (prior.digest != digest_payload(prior.payload)
+                or prior.payload.get("dossier_digest") != record.digest
+                or prior.payload.get("dossier_key") != dossier_key
+                or prior.payload.get("outcome") != verdict["outcome"]):
+            raise WorkflowError("stored Raphael decision failed integrity/version binding")
+        return prior.payload  # Preserve historical wording; never rewrite a prior decision.
     decision = {
         "outcome": verdict["outcome"],
         "dossier_key": dossier_key,
@@ -124,7 +132,8 @@ def authorize_in_transaction(
         "dossier_version": record.version,
         "basis": verdict["basis"],
         "policy_version": RAPHAEL_POLICY_VERSION,
-        "scope": SCOPE,
+        "scope": (SCOPE if verdict["outcome"] == "authorized" else
+                  "Engineering authorization withheld; see the recorded evidence requirements or rejection reasons."),
         "limitations": list(LIMITATIONS),
     }
     stored = put_record_in_transaction(

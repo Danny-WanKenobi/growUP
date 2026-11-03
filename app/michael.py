@@ -25,7 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-MICHAEL_CALC_VERSION = "michael-1"
+MICHAEL_CALC_VERSION = "michael-2"
 
 CLASSIFICATIONS = ("verified", "estimated", "experimental", "assumed", "unknown")
 
@@ -33,9 +33,8 @@ VERDICT_FAVORABLE = "favorable_under_assumptions"
 VERDICT_UNFAVORABLE = "unfavorable_under_assumptions"
 VERDICT_INSUFFICIENT = "insufficient_evidence"
 
-# Financial inputs Michael requires per assessment. Labor hours are an
-# operations input consumed here because only the labor-cost math needs
-# them; Onesimus engineering does not.
+# Labor/HVAC area allowances are legacy planning fallbacks. When Onesimus
+# supplies physical hours/kWh, those quantities are priced instead.
 FINANCIAL_NAMES = (
     "price_per_kg",
     "nutrient_usd_per_l",
@@ -128,8 +127,8 @@ def default_market_inputs(scenario: str = "") -> dict[str, FinancialInput]:
         ),
         "nutrient_usd_per_l": FinancialInput(
             name="nutrient_usd_per_l", value=Decimal("0.05"), unit="USD/L",
-            currency="USD", period="per-liter",
-            source="mvp-market-assumption: nutrient concentrate allowance",
+            currency="USD", period="per-liter-solution",
+            source="mvp-market-assumption: cost per liter of prepared nutrient solution, not concentrate",
             observed_date="", classification="assumed",
             scenario=scenario, uncertainty="unbounded placeholder",
         ),
@@ -157,7 +156,7 @@ def _need(
     financial: dict[str, FinancialInput], name: str, missing: list[str]
 ) -> Decimal | None:
     candidate = financial.get(name)
-    if candidate is None or candidate.value is None:
+    if candidate is None or candidate.value is None or candidate.classification == "unknown":
         missing.append(name)
         return None
     try:
@@ -165,7 +164,7 @@ def _need(
     except (InvalidOperation, ValueError):
         missing.append(name)
         return None
-    if not amount.is_finite():
+    if not amount.is_finite() or amount < 0:
         missing.append(name)
         return None
     return amount
@@ -173,11 +172,13 @@ def _need(
 
 def _quantity(engineering: dict[str, Any], name: str) -> Decimal:
     try:
-        value = Decimal(str(engineering.get(name, 0)))
+        value = Decimal(str(engineering[name]))
+    except KeyError as exc:
+        raise MichaelError(f"engineering output {name} is missing") from exc
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise MichaelError(f"engineering output {name} is not numeric") from exc
-    if not value.is_finite():
-        raise MichaelError(f"engineering output {name} is non-finite")
+    if not value.is_finite() or value < 0:
+        raise MichaelError(f"engineering output {name} must be finite and nonnegative")
     return value
 
 
@@ -227,14 +228,50 @@ def assess(
             "outputs": {},
         }
     missing: list[str] = []
+    outputs = engineering.get("outputs", {}) or {}
+    if not isinstance(outputs, dict):
+        raise MichaelError("engineering outputs must be an object")
+    missing.extend(f"engineering:{name}" for name in ENGINEERING_NAMES
+                   if name not in outputs or outputs[name] is None)
+    physical_labor = (None if outputs.get("labor_hours_per_year") is None
+                      else _quantity(outputs, "labor_hours_per_year"))
+    physical_hvac = (None if outputs.get("hvac_kwh_per_year") is None
+                     else _quantity(outputs, "hvac_kwh_per_year"))
     price = _need(financial, "price_per_kg", missing)
     nutrient = _need(financial, "nutrient_usd_per_l", missing)
     elec = _need(financial, "electricity_usd_per_kwh", missing)
     water_usd = _need(financial, "water_usd_per_l", missing)
-    labor_h = _need(financial, "labor_h_per_m2_week", missing)
+    labor_h = (_need(financial, "labor_h_per_m2_week", missing)
+               if physical_labor is None else None)
     labor_usd = _need(financial, "labor_usd_per_h", missing)
-    hvac = _need(financial, "hvac_usd_per_m2_year", missing)
+    hvac = (_need(financial, "hvac_usd_per_m2_year", missing)
+            if physical_hvac is None else None)
     other = _need(financial, "other_opex_usd_per_m2_year", missing)
+    nutrient_input = financial.get("nutrient_usd_per_l")
+    nutrient_period = str(nutrient_input.period if nutrient_input else "").strip().lower()
+    legacy_nutrient = nutrient_period in ("", "per-liter")
+    if nutrient_period == "per-liter-concentrate":
+        nutrient_basis = "concentrate"
+        if outputs.get("nutrient_l_per_year") is None:
+            missing.append("engineering:nutrient_l_per_year")
+        nutrient_quantity = (None if outputs.get("nutrient_l_per_year") is None
+                             else _quantity(outputs, "nutrient_l_per_year"))
+    elif nutrient_period == "per-liter-solution" or legacy_nutrient:
+        nutrient_basis = "prepared_solution"
+        solution_name = ("nutrient_solution_l_per_year" if outputs.get("nutrient_solution_l_per_year") is not None
+                         else "water_l_per_year")
+        nutrient_quantity = (None if outputs.get(solution_name) is None
+                             else _quantity(outputs, solution_name))
+        if solution_name == "water_l_per_year":
+            base["assumptions"].append(
+                "Legacy prepared-solution volume uses water_l_per_year; separate cleaning-water/mixing quantities are unavailable.")
+        if legacy_nutrient:
+            base["assumptions"].append(
+                "Legacy blank/per-liter nutrient price is assumed USD per liter of prepared solution, never concentrate.")
+    else:
+        nutrient_basis = "unknown"
+        nutrient_quantity = None
+        missing.append("nutrient_price_basis")
     if missing:
         unique = sorted(set(missing))
         return {
@@ -247,9 +284,8 @@ def assess(
             "outputs": {},
         }
     assert price is not None and nutrient is not None and elec is not None
-    assert water_usd is not None and labor_h is not None and labor_usd is not None
-    assert hvac is not None and other is not None
-    outputs = engineering.get("outputs", {}) or {}
+    assert water_usd is not None and labor_usd is not None
+    assert other is not None and nutrient_quantity is not None
     sites = _quantity(outputs, "sites")
     growing = _quantity(outputs, "growing_m2")
     kg = _quantity(outputs, "kg_per_year")
@@ -259,9 +295,23 @@ def assess(
     revenue = kg * price
     electricity_usd = kwh * elec
     water_cost = liters * water_usd
-    nutrient_cost = liters * nutrient
-    labor_cost = labor_h * growing * Decimal(52) * labor_usd
-    hvac_cost = hvac * growing
+    nutrient_cost = nutrient_quantity * nutrient
+    if physical_labor is not None:
+        labor_cost = physical_labor * labor_usd
+        labor_basis = "Onesimus labor_hours_per_year * USD/hour"
+    else:
+        assert labor_h is not None
+        labor_cost = labor_h * growing * Decimal(52) * labor_usd
+        labor_basis = "legacy assumed hours/m2/week * growing_m2 * 52 * USD/hour"
+        base["assumptions"].append("Labor uses an explicit per-area planning allowance because physical labor hours are unquantified.")
+    if physical_hvac is not None:
+        hvac_cost = physical_hvac * elec
+        hvac_basis = "Onesimus hvac_kwh_per_year * USD/kWh"
+    else:
+        assert hvac is not None
+        hvac_cost = hvac * growing
+        hvac_basis = "legacy assumed HVAC USD/m2/year * growing_m2"
+        base["assumptions"].append("HVAC uses an explicit per-area cost allowance because physical HVAC energy is unquantified.")
     other_cost = other * growing
     occupancy_cost = Decimal(0)
     occupancy_quantified = False
@@ -330,6 +380,12 @@ def assess(
             "operating_net_usd_per_year": money_str(net),
             "simple_payback_years": float(payback.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if payback is not None else None,
             "occupancy_quantified": occupancy_quantified,
+            "cost_basis": {
+                "nutrients": {"basis": nutrient_basis, "liters_per_year": str(nutrient_quantity),
+                              "price_period": "per-liter-solution" if legacy_nutrient else nutrient_period,
+                              "legacy_assumption": legacy_nutrient},
+                "labor": labor_basis, "hvac": hvac_basis,
+            },
             "breakeven_kg_per_year": (
                 float((opex / price).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
                 if price > 0 else None
@@ -348,9 +404,9 @@ def assess(
                 "price_plus_20pct_net_usd": money_str(revenue * Decimal("1.2") - opex),
                 "price_minus_20pct_net_usd": money_str(revenue * Decimal("0.8") - opex),
                 "energy_cost_plus_20pct_net_usd": money_str(
-                    revenue - (opex + electricity_usd * Decimal("0.2"))),
+                    revenue - (opex + (electricity_usd + (hvac_cost if physical_hvac is not None else 0)) * Decimal("0.2"))),
                 "energy_cost_minus_20pct_net_usd": money_str(
-                    revenue - (opex - electricity_usd * Decimal("0.2"))),
+                    revenue - (opex - (electricity_usd + (hvac_cost if physical_hvac is not None else 0)) * Decimal("0.2"))),
             },
         },
     }

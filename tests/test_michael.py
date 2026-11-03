@@ -54,7 +54,7 @@ def _finance(**overrides: Any) -> dict[str, FinancialInput]:
     return {
         name: FinancialInput(
             name=name, value=Decimal(text), unit="u", currency="USD",
-            period="p", source="test", observed_date="2026-10-30",
+            period="per-liter-solution" if name == "nutrient_usd_per_l" else "p", source="test", observed_date="2026-10-30",
             classification="estimated", scenario="bench", uncertainty="",
         )
         for name, text in values.items()
@@ -62,9 +62,8 @@ def _finance(**overrides: Any) -> dict[str, FinancialInput]:
 
 
 def test_assess_bench_hand_check() -> None:
-    # Engineering: 2500 sites, 100 growing m2, 3750 kg/yr, 22500 L,
-    # 15330 kWh. Revenue 30000; opex 1839.60+45.00+1125.00+46800.00
-    # +800.00+500.00 = 51109.60; net -21109.60; capex 30000.00.
+    # Fresh solution each of ten crop cycles: 112500 L/year. Revenue
+    # 30000; opex 1839.60+225+5625+46800+800+500 =55789.60.
     result = assess("bench", _engineering("bench"), _finance())
     assert result["complete"] is True
     assert result["michael_version"] == MICHAEL_CALC_VERSION
@@ -72,15 +71,15 @@ def test_assess_bench_hand_check() -> None:
     out = result["outputs"]
     assert out["capex_usd"] == "30000.00"
     assert out["revenue_usd_per_year"] == "30000.00"
-    assert out["opex_usd_per_year"] == "51109.60"
-    assert out["operating_net_usd_per_year"] == "-21109.60"
+    assert out["opex_usd_per_year"] == "55789.60"
+    assert out["operating_net_usd_per_year"] == "-25789.60"
     assert out["opex_breakdown_usd"]["labor"] == "46800.00"
     assert out["simple_payback_years"] is None
-    assert out["breakeven_kg_per_year"] == pytest.approx(6388.7, abs=0.1)
-    assert out["breakeven_price_usd_per_kg"] == "13.63"
+    assert out["breakeven_kg_per_year"] == pytest.approx(6973.7, abs=0.1)
+    assert out["breakeven_price_usd_per_kg"] == "14.88"
     assert "break-even" in out["breakeven_note"].lower()
     assert out["occupancy_quantified"] is False
-    assert out["sensitivity"]["yield_plus_20pct_net_usd"] == "-15109.60"
+    assert out["sensitivity"]["yield_plus_20pct_net_usd"] == "-19789.60"
 
 
 def test_assess_profitable_payback_defined() -> None:
@@ -89,9 +88,9 @@ def test_assess_profitable_payback_defined() -> None:
         _finance(labor_h_per_m2_week="0.1", labor_usd_per_h="15.0"),
     )
     out = result["outputs"]
-    assert out["operating_net_usd_per_year"] == "17890.40"
+    assert out["operating_net_usd_per_year"] == "13210.40"
     assert result["verdict"] == "favorable_under_assumptions"
-    assert out["simple_payback_years"] == pytest.approx(30000.0 / 17890.4, abs=0.01)
+    assert out["simple_payback_years"] == pytest.approx(30000.0 / 13210.4, abs=0.01)
 
 
 def test_assess_rack3_uses_own_rates() -> None:
@@ -197,6 +196,82 @@ def test_default_market_inputs_are_assumed() -> None:
     for item in defaults.values():
         assert item.classification == "assumed"
         assert item.scenario == "bench"
+    assert defaults["nutrient_usd_per_l"].period == "per-liter-solution"
+    assert "not concentrate" in defaults["nutrient_usd_per_l"].source
+
+
+def _quantified_engineering():
+    return {"complete": True, "missing": [], "outputs": {
+        "sites": 100, "growing_m2": 10, "kg_per_year": 100,
+        "water_l_per_year": 1000, "nutrient_solution_l_per_year": 900,
+        "lighting_kwh_per_year": 100, "nutrient_l_per_year": 10,
+        "labor_hours_per_year": 20, "hvac_kwh_per_year": 200}}
+
+
+def test_physical_quantities_price_concentrate_labor_and_hvac_without_area_double_count():
+    bundle = _finance(nutrient_usd_per_l="5", labor_usd_per_h="3",
+                      electricity_usd_per_kwh="0.1", other_opex_usd_per_m2_year="1")
+    bundle["nutrient_usd_per_l"].period = "per-liter-concentrate"
+    # No area allowance is needed or charged when physical quantities exist.
+    del bundle["labor_h_per_m2_week"]
+    del bundle["hvac_usd_per_m2_year"]
+    result = assess("bench", _quantified_engineering(), bundle)
+    assert result["complete"] is True
+    costs = result["outputs"]["opex_breakdown_usd"]
+    assert costs == {"electricity": "10.00", "water": "2.00", "nutrients": "50.00",
+                     "labor": "60.00", "hvac": "20.00", "other": "10.00"}
+    assert result["outputs"]["opex_usd_per_year"] == "152.00"
+    assert result["outputs"]["operating_net_usd_per_year"] == "648.00"
+    assert result["outputs"]["cost_basis"]["nutrients"]["liters_per_year"] == "10"
+    # Electricity sensitivity includes physical HVAC energy as well as lights.
+    assert result["outputs"]["sensitivity"]["energy_cost_plus_20pct_net_usd"] == "642.00"
+
+
+def test_concentrate_price_requires_concentrate_quantity_never_substitutes_water():
+    engineering = _quantified_engineering()
+    del engineering["outputs"]["nutrient_l_per_year"]
+    bundle = _finance()
+    bundle["nutrient_usd_per_l"].period = "per-liter-concentrate"
+    result = assess("bench", engineering, bundle)
+    assert result["complete"] is False
+    assert result["missing"] == ["engineering:nutrient_l_per_year"]
+    assert result["outputs"] == {}
+
+
+@pytest.mark.parametrize("period", ["", "per-liter", "per-liter-solution"])
+def test_prepared_solution_pricing_uses_mixed_solution_not_cleaning_water(period):
+    bundle = _finance()
+    bundle["nutrient_usd_per_l"].period = period
+    result = assess("bench", _quantified_engineering(), bundle)
+    assert result["outputs"]["opex_breakdown_usd"]["nutrients"] == "45.00"
+    basis = result["outputs"]["cost_basis"]["nutrients"]
+    assert basis["basis"] == "prepared_solution"
+    assert basis["legacy_assumption"] is (period != "per-liter-solution")
+
+
+def test_unsupported_nutrient_price_basis_is_incomplete():
+    bundle = _finance()
+    bundle["nutrient_usd_per_l"].period = "per-gallon"
+    result = assess("bench", _quantified_engineering(), bundle)
+    assert result["complete"] is False
+    assert "nutrient_price_basis" in result["missing"]
+
+
+def test_missing_required_engineering_output_does_not_become_zero():
+    engineering = _quantified_engineering()
+    del engineering["outputs"]["kg_per_year"]
+    result = assess("bench", engineering, _finance())
+    assert result["complete"] is False
+    assert "engineering:kg_per_year" in result["missing"]
+
+
+@pytest.mark.parametrize("name,value", [("labor_hours_per_year", -1),
+                                        ("hvac_kwh_per_year", float("nan"))])
+def test_invalid_optional_physical_quantity_is_refused(name, value):
+    engineering = _quantified_engineering()
+    engineering["outputs"][name] = value
+    with pytest.raises(MichaelError):
+        assess("bench", engineering, _finance())
 
 
 def test_occupancy_included_only_when_provided() -> None:
@@ -210,7 +285,7 @@ def test_occupancy_included_only_when_provided() -> None:
     out = result["outputs"]
     assert out["occupancy_quantified"] is True
     assert out["opex_breakdown_usd"]["occupancy"] == "1000.00"
-    assert out["opex_usd_per_year"] == "52109.60"
+    assert out["opex_usd_per_year"] == "56789.60"
 
 
 def test_energy_sensitivity_and_scenarios() -> None:
@@ -219,8 +294,8 @@ def test_energy_sensitivity_and_scenarios() -> None:
     result = assess("bench", _engineering("bench"), _finance())
     sensitivity = result["outputs"]["sensitivity"]
     # Electricity is 1839.60 USD/yr in the hand-check bundle.
-    assert sensitivity["energy_cost_plus_20pct_net_usd"] == "-21477.52"
-    assert sensitivity["energy_cost_minus_20pct_net_usd"] == "-20741.68"
+    assert sensitivity["energy_cost_plus_20pct_net_usd"] == "-26157.52"
+    assert sensitivity["energy_cost_minus_20pct_net_usd"] == "-25421.68"
     bundles = {
         "conservative": _finance(price_per_kg="6.0"),
         "base": _finance(),

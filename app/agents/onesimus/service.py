@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agents.onesimus import ONESIMUS_CALC_VERSION
 from app.workflow import KIND_SCENARIO, digest_payload, is_demo_id
@@ -53,10 +53,24 @@ class ClassifiedInput(BaseModel):
     """One consequential input with unit, provenance, classification."""
 
     name: str
-    value: float | None = None
+    value: float | None = Field(default=None, allow_inf_nan=False)
     unit: str = ""
     provenance: str = ""
     classification: str = "unknown"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def reject_bool(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("engineering quantity cannot be boolean")
+        return value
+
+    @field_validator("classification")
+    @classmethod
+    def classified(cls, value):
+        if value not in CLASSIFICATIONS:
+            raise ValueError("unsupported evidence classification")
+        return value
 
 
 class ScenarioConfig(BaseModel):
@@ -95,16 +109,6 @@ PARAMETER_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 
-def _need(
-    inputs: dict[str, ClassifiedInput], name: str, missing: list[str]
-) -> float | None:
-    candidate = inputs.get(name)
-    if candidate is None or candidate.value is None:
-        missing.append(name)
-        return None
-    return float(candidate.value)
-
-
 def evaluate_scenario(
     config_name: str,
     crop: dict[str, ClassifiedInput],
@@ -119,98 +123,10 @@ def evaluate_scenario(
         raise WorkflowError(f"unknown scenario config: {config_name}")
     if config.circulation:
         raise WorkflowError("circulation violates passive Kratky principles")
-    missing: list[str] = []
-    area = _need(site, "usable_area_m2", missing)
-    spacing = _need(crop, "spacing_m", missing)
-    cycles = _need(crop, "cycles_per_year", missing)
-    kg_per_head = _need(crop, "saleable_kg_per_head", missing)
-    reservoir_l = _need(crop, "reservoir_l_per_site", missing)
-    topup_l = _need(crop, "topup_l_per_site_cycle", missing)
-    light_w = _need(crop, "light_w_per_m2", missing)
-    light_h = _need(crop, "light_hours_per_day", missing)
-
-    inputs_dump = {
-        name: item.model_dump() for name, item in list(crop.items()) + list(site.items())
-    }
-    assumptions = [
-        "Passive Kratky: static solution, root-zone air gap, no circulation.",
-        f"Configuration '{config.name}': {config.tiers} tier(s), {config.reservoir} reservoirs.",
-        f"Tenant consolidation hypothetical: {tenant_consolidation} "
-        "(observed occupancy preserved separately).",
-    ]
-    flags = list(TENANT_FLAGS) if tenant_consolidation else []
-    base = {
-        "config": config.name,
-        "inputs": inputs_dump,
-        "assumptions": assumptions,
-        "observed_occupancy": observed_occupancy,
-        "tenant_flags": flags,
-        "limitations": [
-            "Financial assessment (capex, opex, revenue, payback) is "
-            "Michael's; this engineering result carries no prices.",
-            "Structural, zoning, and food-safety review are out of scope.",
-        ],
-        "calculation_version": ONESIMUS_CALC_VERSION,
-    }
-    if missing:
-        return {
-            **base,
-            "complete": False,
-            "missing": sorted(set(missing)),
-            "outputs": {},
-        }
-    assert area is not None and spacing is not None  # narrowed by missing check
-    sites_per_tier = (area / (spacing * spacing)) if spacing > 0 else 0.0
-    sites = sites_per_tier * config.tiers
-    growing_m2 = area * config.tiers
-    assert cycles is not None and kg_per_head is not None
-    heads_per_year = sites * cycles
-    kg_per_year = heads_per_year * kg_per_head
-    assert reservoir_l is not None and topup_l is not None
-    reservoir_l_total = sites * reservoir_l
-    water_l_year = sites * (reservoir_l + topup_l * cycles)
-    assert light_w is not None and light_h is not None
-    kwh_year = growing_m2 * light_w * light_h * 365.0 / 1000.0
-    water_kg = reservoir_l_total * 1.0
-    structure_kg = growing_m2 * config.structure_kg_per_m2_tier
-    outputs = {
-        "sites": round(sites, 1),
-        "growing_m2": round(growing_m2, 1),
-        "heads_per_year": round(heads_per_year, 1),
-        "kg_per_year": round(kg_per_year, 1),
-        "reservoir_l_total": round(reservoir_l_total, 1),
-        "water_l_per_year": round(water_l_year, 1),
-        "lighting_kwh_per_year": round(kwh_year, 1),
-        "water_plus_structure_kg": round(water_kg + structure_kg, 1),
-    }
-    # Optional physical quantifications: computed only from supplied
-    # classified inputs; absence is flagged, never silently zero.
-    not_quantified: list[str] = []
-    hvac_w = site.get("hvac_w_per_m2")
-    if hvac_w is not None and hvac_w.value is not None:
-        outputs["hvac_kwh_per_year"] = round(
-            growing_m2 * float(hvac_w.value) * 24.0 * 365.0 / 1000.0, 1)
-    else:
-        not_quantified.append("hvac_energy")
-    nutrient_ml = crop.get("nutrient_ml_per_site_cycle")
-    if nutrient_ml is not None and nutrient_ml.value is not None:
-        outputs["nutrient_l_per_year"] = round(
-            sites * float(nutrient_ml.value) / 1000.0 * cycles, 1)
-    else:
-        not_quantified.append("nutrient_volume")
-    labor_min = crop.get("labor_min_per_site_cycle")
-    if labor_min is not None and labor_min.value is not None:
-        outputs["labor_hours_per_year"] = round(
-            sites * float(labor_min.value) * cycles / 60.0, 1)
-    else:
-        not_quantified.append("labor_hours")
-    return {
-        **base,
-        "complete": True,
-        "missing": [],
-        "not_quantified": not_quantified,
-        "outputs": outputs,
-    }
+    from app.agents.onesimus.engineering import calculate
+    return calculate(config, crop, site, tenant_consolidation=tenant_consolidation,
+                     observed_occupancy=observed_occupancy, tenant_flags=TENANT_FLAGS,
+                     calculation_version=ONESIMUS_CALC_VERSION)
 
 
 def validate_overrides(overrides: dict[str, Any]) -> dict[str, Any]:
@@ -237,6 +153,36 @@ def validate_overrides(overrides: dict[str, Any]) -> dict[str, Any]:
 
 def _is_demo_digest(digest: str) -> bool:
     return is_demo_id(digest)
+
+
+def _require_engineering_custody(conn, current, site):
+    from app.custody import dossier_id_for_property
+    from app.custody_db import (current_custody_in_transaction, verify_chain_in_transaction,
+                                latest_version_in_transaction, lock_dossier_in_transaction)
+    property_id = current.payload.get("property_id")
+    if not property_id:
+        raise WorkflowError("engineering dossier has no operational property identity")
+    dossier_id = dossier_id_for_property(property_id)
+    lock_dossier_in_transaction(conn, dossier_id)
+    verify_chain_in_transaction(conn, dossier_id)
+    custody = current_custody_in_transaction(conn, dossier_id)
+    if not custody or custody["holder"] != "onesimus":
+        raise WorkflowError("Onesimus must hold authenticated dossier custody")
+    latest = latest_version_in_transaction(conn, dossier_id)
+    if (latest is None or custody["version"] != latest.version
+            or latest.payload.get("dossier_digest") != current.digest
+            or latest.payload.get("dossier") != current.payload.get("dossier")):
+        raise WorkflowError("engineering input is not the latest received custody version")
+    inspection = (current.payload.get("dossier", {}).get("reports") or {}).get("raphael")
+    if not inspection:
+        raise WorkflowError("engineering requires a frozen inspection report")
+    declared = inspection.get("physical_inputs") or {}
+    from app.agents.onesimus.engineering import SITE_UNITS
+    expected = {k: ClassifiedInput.model_validate(v) for k,v in declared.items() if k in SITE_UNITS}
+    actual = {k:v for k,v in site.items() if v.value is not None}
+    expected = {k:v for k,v in expected.items() if v.value is not None}
+    if actual != expected:
+        raise WorkflowError("engineering physical inputs differ from the inspected dossier")
 
 
 def run_scenario_in_transaction(
@@ -277,8 +223,15 @@ def run_scenario_in_transaction(
     dossier_key = decision.payload.get("dossier_key", "")
     current = get_record_in_transaction(conn, run_id, "dossier_version", dossier_key) if dossier_key else None
     authorized_digest = decision.payload.get("dossier_digest", "")
-    if current is not None and current.digest != authorized_digest:
+    if current is None or not authorized_digest:
+        raise WorkflowError("missing current dossier for Raphael authorization")
+    if current.digest != authorized_digest:
         raise WorkflowError("dossier revised since authorization; re-authorization required")
+    if current.digest != digest_payload({k: v for k, v in current.payload.items() if k != "digest"}):
+        raise WorkflowError("authorized dossier digest failed verification")
+    if decision.digest != digest_payload(decision.payload):
+        raise WorkflowError("Raphael decision digest failed verification")
+    _require_engineering_custody(conn, current, site)
     result = evaluate_scenario(
         config_name, crop, site,
         tenant_consolidation=tenant_consolidation,
@@ -307,7 +260,7 @@ def run_scenario_in_transaction(
         }
     payload = {
         "name": scenario_key,
-        "property_id": "",
+        "property_id": str(current.payload.get("property_id") or ""),
         "dossier_digest": authorized_digest,
         "decision_ref": decision_digest,
         **result,

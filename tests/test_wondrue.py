@@ -319,7 +319,7 @@ def test_unknown_mode_target_rejected() -> None:
 
 def test_compare_uses_validated_proposal_and_python_math() -> None:
     site = {
-        name: {"value": value, "unit": "t", "provenance": "t", "classification": "assumed"}
+        name: {"value": value, "unit": "m2" if name == "usable_area_m2" else "t", "provenance": "t", "classification": "assumed"}
         for name, value in {
             "usable_area_m2": 100.0, "electricity_usd_per_kwh": 0.12,
             "water_usd_per_l": 0.002, "labor_h_per_m2_week": 0.1,
@@ -342,15 +342,15 @@ def test_compare_uses_validated_proposal_and_python_math() -> None:
 
 def test_compare_financial_override_reaches_michael() -> None:
     site = {
-        "usable_area_m2": {"value": 100.0, "unit": "m2"},
-        "price_per_kg": {"value": 8.0, "unit": "USD/kg"},
-        "nutrient_usd_per_l": {"value": 0.05, "unit": "USD/L"},
-        "electricity_usd_per_kwh": {"value": 0.12, "unit": "USD/kWh"},
-        "water_usd_per_l": {"value": 0.002, "unit": "USD/L"},
-        "labor_h_per_m2_week": {"value": 0.1, "unit": "h/m2/week"},
-        "labor_usd_per_h": {"value": 15.0, "unit": "USD/h"},
-        "hvac_usd_per_m2_year": {"value": 8.0, "unit": "USD/m2/year"},
-        "other_opex_usd_per_m2_year": {"value": 5.0, "unit": "USD/m2/year"},
+        "usable_area_m2": {"classification": "assumed", "value": 100.0, "unit": "m2"},
+        "price_per_kg": {"classification": "assumed", "value": 8.0, "unit": "USD/kg"},
+        "nutrient_usd_per_l": {"classification": "assumed", "value": 0.05, "unit": "USD/L"},
+        "electricity_usd_per_kwh": {"classification": "assumed", "value": 0.12, "unit": "USD/kWh"},
+        "water_usd_per_l": {"classification": "assumed", "value": 0.002, "unit": "USD/L"},
+        "labor_h_per_m2_week": {"classification": "assumed", "value": 0.1, "unit": "h/m2/week"},
+        "labor_usd_per_h": {"classification": "assumed", "value": 15.0, "unit": "USD/h"},
+        "hvac_usd_per_m2_year": {"classification": "assumed", "value": 8.0, "unit": "USD/m2/year"},
+        "other_opex_usd_per_m2_year": {"classification": "assumed", "value": 5.0, "unit": "USD/m2/year"},
     }
     result = compare_with_proposal(
         {"options": [{"config": "bench", "overrides": {"price_per_kg": 9.0}}],
@@ -360,7 +360,7 @@ def test_compare_financial_override_reaches_michael() -> None:
     bench = result["comparisons"][0]
     assert bench["financial_complete"] is True
     assert bench["financial_verdict"] == "favorable_under_assumptions"
-    assert bench["financial_outputs"]["operating_net_usd_per_year"] == "21640.40"
+    assert bench["financial_outputs"]["operating_net_usd_per_year"] == "16960.40"
     assert "annual_net_usd" not in bench["outputs"]  # engineering carries no money
 
 

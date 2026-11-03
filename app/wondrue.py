@@ -56,6 +56,7 @@ READ_ONLY_INTENTS = frozenset(
 CONSEQUENTIAL_INTENTS = frozenset(
     {
         "start_real_evaluation",
+        "release_engineering",
         "start_demo",
         "compare_scenarios",
         "stop",
@@ -211,6 +212,11 @@ def preview_intent(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Concrete preview for ask mode (operations, effects, cost bounds)."""
+    if intent == "release_engineering":
+        return {"operations": ["authenticate held dossier", "release authorized report to engineering and Michael"],
+                "inputs": {"run_id": args.get("run_id"), "site_inputs": args.get("site_inputs")},
+                "effects": "append report-bearing dossier versions and custody receipts; no acquisition",
+                "cost_bounds": {"brave_attempts": 0, "meta_calls": 0}}
     if intent == "start_real_evaluation":
         return {
             "operations": ["brave acquisition (<= run bound)", "persist artifacts/dossier/qualification", "raphael authorize"],
@@ -500,10 +506,11 @@ def compare_with_proposal(
         financial_inputs_from_raw,
     )
 
+    from app.agents.onesimus.engineering import SITE_UNITS
     cleaned = validate_config_proposal(proposal)
     site_base: dict[str, ClassifiedInput] = {}
     for name, entry in (site_inputs or {}).items():
-        if isinstance(entry, dict) and name in PARAMETER_CATALOG:
+        if isinstance(entry, dict) and name in SITE_UNITS:
             site_base[name] = ClassifiedInput.model_validate({"name": name, **entry})
     compared = []
     for option in cleaned["options"]:
@@ -558,7 +565,7 @@ def _help_text() -> str:
         "bounded discovery, explain stored results and economics, "
         "analyze evidence, draft Uriel copy, inspect inference "
         "usage, or preview/collect DCAD evidence and preview/commit "
-        "same-dossier successors. Modes: read-only (inspect only), ask "
+        "same-dossier successors, or release an authorized inspection hold to engineering (release_engineering). Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits). "
         "Each assistance capability spends at most one provider "
         "call; a natural-language request may spend one more for "
@@ -831,6 +838,20 @@ def _execute_real(
 
     capability_ctx = dict(ctx or _capability_context())
 
+    if intent == "release_engineering":
+        principal = str(capability_ctx.get("principal") or "")
+        if not principal:
+            raise WondrueAuthError("engineering release requires an authenticated operator")
+        site = args.get("site_inputs")
+        if site is not None and not isinstance(site, dict):
+            raise WondrueError("site_inputs must be an object")
+        run_id = UUID(str(args.get("run_id")))
+        if conn is None:
+            summary = mvp_module.release_engineering_audited(run_id, principal=principal, site_inputs=site)
+        else:
+            summary = mvp_module.release_engineering_in_transaction(conn, run_id, principal=principal, site_inputs=site)
+        return {"summary": summary}
+
     if intent == "start_real_evaluation":
         assignment_id = str(args.get("assignment_id", ""))
         query = str(args.get("query", ""))
@@ -1095,8 +1116,8 @@ def check_inference_approval_spec(
 ) -> None:
     """Reject material drift from the approved inference spec.
 
-    Any change — profile, effective limits (including silent
-    administrator-ceiling drift), live selection, or principal —
+    Any change â€” profile, effective limits (including silent
+    administrator-ceiling drift), live selection, or principal â€”
     needs a fresh preview before provider execution.
     """
     if not isinstance(approved, dict):
@@ -1191,6 +1212,10 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
+    if intent == "release_engineering":
+        if target != "real":
+            raise WondrueError("engineering release is restricted to the real pipeline")
+        args["_release_principal"] = principal
     approval_via_token = False
     if intent in CONSEQUENTIAL_INTENTS:
         if mode == "read-only":
@@ -1240,6 +1265,8 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
+            if intent == "release_engineering" and args.get("_release_principal") != principal:
+                raise WondrueAuthError("engineering release approval belongs to a different operator")
             if intent in INFERENCE_INTENTS:
                 try:
                     current_spec = inference_approval_spec(

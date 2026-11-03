@@ -62,6 +62,17 @@ class _FakeCursor:
 
 class _FakeConn:
     def __init__(self, script: list[Any]) -> None:
+        # Valid authorization fixtures carry real hashes; stale test tags
+        # deliberately remain different. No database is involved.
+        from app.workflow import digest_payload
+        if len(script) > 1 and isinstance(script[0], dict) and isinstance(script[1], dict):
+            decision, dossier = script[:2]
+            if decision.get("kind") == "raphael_decision" and dossier.get("kind") == "dossier_version":
+                original = dossier["digest"]
+                dossier["digest"] = digest_payload({k:v for k,v in dossier["payload"].items() if k!="digest"})
+                if decision["payload"].get("dossier_digest") == original:
+                    decision["payload"]["dossier_digest"] = dossier["digest"]
+                decision["digest"] = digest_payload(decision["payload"])
         self._cursor = _FakeCursor(script)
 
     def cursor(self) -> _FakeCursor:
@@ -89,7 +100,7 @@ def test_bench_engineering_hand_check() -> None:
     assert out["heads_per_year"] == 25000.0
     assert out["kg_per_year"] == 3750.0
     assert out["reservoir_l_total"] == 10000.0
-    assert out["water_l_per_year"] == 22500.0
+    assert out["water_l_per_year"] == 112500.0
     assert out["lighting_kwh_per_year"] == 15330.0
     assert out["water_plus_structure_kg"] == 11500.0
 
@@ -99,7 +110,7 @@ def test_rack3_engineering_hand_check() -> None:
     assert out["sites"] == 7500.0
     assert out["growing_m2"] == 300.0
     assert out["kg_per_year"] == 11250.0
-    assert out["water_l_per_year"] == 67500.0
+    assert out["water_l_per_year"] == 337500.0
     assert out["water_plus_structure_kg"] == 37500.0
 
 
@@ -228,7 +239,9 @@ def test_run_scenario_rejects_stale_authorization() -> None:
         )
 
 
-def test_run_scenario_persists_behind_fresh_authorization() -> None:
+def test_run_scenario_persists_behind_fresh_authorization(monkeypatch) -> None:
+    # Custody itself is exercised by the real coordinator/funnel tests.
+    monkeypatch.setattr("app.agents.onesimus.service._require_engineering_custody", lambda *a: None)
     decision = _record_row(
         "raphael_decision", "d1",
         {"outcome": "authorized", "dossier_key": "main", "dossier_digest": "D"},
@@ -241,13 +254,15 @@ def test_run_scenario_persists_behind_fresh_authorization() -> None:
         crop=crop_profile(), site=_site(), decision_digest="d1",
     )
     assert stored["decision_ref"] == "d1"
-    assert stored["dossier_digest"] == "D"
+    assert stored["dossier_digest"] == current["digest"]
     assert stored["complete"] is True
     assert stored["outputs"]["sites"] == 2500.0
     assert stored["financial_assessment"]["assessed"] is False
 
 
-def test_run_scenario_records_engineering_and_financial_stages() -> None:
+def test_run_scenario_records_engineering_and_financial_stages(monkeypatch) -> None:
+    # Custody itself is exercised by the real coordinator/funnel tests.
+    monkeypatch.setattr("app.agents.onesimus.service._require_engineering_custody", lambda *a: None)
     decision = _record_row(
         "raphael_decision", "d1",
         {"outcome": "authorized", "dossier_key": "main", "dossier_digest": "D"},
@@ -299,7 +314,9 @@ def test_run_scenario_records_engineering_and_financial_stages() -> None:
     assert transitions == ["engineering_assessed", "financially_assessed"]
 
 
-def test_run_scenario_embeds_michael_assessment() -> None:
+def test_run_scenario_embeds_michael_assessment(monkeypatch) -> None:
+    # Custody itself is exercised by the real coordinator/funnel tests.
+    monkeypatch.setattr("app.agents.onesimus.service._require_engineering_custody", lambda *a: None)
     decision = _record_row(
         "raphael_decision", "d1",
         {"outcome": "authorized", "dossier_key": "main", "dossier_digest": "D"},
@@ -328,13 +345,13 @@ def test_run_scenario_embeds_michael_assessment() -> None:
     finance = stored["financial_assessment"]
     assert finance["assessed"] is True
     assert finance["assessment"]["complete"] is True
-    assert finance["assessment"]["outputs"]["operating_net_usd_per_year"] == "17890.40"
+    assert finance["assessment"]["outputs"]["operating_net_usd_per_year"] == "13210.40"
 
 
 def test_optional_physical_quantifications_flagged_not_zeroed() -> None:
     result = evaluate_scenario("bench", crop_profile(), _site())
     assert result["not_quantified"] == [
-        "hvac_energy", "nutrient_volume", "labor_hours"]
+        "cleaning_water", "crop_light_delivery", "hvac_energy", "nutrient_volume", "labor_hours"]
     assert "hvac_kwh_per_year" not in result["outputs"]
 
     crop = crop_profile()
@@ -349,7 +366,7 @@ def test_optional_physical_quantifications_flagged_not_zeroed() -> None:
         name="hvac_w_per_m2", value=10.0, unit="W/m2",
         provenance="test", classification="assumed")
     result = evaluate_scenario("bench", crop, site)
-    assert result["not_quantified"] == []
+    assert result["not_quantified"] == ["cleaning_water", "crop_light_delivery"]
     out = result["outputs"]
     assert out["nutrient_l_per_year"] == 2500.0
     assert out["labor_hours_per_year"] == pytest.approx(833.3, abs=0.1)

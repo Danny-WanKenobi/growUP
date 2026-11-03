@@ -48,6 +48,8 @@ from app.custody_db import (
     current_custody_in_transaction,
     issue_receipt_in_transaction,
     snapshot_in_transaction,
+    verify_chain_in_transaction,
+    verify_receipt_in_transaction,
 )
 from app.priscilla import run_simulation_in_transaction
 from app.uriel import prepare_package_in_transaction
@@ -132,7 +134,7 @@ def associate_dossiers_with_property(
 
     The search target is context, not identity proof: a dossier is
     associated only when its own normalized address uniquely supports
-    the target — exactly one dossier in the set matches, and the
+    the target â€” exactly one dossier in the set matches, and the
     target address is unambiguous in storage (checked with the
     existing ``find_by_address``, which never selects among multiple
     matches). Anything else leaves every dossier unassociated;
@@ -331,8 +333,8 @@ def load_census_evidence_for_dossier(
     """Load and verify a dossier's referenced Census evidence (read-only).
 
     Follows only the dossier's persisted ``census_evidence``
-    locator (admission run id, record keys, digests) — never URL
-    text — then verifies stored-row integrity, digest equality,
+    locator (admission run id, record keys, digests) â€” never URL
+    text â€” then verifies stored-row integrity, digest equality,
     collector revisions, and the collection/county cross-binding.
     Raises WorkflowError when the locator is absent, malformed,
     or disagrees with the stored rows.
@@ -527,17 +529,17 @@ def _gabriel_stage(
 
 
 def _site_inputs(raw: dict[str, Any]) -> dict[str, ClassifiedInput]:
-    """Physical site inputs for Onesimus (financial figures go to Michael)."""
-    site: dict[str, ClassifiedInput] = {}
-    entry = (raw or {}).get("usable_area_m2")
-    if isinstance(entry, dict):
-        site["usable_area_m2"] = ClassifiedInput.model_validate(
-            {"name": "usable_area_m2", **entry}
-        )
-    else:
-        site["usable_area_m2"] = ClassifiedInput(
-            name="usable_area_m2", value=None, classification="unknown"
-        )
+    """Only declared physical inputs; money remains owned by Michael."""
+    from app.agents.onesimus.engineering import SITE_UNITS
+    site = {}
+    for name, unit in SITE_UNITS.items():
+        entry = (raw or {}).get(name)
+        if isinstance(entry, dict):
+            site[name] = ClassifiedInput.model_validate(
+                {"name": name, "unit": unit,
+                 "classification": "assumed" if entry.get("value") is not None else "unknown", **entry})
+    if "usable_area_m2" not in site:
+        site["usable_area_m2"] = ClassifiedInput(name="usable_area_m2", value=None, unit="m2")
     return site
 
 
@@ -605,10 +607,15 @@ def _ensure_receipt_in_transaction(
     note: str,
 ) -> str:
     """Issue one custody receipt unless the link already records it."""
+    verify_chain_in_transaction(conn, UUID(str(dossier_id)))
     link, link_version = _link_in_transaction(conn, run_id, dossier_key)
     receipts = dict(link.get("receipts") or {})
     slot = f"{kind}:{from_agent}->{to_agent}"
     if receipts.get(slot):
+        cached = verify_receipt_in_transaction(conn, UUID(str(receipts[slot])))
+        if (cached.dossier_id != UUID(str(dossier_id)) or cached.version != version
+                or cached.from_agent != from_agent or cached.to_agent != to_agent or cached.kind != kind):
+            raise WorkflowError("cached custody receipt does not match the requested handoff")
         return str(receipts[slot])
     receipt = issue_receipt_in_transaction(
         conn, dossier_id=dossier_id, version=version, kind=kind,
@@ -783,6 +790,19 @@ def evaluate_real(
             kind="forward", from_agent="gabriel", to_agent="raphael",
             principal=principal, note="handoff to Raphael for assessment",
         )
+        verify_chain_in_transaction(conn, dossier_uuid)
+        from app.agents.raphael.inspection import build_inspection_report
+        from app.dossier_reports import append_agent_report_in_transaction
+        current_record = get_record_in_transaction(conn, run_id, "dossier_version", target)
+        if current_record is None:
+            raise WorkflowError("missing dossier for inspection report")
+        if not (current_record.payload.get("dossier", {}).get("reports") or {}).get("raphael"):
+            inspection = build_inspection_report(current_record.payload, site_inputs=site_inputs)
+            current_record, enhanced = append_agent_report_in_transaction(
+                conn, run_id, target, agent="raphael", report=inspection)
+            custody_version = enhanced.version
+        else:
+            custody_version = int(_link_in_transaction(conn, run_id, target)[0]["custody_version"])
         decision = authorize_in_transaction(conn, run_id, target)
         summary["decision"] = decision["outcome"]
         summary["decision_basis"] = decision["basis"]
@@ -816,7 +836,19 @@ def evaluate_real(
         run = get_run_in_transaction(conn, run_id)
         assert run is not None
     if run.stage == "raphael":
-        site = _site_inputs(site_inputs or {})
+        target = str(summary.get("dossier_key") or dossier_key or "main")
+        link, _ = _link_in_transaction(conn, run_id, target)
+        if not link:
+            raise WorkflowError("missing shared custody for engineering")
+        verify_chain_in_transaction(conn, UUID(str(link["dossier_id"])))
+        incoming = current_custody_in_transaction(conn, UUID(str(link["dossier_id"])))
+        if not incoming or incoming["holder"] != "onesimus":
+            raise WorkflowError("Onesimus must receive authenticated custody before engineering")
+        current_record = get_record_in_transaction(conn, run_id, "dossier_version", target)
+        inspection = ((current_record.payload.get("dossier") or {}).get("reports") or {}).get("raphael") if current_record else None
+        if not inspection:
+            raise WorkflowError("structured Raphael inspection report required")
+        site = _site_inputs(inspection.get("physical_inputs") or {})
         crop = crop_profile()
         results = {}
         for config in ("bench", "rack3"):
@@ -824,7 +856,7 @@ def evaluate_real(
                 conn, run_id, scenario_key=f"scenario-{config}",
                 config_name=config, crop=crop, site=site,
                 decision_digest=str(summary.get("dossier_digest") or _decision_digest(conn, run_id)),
-                financial=_financial_bundle(site_inputs or {}, config),
+                observed_occupancy=str(inspection.get("observed_occupancy") or ""),
             )
             finance = stored.get("financial_assessment", {}) or {}
             assessment = finance.get("assessment", {}) or {}
@@ -834,9 +866,15 @@ def evaluate_real(
                 "financial_complete": bool(assessment.get("complete", False)),
                 "financial_verdict": assessment.get("verdict", "insufficient_evidence"),
             }
-        link, _ = _link_in_transaction(
-            conn, run_id, str(summary.get("dossier_key") or dossier_key or "main")
-        )
+        from app.agents.onesimus.report import build_engineering_report
+        from app.dossier_reports import append_agent_report_in_transaction
+        scenario_records = {config: get_record_in_transaction(conn, run_id, "scenario", f"scenario-{config}").payload
+                            for config in ("bench", "rack3")}
+        engineering_report = build_engineering_report(
+            scenario_records, inspection=inspection,
+            options=inspection.get("engineering_options") or {})
+        append_agent_report_in_transaction(conn, run_id, target, agent="onesimus", report=engineering_report)
+        link, _ = _link_in_transaction(conn, run_id, target)
         if link:
             _ensure_receipt_in_transaction(
                 conn, run_id, str(link.get("dossier_key", "main")),
@@ -861,10 +899,35 @@ def evaluate_real(
                 scenarios[config] = dict(record.payload or {})
         if not scenarios:
             raise WorkflowError("no scenarios to package")
-        assessments = {
-            config: ((payload.get("financial_assessment", {}) or {}).get("assessment", {}) or {})
-            for config, payload in scenarios.items()
-        }
+        verify_chain_in_transaction(conn, UUID(str(link["dossier_id"])))
+        holder = current_custody_in_transaction(conn, UUID(str(link["dossier_id"])))
+        if not holder or holder["holder"] != "michael":
+            raise WorkflowError("Michael must receive the enhanced dossier before assessment")
+        from app.michael import assess as michael_assess
+        assessments = {}
+        for config, payload in scenarios.items():
+            assessment = (payload.get("financial_assessment", {}) or {}).get("assessment")
+            if assessment is None:
+                assessment = michael_assess(config, payload, _financial_bundle(site_inputs or {}, config))
+                updated = dict(payload)
+                updated["financial_assessment"] = {"assessed": True, "assessment": assessment}
+                previous_scenario = get_record_in_transaction(conn, run_id, "scenario", f"scenario-{config}")
+                put_record_in_transaction(conn, run_id, kind="scenario", record_key=f"scenario-{config}",
+                                          version=previous_scenario.version+1, payload=updated, digest=digest_payload(updated))
+                scenarios[config] = updated
+                from app.pilot import cell_from_dossier, canonical_quota_id, record_transition_in_transaction
+                current_dossier = get_record_in_transaction(conn, run_id, "dossier_version", target)
+                cell = cell_from_dossier(current_dossier.payload.get("dossier") or {}) if current_dossier else None
+                if cell:
+                    record_transition_in_transaction(
+                        conn, county=cell[0], category=cell[1],
+                        dossier_id=canonical_quota_id(current_dossier.payload["property_id"]),
+                        transition="financially_assessed" if assessment.get("complete") else "incomplete",
+                        run_id=run_id, record_key=target)
+            assessments[config] = assessment
+            if config in (summary.get("scenarios") or {}):
+                summary["scenarios"][config].update(financial_complete=assessment.get("complete", False),
+                                                     financial_verdict=assessment.get("verdict", "insufficient_evidence"))
         if not any(bool(item.get("complete", False)) for item in assessments.values()):
             advance_stage_in_transaction(conn, run_id, "onesimus", "done", status="complete_stopped")
             summary["stage"] = "done"
@@ -1135,6 +1198,94 @@ def start_evaluation_audited(
             if name in census_status
         }
     return result
+
+
+def release_engineering_in_transaction(conn: Any, run_id: UUID, *, principal: str,
+                                      site_inputs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Explicit release of one authorized inspection hold; no acquisition.
+
+    The original inspection-only run limits stay immutable. This separate
+    approval is retained with a principal and exact inputs; replay is read-only.
+    """
+    _require_enabled()
+    if not str(principal or "").strip():
+        raise WorkflowError("downstream release requires an authenticated operator")
+    run = get_run_in_transaction(conn, run_id, for_update=True)
+    if run is None:
+        raise WorkflowError("unknown inspected run")
+    approval = {"principal": principal, "site_inputs": site_inputs or {},
+                "original_limits": run.limits, "run_id": str(run_id)}
+    prior = get_record_in_transaction(conn, run_id, KIND_RESEARCH_ARTIFACT, "engineering-release", 1)
+    if prior is not None:
+        if (prior.digest != digest_payload(prior.payload)
+                or prior.payload.get("approval") != approval):
+            raise WorkflowError("engineering release replay changed its operator or inputs")
+        return prior.payload["result"]
+    if run.stage != "raphael" or run.status != "complete_inspected":
+        raise WorkflowError("only an authorized inspection-only hold can be released")
+    target = _select_custody_target(conn, run_id, None)
+    if not target:
+        raise WorkflowError("held run has no dossier")
+    link, _ = _link_in_transaction(conn, run_id, target)
+    if not link:
+        raise WorkflowError("held run has no custody")
+    dossier_id = UUID(str(link["dossier_id"]))
+    verify_chain_in_transaction(conn, dossier_id)
+    custody = current_custody_in_transaction(conn, dossier_id)
+    if not custody or custody["holder"] != "raphael":
+        raise WorkflowError("Raphael must hold the inspected dossier")
+    record = get_record_in_transaction(conn, run_id, KIND_DOSSIER_VERSION, target)
+    if record is None:
+        raise WorkflowError("held dossier is missing")
+    from app.agents.raphael.inspection import build_inspection_report
+    from app.dossier_reports import append_agent_report_in_transaction
+    inspection = (record.payload.get("dossier", {}).get("reports") or {}).get("raphael")
+    if inspection is None:
+        record, _ = append_agent_report_in_transaction(
+            conn, run_id, target, agent="raphael",
+            report=build_inspection_report(record.payload, site_inputs=site_inputs))
+    else:
+        from app.agents.onesimus.engineering import SITE_UNITS
+        supplied = {k:v for k,v in (site_inputs or {}).items() if k in SITE_UNITS}
+        if supplied:
+            proposed = build_inspection_report(record.payload, site_inputs=supplied)["physical_inputs"]
+            for name, value in proposed.items():
+                frozen = (inspection.get("physical_inputs") or {}).get(name, {})
+                if any(value.get(k) != frozen.get(k) for k in ("value", "unit", "classification")):
+                    raise WorkflowError("physical inputs changed since inspection; a new assessment is required")
+        if "engineering_options" in (site_inputs or {}) and site_inputs["engineering_options"] != inspection.get("engineering_options", {}):
+            raise WorkflowError("engineering options changed since inspection")
+    decision = authorize_in_transaction(conn, run_id, target)
+    if decision["outcome"] != "authorized":
+        raise WorkflowError("held dossier no longer satisfies Raphael authorization")
+    link, _ = _link_in_transaction(conn, run_id, target)
+    _ensure_receipt_in_transaction(conn, run_id, target, dossier_id=dossier_id,
+                                  version=int(link["custody_version"]), kind="forward",
+                                  from_agent="raphael", to_agent="onesimus", principal=principal,
+                                  note="explicit operator release of authorized inspection hold")
+    set_status_in_transaction(conn, run_id, "open")
+    result = evaluate_real(conn, run_id, f"release:{run_id}", "retained inspection release",
+                           site_inputs=site_inputs, dossier_key=target, principal=principal)
+    payload = {"approval": approval, "result": result}
+    put_record_in_transaction(conn, run_id, kind=KIND_RESEARCH_ARTIFACT,
+                              record_key="engineering-release", version=1,
+                              payload=payload, digest=digest_payload(payload))
+    return result
+
+
+def release_engineering_audited(run_id: UUID, *, principal: str,
+                                site_inputs: dict[str, Any] | None = None) -> dict[str, Any]:
+    from app.observability.events import AgentEvent, AgentId, RetentionClass, Severity
+    from app.observability.policy import OperationClass
+    from app.observability.transactions import run_consequential_transaction
+    event = AgentEvent(agent=AgentId.WONDRUE, run_id=str(run_id),
+                       event_type="wondrue.engineering.released", severity=Severity.INFO,
+                       retention_class=RetentionClass.PERMANENT,
+                       summary="Explicit release of one authorized dossier to engineering")
+    return run_consequential_transaction(
+        operation_class=OperationClass.CONSEQUENTIAL_INTERNAL, event=event,
+        mutate=lambda conn: release_engineering_in_transaction(
+            conn, run_id, principal=principal, site_inputs=site_inputs))
 
 
 def stop_run_audited(run_id: UUID) -> None:
@@ -1708,9 +1859,9 @@ class _CensusChargedError(WorkflowError):
     """A Census attempt failed after its allowance was consumed.
 
     The claim commit reserves the attempt's allowance before
-    transmission, so every exit past the claim — ambiguous
+    transmission, so every exit past the claim â€” ambiguous
     transmit, assessment refusal, or a concurrent completion of
-    this caller's own claim — reports through this subclass.
+    this caller's own claim â€” reports through this subclass.
     ``charged`` tells whether THIS call consumed the allowance
     (claim winners) as opposed to reusing an earlier claim
     (resumes and replays). Subclasses WorkflowError so direct
@@ -2174,7 +2325,7 @@ def _collect_census_for_evaluation(
     Census allowance (claim winners only; replays, resumes, and
     pre-claim refusals consume nothing new). The allowance itself
     is reserved inside the claim commit on ``spend_run_id``,
-    before transmission — never marked after the fact.
+    before transmission â€” never marked after the fact.
     """
     try:
         summary = collect_census_audited(

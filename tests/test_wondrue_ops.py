@@ -587,3 +587,16 @@ def test_start_discovery_read_only_makes_no_calls(
             ),
             conn=_CONN,
         )
+
+
+def test_engineering_release_reader_and_preview_boundaries(monkeypatch):
+    from app import mvp
+    calls = []
+    monkeypatch.setattr(mvp, "release_engineering_in_transaction", lambda *a, **k: calls.append(k) or {"stage":"done"})
+    intent = _override("release_engineering", {"run_id": str(uuid4())})
+    with pytest.raises(WondrueError, match="read-only"):
+        handle_command(mode="read-only", max_mode="read-only", text="", target="real", intent_override=intent, conn=_CONN)
+    preview = handle_command(mode="ask", max_mode="full", text="", target="real", intent_override=intent, conn=_CONN, principal="owner")
+    assert preview["outcome"] == "preview" and calls == []
+    result = handle_command(mode="ask", max_mode="full", text="", target="real", intent_override=intent, conn=_CONN, principal="owner", approval_token=preview["approval_token"])
+    assert calls[0]["principal"] == "owner"

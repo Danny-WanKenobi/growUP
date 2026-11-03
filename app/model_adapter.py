@@ -133,6 +133,7 @@ INTENTS = frozenset(
         "inspect_evidence",
         "inspect_review",
         "start_real_evaluation",
+        "release_engineering",
         "start_demo",
         "explain_decision",
         "compare_scenarios",
@@ -322,7 +323,7 @@ def validate_evidence_analysis(raw: Any, evidence: dict[str, str]) -> dict[str, 
 
 
 _MONEY_LIKE = (
-    r"[$€£¥]\s*\d"  # currency amounts
+    r"[$â‚¬Â£Â¥]\s*\d"  # currency amounts
     r"|\d+\.\d{2,}"  # precise decimals (model must cite labels instead)
     r"|\b\d{4,}\b"  # large integers (years excepted below)
 )

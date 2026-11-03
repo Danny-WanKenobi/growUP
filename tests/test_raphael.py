@@ -182,7 +182,7 @@ def _decision_row(payload: dict[str, Any], digest: str) -> dict[str, Any]:
 
 def test_authorize_persists_decision_with_scope() -> None:
     payload = _payload()
-    conn = _FakeConn([_dossier_row(payload), "ECHO_INSERT"])
+    conn = _FakeConn([_dossier_row(payload), None, "ECHO_INSERT"])
     stored = authorize_in_transaction(conn, uuid4(), "main")
     assert stored["outcome"] == "authorized"
     assert stored["dossier_digest"] == payload["digest"]
@@ -207,7 +207,7 @@ def test_authorize_records_assessed_and_authorized_for_known_cell() -> None:
     }
     payload["digest"] = digest_payload({k: v for k, v in payload.items() if k != "digest"})
     conn = _FakeConn([
-        _dossier_row(payload), "ECHO_INSERT",
+        _dossier_row(payload), None, "ECHO_INSERT",
         {"county": "dallas county"}, {"event_id": uuid4()},
         {"county": "dallas county"}, {"event_id": uuid4()},
     ])
@@ -240,7 +240,7 @@ def test_authorize_skips_pilot_count_without_resolved_property() -> None:
         "status": "observed", "observed": "high_rise",
     }
     payload["digest"] = digest_payload({k: v for k, v in payload.items() if k != "digest"})
-    conn = _FakeConn([_dossier_row(payload), "ECHO_INSERT"])
+    conn = _FakeConn([_dossier_row(payload), None, "ECHO_INSERT"])
     stored = authorize_in_transaction(conn, uuid4(), "main")
     assert stored["outcome"] == "authorized"  # decision persists; only counting skips
     assert not [
@@ -286,7 +286,7 @@ def test_authorize_is_idempotent_per_digest() -> None:
         "limitations": list(LIMITATIONS),
     }
     digest = digest_payload(decision)
-    conn = _FakeConn([_dossier_row(payload), None, _decision_row(decision, digest)])
+    conn = _FakeConn([_dossier_row(payload), _decision_row(decision, digest)])
     stored = authorize_in_transaction(conn, uuid4(), "main")
     assert stored["outcome"] == "needs_evidence"
     assert stored["dossier_digest"] == payload["digest"]

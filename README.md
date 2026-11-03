@@ -173,6 +173,8 @@ Discovery service and runner enforce a retained decision before collection. Exis
 
 **Service-environment regression isolation (2026-11-03):** Ubuntu validation of `3618bc1` reported four failures (2,595 passed, one skipped) because catalog-fixture tests inherited the development service's `GABRIEL_FINDING_POLICY=searxng_primary` and `GABRIEL_SEARXNG_URL`. The catalog tests now pass an explicit isolated environment; a separate regression verifies that runtime calls without an override still honor the service environment and query SearXNG without catalog fallback. Runtime policy, service settings and credentials are unchanged. Focused checks: `.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider tests/test_source_discovery.py tests/test_us_discovery.py` (62 passed, two PostgreSQL-gated skips). Full Windows offline regression with the SearXNG service settings present: **2,453 passed, 148 skipped, 17 warnings**. Ubuntu PostgreSQL revalidation remains required; there is no migration or new live acquisition in this correction.
 
+**Bounded Collin live proof — PASS (2026-11-03):** the owner-approved `owner-collin-proof-20261103-v4` assignment completed against development release `89db1f335683a9cc1b1252b28d630d5b77e2010f`. Exactly **five public ArcGIS GET requests** (four publisher-verification requests, one collection) were attempted under a durable five-request reservation, 12-second HTTP timeouts, no redirects/retries, and a one-property creation cap. No Brave, Census, Meta/Baseten, outreach, engineering, or financial execution occurred. The verified source enrollment is **item-scoped**, not authority for the shared Esri hostname. The selected resource retained the observed Texas appraisal-code vocabulary and its evidence digest. The canonical discovery service created the genuine record for **701 18th Street, Plano, TX 75074** (`df77d30e-f533-4fb6-a2e2-4ff2a5b958ac`); its raw source address and city were preserved, while the separate operational `state` field remains unknown/null. The ordinary retained-evidence evaluation persisted dossier `d37b2831-9027-5ff2-b55b-ff535930ee48` in evaluation run `ecdd2088-b43c-499b-bd65-ab66c347e74a`. Research qualification returned `qualified`, but county credit is empty and **zero pilot events** were credited. Raphael correctly returned `needs_evidence`: **no persisted category verification on the dossier version**. Two authenticated custody receipts prove Gabriel → Raphael → Gabriel on version 1; current custody is Gabriel. Same-key evaluation replay preserved the dossier and receipt count and added no provider requests. Parent run `e687783d-d7b1-4a74-8e7b-b0f6d39fbc28` and its historical records remained unchanged. Audit run `ce515ac5-3045-4a32-97ce-24d34b4b9bca` retains the envelope, individual attempted requests/responses and final result. This proves a real non-Dallas discovery/dossier/inspection-return path through the Python service APIs; it does not prove cockpit command dispatch, Raphael authorization, engineering feasibility, all-county coverage, or completion of the 144-dossier pilot. Do not rerun the acquisition assignment automatically: its five-request envelope is consumed. Next validation requires a separately bounded assignment. The accepted Ubuntu checkpoint before this proof was **2,600 passed, one skipped, 17 warnings**, with both development and gate-database migration/index/constraint checks passing; the proof added one genuine development property and no schema change.
+
 **Catalog steering and observed-metadata rules (2026-11-02):** national-catalog queries carry property subject terms so property datasets surface over generic city data; jurisdiction is established only from a candidate own title, publisher, or portal domain (never the query alone); observed Public Domain and CCZero license labels are known-clear; and among executable candidates, selection prefers observed property relevance (property subject, parcel/account identity, then address/coordinates) so budget, wage, or incident datasets cannot outrank property datasets. Verified live against Seattle: the Building Energy Benchmarking dataset (parcel id, address, coordinates) is the selected generic Socrata source.
 
 **Generic formats and the non-Dallas proof (development implementation):** Socrata collects the actual retained `/resource/<dataset>.json` endpoint with observed field metadata; ArcGIS queries the retained layer with `inSR=4326`/`outSR=4326` and preserves GeoJSON geometry; CKAN collects a retained CSV resource with finite bounded rows and explicit fields. Rows with missing/non-finite coordinates or outside the requested bbox are strictly excluded (never returned as a fallback), requested category filters are enforced, and category is mapped only from observed use/building/stories through the existing normalization — unknown/missing category stays unresolved and earns no credit, mixed/contradictory observations are preserved. Observed dataset fields are retained as records and provenance, not disguised as Brave snippets; no state, county, vacancy, ownership, occupancy or zoning is invented, and Census county credit is reused only from stored authenticated Census records/approved bounds (unknown county stays unknown). One shared operational property and deterministic dossier UUID, the same append-only version/snapshot/receipts, and fail-closed Raphael apply: a generic record therefore returns `needs_evidence` to Gabriel with an authenticated return receipt unless genuine authenticated evidence later passes the shared policy. **Repeatable read-only preview:** `python -m app.discovery_runner preview --scope SCOPE --envelope ENVELOPE.json` and `python -m app.pilot status --json` (no provider, production or model/outreach calls). **Bounded non-Dallas proof procedure (offline, disposable data):** run `python -m pytest -q -p no:cacheprovider tests/test_us_discovery.py tests/test_source_discovery.py tests/test_discovery_provenance.py tests/test_official_records.py` — these drive a fake-realistic non-Dallas (Travis County) catalog through shared selection, the actual discovery service, retained structured admission, dossier persistence and Raphael `needs_evidence` return on the same identity, plus same-key replay with zero provider calls. This fixture proof is test-only (no synthetic property in `growup_dev`, no real-property claim); a finite real-property proof is exercised separately by the owner when service access is available. Actual regional coverage today remains the DFW-first pilot (12 counties × 3 canonical categories × 4 qualified dossiers = 144, never invented quota and never a Dallas-only substitute); no nationwide rollout, scheduler expansion or 144 batch is part of this path, and `stop_after_raphael` remains the proof boundary (no Onesimus/outreach is executed or presented).
@@ -3951,3 +3953,91 @@ GUADE source-pilot engineering: every dispatch/review is bound to the versioned 
 The all-DCAD Dallas envelope now computes **0 Overpass / 0 Brave / up to 6 Census** provider requests, zero Meta calls and no outreach. Local file reads are recorded as `local_discovery_passes`; pass, creation and per-unit limits still apply. Missing or unavailable retained official evidence blocks inspection without a Brave fallback. Mixed improvement classes stay contradictory. Official admission passes any explicitly collected Census binding through the existing shared county-admission policy; absent evidence earns no county-cell credit. Exact run/event/property/digest bindings are pinned in the evaluation limits and cannot change on replay. A completed same-key inspection reuses its dossier, records and receipts.
 
 Run `python -m pytest -q -p no:cacheprovider tests/` locally. Ubuntu must separately run targeted source/official-record/custody tests and the full PostgreSQL regression against **growup_mvp_gate** before closure. Two new PostgreSQL source-store tests in `tests/test_source_discovery.py` check durable cold-cache replay, single-winner claims and interruption accounting with fake HTTP; they guard the isolated database name and role and clean up only their unique workflow assignments. Fixture-only tests do not prove live provider compatibility or production readiness. The execution ledger preserves stopped out-of-scope dispatches; root-reviewed corrections do not retroactively mark those dispatches successful.
+
+
+## Per-dossier inspection and conceptual engineering completion
+
+The 144-dossier milestone and further Gabriel development are deferred. Raphael
+never waits for a batch before promoting an individually authorized dossier.
+The existing verification policy remains unchanged. No new discovery engine,
+provider, migration, or GUADE work is introduced here.
+
+### Reports, custody and operator release
+
+`app/agents/raphael/inspection.py` builds a preliminary inspection report containing
+verification reasons, physical assumptions, missing evidence and constraints.
+Structural/electrical capacity, permitted agricultural use, water quality and
+actual vacancy remain unknown without supporting authenticated evidence.
+An operator's `verified` label on a dimension is downgraded to an assumption.
+
+`app/dossier_reports.py` verifies received custody, current holder, latest version
+and digests, then appends the report to the inherited dossier without changing
+property facts. It creates an immutable successor and complete snapshot. Normal
+successful new flows have Gabriel version 1, Raphael report version 2, Onesimus
+report version 3, and receipts to Raphael, Onesimus and Michael. Authorization
+binds version 2; engineering consumes its frozen physical inputs. Needs-evidence
+or rejected dossiers return to Gabriel without engineering authorization.
+Existing 90-day archival functionality is reused; automatic archival scheduling
+is not installed or confirmed by this task.
+
+Inspection-only discovery runs retain `stop_after_raphael`. Wondrue's new
+consequential `release_engineering` intent accepts `args` containing `run_id` and
+optional classified `site_inputs`. Use authenticated `POST /wondrue/command` with
+`intent_override`, `target: "real"`, `use_live: false` and mode `ask` for a preview;
+redeem its approval token as the same operator. Full mode requires operator
+access; readers cannot release dossiers. No acquisition or inference occurs.
+The retained approval binds principal and exact inputs, allowing idempotent replay
+without altering original run limits. A historical authorized hold lacking a
+report may receive explicit scenario assumptions. Already frozen inputs cannot
+be silently changed; changed inputs require a new assessment, whose automatic
+orchestration is not implemented.
+
+### Physical inputs and conceptual demonstration
+
+Onesimus uses passive non-circulating Kratky containers with root-zone air space.
+Bench and three-tier racks are alternatives, never additive capacity. Inputs
+contain `value`, `unit`, `classification` and optional `provenance`; classifications
+are verified, estimated, assumed, experimental or unknown. Unknown is not zero.
+
+For example, assumed usable area 100 m2, room length/width 10 m and clear height
+4 m fit 15 assumed 2m x 1m racks and 2,250 sites across three tiers at 0.2m plant
+spacing. Default aisle 1m, perimeter 0.5m, tier pitch 0.9m and ceiling gap 0.3m
+are catalog assumptions, not safety standards. Exceeding area/height or fitting
+no whole grid produces an incomplete layout. Area-only inputs produce estimates,
+not validated rack layouts. `SITE_UNITS` and `CROP_UNITS` in
+`app/agents/onesimus/engineering.py` list accepted units. Conversions include
+ft2 to m2 and ft/cm/mm to m; nonfinite values and incompatible units refuse.
+
+Reports retain formulas, units, assumptions and missing quantities. Annual water
+includes initial fill every crop cycle, top-up and quantified cleaning. Nutrient
+solution and concentrate volumes are separate. Physical HVAC energy, nutrient
+concentrate and labor remain unknown without inputs. Michael computes finances
+after receiving the enhanced dossier. Physical labor/HVAC quantities replace
+legacy area-based allowances rather than double-count them; missing prices or
+quantities cannot establish profitability.
+
+`engineering_options` optionally supplies rainwater, lighting, tenant_consolidation
+and food_forest inputs. Reports consider undershelf/top-tier lighting, DLI,
+daylight/roof windows, reflective finishes, qualified worker access, rainwater,
+municipal backup, groundwater and experimental condensate reuse. No loose Mylar
+flooring, water availability, safety or energy saving is automatically approved.
+Tenant scenarios preserve actual occupancy and flag consent/lease/access/cost
+constraints. The owner-selected Kratky guide and Food Forest Abundance are retained
+references alongside primary/extension sources; this is not model training or
+expert certification. Food-forest outputs remain conceptual, without fabricated
+yields. Outdoor deployment and construction-ready engineering remain deferred.
+
+Repeatable offline checks (fixture data are not real-property verification):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:GROWUP_PG_INTEGRATION = '0'
+$env:META_SPEND_APPROVED = '0'
+.\.venv\Scripts\python.exe -B -m pytest tests/test_funnel_acceptance.py tests/test_engineering_completion.py tests/test_engineering_reports.py tests/test_onesimus.py tests/test_michael.py tests/test_wondrue_ops.py -q -p no:cacheprovider
+```
+
+Owner Ubuntu PostgreSQL tests, full regression and deployed demonstration remain
+pending. No provider spending, credentials or deployment configuration changed.
+
+Local Windows validation for this task: 2,483 passed, 148 skipped, 17 warnings
+(full offline run). PostgreSQL-gated tests were not executed locally.

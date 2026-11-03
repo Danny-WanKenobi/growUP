@@ -61,6 +61,11 @@ class _FakeCursor:
                     updated = 1
             self.rowcount = updated
             self._result = []
+        elif sql.startswith("UPDATE workflow_runs SET status"):
+            for row in db["runs"]:
+                if str(row["run_id"]) == str(p["rid"]):
+                    row["status"] = p["status"]
+            self._result = []
         # Workflow records ---------------------------------------------
         elif sql.startswith("INSERT INTO workflow_records"):
             key = (str(p["run"]), p["kind"], p["key"], p["version"])
@@ -507,7 +512,7 @@ def test_full_chain_coordinator_then_wondrue(monkeypatch: pytest.MonkeyPatch) ->
         ("forward", "onesimus", "michael"),
         ("forward", "michael", "uriel"),
     ]
-    assert len(db["versions"]) == 1 and len(db["snapshots"]) == 1
+    assert len(db["versions"]) == 3 and len(db["snapshots"]) == 3
 
     # Package is genuine: never synthetic, never executed.
     package = db["packages"][0]
@@ -687,7 +692,7 @@ def test_live_full_chain_coordinator_then_wondrue(
             "WHERE dossier_id = %(d)s",
             {"d": dossier_id},
         )
-        assert (versions, receipts, packages, conversions) == (1, 4, 1, 1)
+        assert (versions, receipts, packages, conversions) == (3, 4, 1, 1)
         assert transitions == 6
 
         with conn.cursor() as cur:
@@ -853,7 +858,44 @@ def test_coordinator_returns_same_dossier_to_gabriel_with_no_downstream(monkeypa
     assert summary["dossier_id"] == str(dossier)
     assert current_custody_in_transaction(conn, dossier)["holder"] == "gabriel"
     assert verify_chain_in_transaction(conn, dossier) == 2
-    assert len(db["versions"]) == 1 and len(db["snapshots"]) == 1
+    assert len(db["versions"]) == 2 and len(db["snapshots"]) == 2
     assert not db["packages"] and not db["conversions"]
     mvp_module.evaluate_real(conn, run_id, "a1", "q", stop_after_raphael=True)
     assert len(db["receipts"]) == 2
+
+
+def test_authorized_hold_release_preserves_limits_and_reports(monkeypatch):
+    from copy import deepcopy
+    from app import mvp
+    from app.workflow_db import WorkflowError
+    db, rid, prop = _seed_run(monkeypatch)
+    conn = _FakeConn(db)
+    db["runs"][0]["limits"] = {"stop_after_raphael": True}
+    original = deepcopy(db["records"][0]["payload"])
+    held = mvp.evaluate_real(conn, rid, "a1", "q", site_inputs=_site_inputs(), stop_after_raphael=True)
+    assert held["decision"] == "authorized" and held["current_holder"] == "raphael"
+    assert len(db["versions"]) == 2
+    released = mvp.release_engineering_in_transaction(conn, rid, principal="owner", site_inputs=_site_inputs())
+    assert released["stage"] == "done"
+    assert db["runs"][0]["limits"] == {"stop_after_raphael": True}
+    assert len(db["versions"]) == 3
+    final = db["versions"][-1]["payload"]["dossier"]
+    assert set(final["reports"]) == {"raphael", "onesimus"}
+    assert {k:v for k,v in final.items() if k != "reports"} == original["dossier"]
+    before = deepcopy(db)
+    assert mvp.release_engineering_in_transaction(conn, rid, principal="owner", site_inputs=_site_inputs()) == released
+    assert db == before
+    with pytest.raises(WorkflowError, match="operator or inputs"):
+        mvp.release_engineering_in_transaction(conn, rid, principal="other", site_inputs=_site_inputs())
+
+
+def test_received_tampered_custody_refuses_engineering(monkeypatch):
+    from app import mvp
+    from app.custody import CustodyTamperError
+    db, rid, prop = _seed_run(monkeypatch)
+    conn = _FakeConn(db)
+    mvp.evaluate_real(conn, rid, "a1", "q", site_inputs=_site_inputs(), stop_after_raphael=True)
+    db["receipts"][0]["mac"] = "0" * 64
+    with pytest.raises(CustodyTamperError):
+        mvp.release_engineering_in_transaction(conn, rid, principal="owner")
+    assert len(db["versions"]) == 2
