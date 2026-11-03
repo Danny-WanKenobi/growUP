@@ -1693,7 +1693,8 @@ def run_worker(
                         south=south, west=west, north=north, east=east
                     ),
                     categories=[cell.category],
-                    limit=int(limit),
+                    limit=config.pass_limit,
+                    max_created=int(limit),
                     timeout_seconds=config.pass_timeout_seconds,
                     run_id=run_id or None,
                 )

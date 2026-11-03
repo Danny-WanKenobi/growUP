@@ -683,6 +683,9 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
         result.counts.returned = len(listings)
         seen: dict[str, int] = {}
         for index, item in enumerate(listings):
+            if (request.max_created is not None
+                    and result.counts.created >= request.max_created):
+                break
             failed_index = index
             failed_external = item.external_id if isinstance(item.external_id, str) else None
             candidate_started = time.perf_counter()

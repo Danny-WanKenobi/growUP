@@ -81,6 +81,16 @@ class DiscoveryRunRequest(BaseModel):
     bbox: BoundingBoxInput
     categories: list[str] | None = Field(default=None, max_length=10)
     limit: int = Field(default=10, ge=1, le=MAX_RUN_LIMIT)
+    max_created: int | None = Field(
+        default=None, ge=0, le=MAX_RUN_LIMIT,
+        description=(
+            "Optional creation cap distinct from limit: the run scans "
+            "up to limit candidates (duplicates and unusable rows "
+            "included) but stops creating after this many new "
+            "properties. Prevents duplicate starvation, where an "
+            "already-known first page consumes the whole limit."
+        ),
+    )
     timeout_seconds: float = Field(default=15.0, ge=MIN_TIMEOUT_SECONDS, le=MAX_TIMEOUT_SECONDS)
     run_id: str | None = Field(
         default=None,

@@ -387,6 +387,36 @@ def test_lost_race_rereads_winner(monkeypatch) -> None:
     assert calls == [("osm", "way/9001"), ("osm", "way/9001")]
 
 
+def test_max_created_scans_past_duplicates(monkeypatch) -> None:
+    # Regression: the candidate scan (limit) and the creation cap
+    # (max_created) are distinct, so an already-known first page
+    # cannot starve new creation (Dallas closing bursts, 2026-11-03).
+    _configured_env(monkeypatch)
+    listings = [
+        _listing(external_id=f"way/910{i}", street_address=f"{100 + i} Scan St")
+        for i in range(5)
+    ]
+    monkeypatch.setattr(
+        gabriel_service, "get_source", lambda name: _StubSource(listings))
+    monkeypatch.setattr(
+        gabriel_service, "match_existing_address",
+        lambda payload: AddressMatch(AddressMatchStatus.NONE))
+    monkeypatch.setattr(
+        gabriel_service, "find_observation", lambda source, external_id: None)
+    created: list = []
+
+    def _create(payload, canonical, external_id, **kwargs):
+        created.append(external_id)
+        return {"id": f"p-{external_id}"}
+
+    monkeypatch.setattr(gabriel_service, "_create_with_observation", _create)
+    monkeypatch.setattr(gabriel_service, "_persist_decision_dedicated", lambda event: None)
+    result = gabriel_service.run_discovery(_run_request(limit=5, max_created=2))
+    assert result.counts.returned == 5
+    assert result.counts.created == 2
+    assert len(created) == 2
+
+
 # --- Live PostgreSQL integration (GROWUP_PG_INTEGRATION=1) ---
 
 
