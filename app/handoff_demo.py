@@ -298,7 +298,7 @@ def service(action, *, run_key, fail_at=None, expected_sequence=None, principal=
                 if action!="inspect":
                     from app.observability.store import insert_event_in_transaction
                     from app.observability.events import AgentEvent, AgentId, RetentionClass
-                    insert_event_in_transaction(conn,AgentEvent(agent=AgentId.WONDRUE,event_type="demo.handoff_step",
+                    insert_event_in_transaction(conn,AgentEvent(agent=AgentId.WONDRUE,run_id=run_key,event_type="demo.handoff_step",
                         summary="SYNTHETIC canonical handoff demonstration only",details={"run_key":run_key,"sequence":result["sequence"],"synthetic":True,"principal":principal},
                         retention_class=RetentionClass.PERMANENT))
                     conn.commit()

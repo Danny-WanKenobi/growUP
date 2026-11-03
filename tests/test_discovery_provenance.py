@@ -970,6 +970,19 @@ def test_live_concurrent_registration_race(monkeypatch: pytest.MonkeyPatch) -> N
         gabriel_service, "get_source", lambda name: _StubSource([_listing(external_id=external_id, street_address=street)])
     )
 
+    # Force both workers past the existing-observation/address probes
+    # before either creates a row. Without this barrier the valid
+    # serial ALREADY_RECORDED path can win the scheduler, so the test
+    # did not reliably exercise the registration race it asserted.
+    original_create = gabriel_service.create_property_in_transaction
+    registration_barrier = threading.Barrier(2)
+
+    def _synchronized_create(*args, **kwargs):
+        registration_barrier.wait(timeout=30)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(gabriel_service, "create_property_in_transaction", _synchronized_create)
+
     def _attempt() -> None:
         try:
             outcomes.append(gabriel_service.run_discovery(request))

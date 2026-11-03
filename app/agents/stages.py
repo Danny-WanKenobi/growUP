@@ -148,7 +148,7 @@ def prepare_audited(*, principal, **inputs):
     from app.observability.transactions import run_consequential_transaction
     if not principal or not principal.strip():
         raise WorkflowError("authenticated worker/operator principal is required")
-    event = AgentEvent(agent=AgentId(inputs["agent"]), event_type="agent.intake_prepared",
+    event = AgentEvent(agent=AgentId(inputs["agent"]), run_id=str(inputs["run_id"]), event_type="agent.intake_prepared",
         summary="Preliminary specialist intake; no external execution",
         details={"principal":principal, "run_id":str(inputs["run_id"]), "dossier_key":inputs["dossier_key"]},
         retention_class=RetentionClass.PERMANENT)

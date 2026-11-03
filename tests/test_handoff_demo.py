@@ -232,3 +232,61 @@ def test_setup_failure_diagnostics_redact_before_truncation(monkeypatch,tmp_path
     output=capsys.readouterr().out
     assert password not in output and signing not in output
     assert "Failed setup component" in output and "[REDACTED]" in output
+
+
+@pytest.mark.parametrize("audit_fails", [False, True])
+def test_real_service_wrapper_audit_and_atomic_rollback(monkeypatch,audit_fails):
+    from app import properties_db
+    from app.config import DatabaseConfig
+    from app.db import DatabaseUnavailableError
+    db=_new_db()
+    class AuditCursor(Cursor):
+        def execute(self,sql,params=None):
+            if sql.startswith("INSERT INTO agent_events"):
+                if audit_fails: raise RuntimeError("synthetic audit failure")
+                self._db.setdefault("audit_events",[]).append(copy.deepcopy(params))
+                self._result=[]
+            else: super().execute(sql,params)
+    class TransactionConn(Conn):
+        def cursor(self): return AuditCursor(self._db)
+        def __enter__(self):
+            self.before=copy.deepcopy(self._db)
+            return self
+        def __exit__(self,*args): pass
+        def commit(self): pass
+        def rollback(self):
+            self._db.clear(); self._db.update(copy.deepcopy(self.before))
+    conn=TransactionConn(db)
+    cfg=DatabaseConfig(host="127.0.0.1",port=5432,name=DATABASE,user=ROLE,password="fictional-test-only")
+    monkeypatch.setattr(demo,"configuration",lambda:(cfg,KEY))
+    def get_demo(config=None):
+        assert config is cfg
+        return conn
+    monkeypatch.setattr(properties_db,"get_connection",get_demo)
+    if audit_fails:
+        before=copy.deepcopy(db)
+        with pytest.raises(DatabaseUnavailableError):
+            demo.service("start",run_key="demo-handoff-wrapper-fail")
+        assert db==before
+    else:
+        result=demo.run_suite("demo-handoff-wrapper")
+        assert result["result"]=="PASS" and result["scenarios"]==15
+        events=db["audit_events"]
+        assert len(events)==225
+        assert all(e["run_id"].startswith("demo-handoff-wrapper") for e in events)
+        assert all(json.loads(e["details"])["synthetic"] for e in events)
+
+
+@pytest.mark.parametrize("agent", ["nicole", "retained_assessment"])
+def test_related_audited_entrypoints_require_run_identity(monkeypatch,agent):
+    from app.observability import transactions
+    captured=[]
+    monkeypatch.setattr(transactions,"run_consequential_transaction",lambda **kwargs:captured.append(kwargs["event"]) or {})
+    run_id="11111111-1111-1111-1111-111111111111"
+    if agent=="nicole":
+        from app.agents.stages import prepare_audited
+        prepare_audited(principal="test-owner",agent=agent,run_id=run_id,dossier_key="main")
+    else:
+        from app.retained_assessment import commit_audited
+        commit_audited(parent_run_id=run_id,preview_digest="a"*64)
+    assert captured[0].run_id==run_id

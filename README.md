@@ -165,6 +165,16 @@ credential-redaction checks for setup failures. The first owner setup stopped
 before successful schema initialization; preserve its credentials and rerun the
 corrected setup rather than resetting the demo database.
 
+Audit correction: the demo service and related new specialist/reassessment
+wrappers now supply the required AgentEvent run identity. The demo service is
+tested through its actual transaction/audit wrapper for all fifteen cases,
+including rollback when the permanent audit insert fails. The initial schema
+setup succeeded, but the first proof's start transaction rolled back on the
+missing audit field; no reset or credential rotation is needed. A pre-existing
+PostgreSQL discovery race test now synchronizes both creation attempts before
+asserting REGISTRATION_RACE_LOST; it no longer depends on thread scheduling.
+Production discovery behavior is unchanged.
+
 ## Downstream agent foundations, version one (November 3, 2026)
 
 Grow Up is a **single-owner autonomous system**, not a multi-user product. Normal

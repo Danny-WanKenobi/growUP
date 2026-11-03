@@ -214,7 +214,7 @@ def commit_audited(**kwargs):
     from app.observability.transactions import run_consequential_transaction
     from app.observability.policy import OperationClass
     from app.observability.events import AgentEvent,AgentId,RetentionClass
-    event=AgentEvent(agent=AgentId.WONDRUE,event_type="wondrue.retained_assessment",summary="Approved retained-evidence reassessment",
+    event=AgentEvent(agent=AgentId.WONDRUE,run_id=str(kwargs.get("parent_run_id") or ""),event_type="wondrue.retained_assessment",summary="Approved retained-evidence reassessment",
         details={"preview_digest":kwargs.get("preview_digest"),"parent_run_id":kwargs.get("parent_run_id")},
         retention_class=RetentionClass.PERMANENT)
     return run_consequential_transaction(operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,event=event,
