@@ -67,6 +67,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "release_engineering",
         "coordinate_dossier",
         "import_campaign_tracking",
+        "enroll_resend_message",
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
@@ -233,6 +234,11 @@ def preview_intent(
         return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
                 "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
                 "cost_bounds":{"brave_attempts":0,"meta_calls":0,"source_requests":0,"outreach":0}}
+    if intent == "enroll_resend_message":
+        return {"operations":["enroll one existing Resend send receipt against its exact campaign"],
+            "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
+            "effects":"immutable message and unique reply-alias mapping; no send or delivery assertion",
+            "cost_bounds":{"provider_calls":0,"outreach":0}}
     if intent == "import_campaign_tracking":
         return {"operations":["import one operator-reported campaign observation"],
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
@@ -482,10 +488,6 @@ def _synthetic_gate() -> None:
 
 
 def _execute_demo(intent: str, args: dict[str, Any], store: DemoStore) -> dict[str, Any]:
-    if intent == "coordinate_dossier":
-        if target != "real" or use_live:
-            raise WondrueError("coordinator requires real target with live inference disabled")
-        args["_coordinator_principal"] = principal
     if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
         from app.handoff_demo import service
         action={"start_handoff_demo":"start","advance_handoff_demo":"advance","inspect_handoff_demo":"inspect"}[intent]
@@ -891,6 +893,13 @@ def _execute_real(
         if conn is None:
             raise WondrueError("campaign tracking requires a database connection")
         return priscilla_module.timeline_in_transaction(conn,package_entry=args.get('package_entry'))
+    if intent == "enroll_resend_message":
+        import os
+        from app import resend_tracking
+        if os.getenv("RESEND_TRACKING_ENABLED", "0") != "1":
+            raise WondrueError("Resend tracking is disabled")
+        return resend_tracking.audited("enroll", str(capability_ctx.get('principal') or ''),
+            {key:args.get(key) for key in ("package_entry","campaign_id","email_id","recipient","reply_to","receipt_ref")})
     if intent == "import_campaign_tracking":
         return priscilla_module.ingest_tracking_audited(principal=str(capability_ctx.get('principal') or ''),
             package_entry=args.get('package_entry'),provider=args.get('provider'),provider_event_id=args.get('provider_event_id'),
@@ -1322,6 +1331,10 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
+    if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message"):
+        if target != "real" or use_live:
+            raise WondrueError("internal tracking/coordinator requires real target with live inference disabled")
+        args["_coordinator_principal"] = principal
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
                   "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking"):
         if target != "real":
@@ -1380,7 +1393,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent in ("coordinate_dossier", "import_campaign_tracking") and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")

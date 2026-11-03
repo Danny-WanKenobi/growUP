@@ -166,6 +166,7 @@ INTENTS = frozenset(
         "inspect_lead_metrics",
         "inspect_campaign_tracking",
         "import_campaign_tracking",
+        "enroll_resend_message",
         "start_handoff_demo",
         "advance_handoff_demo",
         "inspect_handoff_demo",

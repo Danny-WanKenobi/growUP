@@ -359,7 +359,7 @@ _LIVE_PG = os.getenv("GROWUP_PG_INTEGRATION") == "1"
 needs_live_pg = pytest.mark.skipif(not _LIVE_PG, reason="GROWUP_PG_INTEGRATION=1 not set")
 
 
-def _live_seed_packages(conn: Any, count: int) -> list[UUID]:
+def _live_seed_packages(conn: Any, count: int, *, campaign=None) -> list[UUID]:
     """Seed genuine prepared packages through the real custody chain."""
     from app.custody_db import (
         create_version_in_transaction,
@@ -393,6 +393,7 @@ def _live_seed_packages(conn: Any, count: int) -> list[UUID]:
             receipt_id=prev, prepared_by="live-test",
             dossier={"property_id": str(version.property_id)},
             review={"reviewed_by": "live-test"},
+            campaign=campaign,
         )
         entries.append(UUID(str(package["entry_id"])))
     return entries

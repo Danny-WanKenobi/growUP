@@ -731,12 +731,14 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
         if not isinstance(value,str) or not value.strip() or len(value)>200:
             raise PriscillaError('explicit bounded provider/event/message correlation required')
     provider = provider.strip().casefold()
-    if authentication not in ('operator_reported; provider authenticity not independently established','configured_gateway_hmac_sha256'):
+    if authentication not in ('operator_reported; provider authenticity not independently established','configured_gateway_hmac_sha256','resend_svix_hmac_sha256'):
         raise PriscillaError('unsupported authentication scope')
     if authentication == 'configured_gateway_hmac_sha256' and not provider.startswith('gateway:'):
         raise PriscillaError('authenticated gateway requires reserved namespace')
     if provider.startswith('gateway:') and authentication != 'configured_gateway_hmac_sha256':
         raise PriscillaError('gateway provider namespace requires authenticated transport')
+    if (provider == 'resend') != (authentication == 'resend_svix_hmac_sha256'):
+        raise PriscillaError('Resend namespace requires verified provider transport')
     provider_event_id = provider_event_id.strip()
     message_id = message_id.strip()
     try:
@@ -753,6 +755,8 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
     package = str(_uuid(package_entry,'package_entry'))
     material = {'package_entry':package,'provider':provider,'provider_event_id':provider_event_id,
         'message_id':message_id,'lifecycle_status':status,'occurred_at':occurred,'evidence_refs':refs,'simulated':simulated,'authentication':authentication}
+    if authentication == 'resend_svix_hmac_sha256':
+        material['provider_body_sha256'] = (authentication_context or {}).get('body_sha256')
     ingest_key = digest_payload({'provider':provider,'event_id':provider_event_id})
     message_key = digest_payload({'provider':provider,'message_id':message_id,'status':status,'simulated':simulated})
     # Lock in one global order. A provider event cannot be reassigned to another

@@ -4854,3 +4854,100 @@ property-bound contact inputs; prior contracts remain inspectable/read-only.
 Focused checks: `python -m pytest tests/test_tracking_ingress.py tests/test_campaign_tracking.py tests/test_dossier_coordinator.py -q`.
 
 The event retains the verified source/timestamp and raw-body SHA256 as intake provenance, without storing the signing key or echoing signatures. Authentication context is not part of the business replay identity, so a fresh signed retry cannot duplicate an event. Local full regression passed **2,587 tests** (151 skipped); final focused ingress/contact/replay checks include the subsequent source-binding and key-separation checks.
+
+
+### Resend event adapter and controlled message enrollment
+
+The native adapter is separate from the custom signed gateway. It implements
+`POST /integrations/resend/webhook`, disabled unless
+`RESEND_TRACKING_ENABLED=1`. `RESEND_WEBHOOK_SECRET` is the endpoint's dedicated
+`whsec_...` secret; it is neither a Resend API key nor a Wondrue key. Raw-body
+Svix HMAC-SHA256 verification follows Resend/Svix documentation, accepts v1
+rotation signatures, and enforces a five-minute timestamp tolerance and 32 KiB
+body limit before parsing. Duplicate JSON keys and invalid JSON refuse.
+No additional dependencies, migrations, HTTP clients or outbound sender were added.
+
+Supported events are `email.sent`, `email.delivered`, `email.bounced` and
+`email.received`. Sent means provider accepted the send request; delivered means
+recipient mail-server acceptance, not that a person read it. Unsupported event
+types are acknowledged with an explicit ignored result, without conversion
+credit. Complaints, opens, clicks are not currently mapped;
+do not subscribe to them for this adapter. Optional `inbox.email.received` and
+`inbox.email.sent` events require `RESEND_INBOX_ID` to match exactly; nested email
+ID and inbound/outbound direction must also agree. The same enrollment and unique
+reply-alias checks still apply. An Inbox ID is not an outbound email ID.
+No owner interest or conversion is inferred from a reply.
+
+The Wondrue operational intent is `enroll_resend_message`, real target only,
+with live inference disabled. It uses the six fields below as scalar args;
+read-only refuses, Ask mode previews and requires the initiating operator's
+approval token, and Full mode still obeys server-granted authority. The related
+tracking/coordinator principal stamp now occurs in the command handler, so the
+same operator can redeem an approval and another principal cannot.
+
+Enrollment also exposes the private backend `POST /integrations/resend/enroll` with the existing
+`X-Wondrue-Key` **operator** credential (readers refuse), and the same enabled
+flag. The strict JSON body contains `package_entry`, `campaign_id`, `email_id`,
+`recipient`, `reply_to`, and `receipt_ref`. The package must be actual, prepared,
+not demo/simulated, and carry an unsuppressed, complete campaign whose recipient
+and ID match exactly. `email_id` is the Resend outbound UUID from the send result;
+`receipt_ref` is its `https://resend.com/...` dashboard reference. Enrollment is
+an operator attestation of an existing send receipt, not independent API retrieval,
+not permission to send, and not proof of delivery. It appends a prepared event,
+which contributes no delivery count, plus a permanent audit in the same transaction.
+
+Set `RESEND_SENDER=uriel@securecodeusa.com` and `RESEND_RECEIVING_DOMAIN` to the
+exact receiving domain shown by Resend (a Resend-managed `<id>.resend.app`
+domain may be used). For each outbound message, generate a fresh random UUID
+and use `reply-<32 lowercase UUID hex characters>@<receiving domain>` as its
+Reply-To **when sending**. Retain the resulting outbound email ID, and enroll
+it with that exact alias and campaign. The alias must receive through Resend;
+the Inbox UUID is not a receiving domain. Do not change the existing root-domain
+MX records just to implement this path. Ordinary mail sent previously without
+this unique Reply-To cannot retroactively gain automatic reply correlation.
+
+Message ID and reply-alias locks make enrollment immutable and idempotent;
+conflicting reassignment refuses. Callbacks cannot self-enroll using tags or
+caller-selected package IDs. Outbound callbacks match the enrolled email ID,
+sender and single recipient. Inbound callbacks match exactly one enrolled
+Reply-To and the enrolled recipient's apparent From address. This is routing
+correlation, not verification of sender identity, ownership, or interest.
+No subjects, attachments, bodies or arbitrary inbound headers are fetched.
+Unknown/ambiguous correlations return 409 rather than guessed association;
+keep the provider event for retry after correction. Storage failures return 503.
+Existing Priscilla event locks deduplicate retries and repeated message statuses;
+provider body digest, event identity, enrollment digest and authentication scope
+remain retained. A reply arriving before delivery remains valid and unresolved
+against delivery until the later event arrives. Old dossier reports are unchanged.
+
+Deployment/configuration sequence:
+
+1. Deploy the tested code to the development VM and complete the PostgreSQL gate.
+2. Route one public HTTPS path `/integrations/resend/webhook` to that VM's Grow Up
+   service. A `.local` URL is not reachable by Resend. The public hostname must
+   be selected and its TLS/routing verified before an exact callback URL is claimed.
+   Expose **only** the webhook path; do not expose the enrollment endpoint through
+   this public route. Keep Wondrue/enrollment on the existing private access path.
+3. In Resend, Webhooks → Add webhook: enter that public HTTPS URL and select
+   `email.sent`, `email.delivered`, `email.bounced`, `email.received`; optionally
+   also select `inbox.email.received` and `inbox.email.sent` when the exact Inbox
+   ID is configured.
+4. Store the signing secret privately in the service environment, set the sender
+   and receiving domain, then enable tracking and restart through owner procedure.
+   Secrets must never be pasted into chat, committed, or supplied on command lines.
+5. Separately authorize a bounded test send using the unique Reply-To; enroll its
+   receipt, reply to it, and inspect the existing Priscilla timeline. No send,
+   DNS change, credentials installation or public tunnel is enabled by this code.
+
+Focused verification: `python -m pytest tests/test_resend_tracking.py
+ tests/test_tracking_ingress.py tests/test_campaign_tracking.py -q -p no:cacheprovider`
+(on one command line). Coverage includes the official Svix published signature
+vector, tampering/stale timestamps, bounded parsing, operator-only enrollment,
+immutable correlation and evidence separation. The gated PostgreSQL check uses
+only `growup_mvp_gate`, races enrollment, exercises signed HTTP delivery/reply
+in reverse arrival order and exact replay, and checks counts. Fixture success
+does not establish live Resend compatibility or public callback reachability.
+
+References: [Resend verification](https://resend.com/docs/webhooks/verify-webhooks-requests),
+[Svix manual verification](https://docs.svix.com/receiving/verifying-payloads/how-manual),
+[Resend received metadata](https://resend.com/docs/webhooks/emails/received).
