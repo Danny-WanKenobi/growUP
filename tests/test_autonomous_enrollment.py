@@ -141,6 +141,68 @@ def test_uncertain_claim_refuses_retransmission():
             _resource(), jurisdiction="Seattle", store=store, fetch=_fetch())
 
 
+class _FakeSelectionStore:
+    def __init__(self):
+        self.completed = None
+
+    def claim(self, assignment_key, fingerprint, mission_data):
+        return {"status": "winner", "run_id": "run-verified-1"}
+
+    def complete(self, assignment_key, *, decision, evidence):
+        self.completed = (decision, evidence)
+
+
+def test_verify_and_select_enrolls_and_selects_collin_like():
+    from app.agents.gabriel.sources.autonomous_enrollment import verify_and_select
+    view = _view(id="abcd-1234", name="Collin CAD Appraisal Data - 2025",
+                 attribution="Collin County Appraisal District")
+    entry = {
+        "name": "Collin CAD Appraisal Data - 2025",
+        "publisher_domain": "data.texas.gov",
+        "adapter": "generic_socrata",
+        "resource_url": "https://data.texas.gov/resource/abcd-1234.json",
+    }
+
+    def fetch(url, params=None):
+        if "/api/views/" in url:
+            return json.dumps(view).encode()
+        return json.dumps([{"county": "Collin"}]).encode()
+
+    store = _FakeSelectionStore()
+    out = verify_and_select(entry, jurisdiction="Collin County",
+                            selection_store=store,
+                            assignment_key="test:verified:1", fetch=fetch)
+    assert out["enrollment"]["status"] == "enrolled"
+    assert out["selection"] is not None
+    assert out["selection"]["status"] == "selected"
+    assert out["selection"]["selected_adapter"] == "generic_socrata"
+    assert store.completed is not None
+
+
+def test_verify_and_select_needs_evidence_selects_nothing():
+    from app.agents.gabriel.sources.autonomous_enrollment import verify_and_select
+    view = _view(id="abcd-1234", name="Collin CAD Appraisal Data - 2025",
+                 attribution="Collin County Appraisal District",
+                 license={"name": "Custom Terms"})
+    entry = {
+        "name": "Collin CAD Appraisal Data - 2025",
+        "publisher_domain": "data.texas.gov",
+        "adapter": "generic_socrata",
+        "resource_url": "https://data.texas.gov/resource/abcd-1234.json",
+    }
+
+    def fetch(url, params=None):
+        if "/api/views/" in url:
+            return json.dumps(view).encode()
+        return json.dumps([{"county": "Collin"}]).encode()
+
+    out = verify_and_select(entry, jurisdiction="Collin County",
+                            selection_store=_FakeSelectionStore(),
+                            assignment_key="test:verified:2", fetch=fetch)
+    assert out["enrollment"]["status"] == "needs_more_evidence"
+    assert out["selection"] is None
+
+
 def test_non_socrata_platform_no_network():
     decision = run_autonomous_enrollment(
         _resource(platform="ckan"), jurisdiction="Seattle", store=_FakeStore(),

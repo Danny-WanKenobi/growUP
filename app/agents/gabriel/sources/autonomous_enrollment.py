@@ -481,6 +481,158 @@ def run_autonomous_enrollment(
     return decision
 
 
+def verify_and_select(
+    ranked_entry: dict[str, Any],
+    *,
+    jurisdiction: str,
+    record_types: tuple[str, ...] = ("parcels", "appraisal"),
+    selection_store: Any = None,
+    assignment_key: str,
+    fetch: Callable[..., bytes] | None = None,
+) -> dict[str, Any]:
+    """Publisher-direct requalification of one catalog candidate.
+
+    The catalog could only claim; the publisher's own domain now
+    answers. If (and only if) the enrollment decision over that
+    direct evidence is ``enrolled``, a new candidate carrying only
+    observed values is run through the shared ``select_sources``
+    policy and persisted as a durable selection decision under its
+    own assignment key -- so collection enforcement, replay, and
+    digest binding work exactly as for a catalog-selected resource.
+    Otherwise the enrollment decision is returned and nothing is
+    selected.
+    """
+    from app.agents.gabriel.sources.source_selection import (
+        DiscoveryBudget, FoundCandidate, SourceMission, SourceSelectionError,
+        mission_fingerprint, mission_payload, select_sources,
+    )
+    from app.agents.gabriel.sources.qualification import SourceCandidate
+
+    resource_url = str(ranked_entry.get("resource_url") or "").strip()
+    domain = str(ranked_entry.get("publisher_domain") or "").strip().lower()
+    dataset_id = ""
+    if "/resource/" in resource_url:
+        dataset_id = resource_url.rsplit("/resource/", 1)[-1].split(".")[0]
+    resource = {
+        "platform": "socrata", "publisher_domain": domain,
+        "publisher_name": str(ranked_entry.get("publisher_name") or ""),
+        "dataset_id": dataset_id, "resource_url": resource_url,
+    }
+    evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
+    enrollment = decide_enrollment(evidence, jurisdiction=jurisdiction)
+    out: dict[str, Any] = {"enrollment": enrollment, "selection": None}
+    if enrollment["status"] != "enrolled":
+        return out
+    # Persist the enrollment decision itself (best effort): the
+    # verification path reads authority from the enrollment store.
+    # Failure here never fabricates authority -- Raphael simply keeps
+    # returning needs_evidence.
+    try:
+        estore = EnrollmentStore()
+        eclaim = estore.claim(domain, dataset_id, _digest({
+            "domain": domain, "dataset_id": dataset_id,
+            "resource_url": resource_url, "jurisdiction": jurisdiction,
+            "policy_version": ENROLLMENT_POLICY_VERSION}))
+        if eclaim.get("status") == "winner":
+            enrollment["run_id"] = eclaim.get("run_id", "")
+            enrollment["digest"] = _digest(enrollment)
+            estore.complete(domain, dataset_id, decision=enrollment,
+                            evidence_payload={
+                                "domain": evidence.domain,
+                                "dataset_id": evidence.dataset_id,
+                                "resource_url": evidence.resource_url,
+                                "publisher_name": evidence.publisher_name,
+                                "attribution": evidence.attribution,
+                                "dataset_name": evidence.dataset_name,
+                                "license_id": evidence.license_id,
+                                "license_clear": evidence.license_clear,
+                                "freshness_days": evidence.freshness_days,
+                                "fields": list(evidence.fields),
+                                "sample_rows": evidence.sample_rows,
+                                "sample_geo_values": list(evidence.sample_geo_values),
+                                "evidence_digest": evidence.evidence_digest,
+                                "retrieved_at": evidence.retrieved_at})
+            clear_registry_cache()
+    except Exception:
+        pass
+
+    identity_fields, _loc = _field_tokens(evidence.fields)
+    observed_record_types = ("parcels",) if identity_fields else ()
+    candidate = SourceCandidate(
+        name=evidence.dataset_name or str(ranked_entry.get("name") or domain),
+        publisher_name=evidence.attribution or evidence.publisher_name or domain,
+        publisher_domain=domain, claimed_official=True,
+        jurisdiction=jurisdiction, country="US",
+        record_types=observed_record_types or tuple(record_types),
+        access_method="api", free=True, requires_auth=False,
+        robots_restricted=False, license_clear=True,
+        formats=("json", "csv"), property_level=True,
+        update_age_days=evidence.freshness_days,
+        provenance_url=resource_url,
+    )
+    found = FoundCandidate(
+        candidate=candidate, tier=1, provider="publisher_direct",
+        adapter="generic_socrata", evidence_ref=evidence.evidence_digest,
+        resource={"resource_url": resource_url, "platform": "socrata",
+                  "dataset_id": dataset_id, "license_id": evidence.license_id,
+                  "field_mapping": {}, "fields": list(evidence.fields)},
+    )
+    mission = SourceMission(jurisdiction=jurisdiction,
+                            record_types=tuple(record_types), country="US",
+                            approved=True, budget=DiscoveryBudget(max_requests=0))
+    decision = select_sources(mission, [found],
+                              supported_adapters={"generic_socrata"})
+    if decision.get("status") != "selected":
+        raise EnrollmentError(
+            "publisher-verified candidate still not selectable: "
+            + "; ".join(decision.get("blockers") or []))
+    # Persist durably under the verified assignment key (same pattern
+    # as select_for_mission: claim, evidence, decision, digests).
+    from app.agents.gabriel.sources.source_selection import (
+        WorkflowSelectionStore, _RETAINED, _digest,
+    )
+    store = selection_store if selection_store is not None else WorkflowSelectionStore()
+    fingerprint = mission_fingerprint(mission)
+    claim = store.claim(assignment_key, fingerprint, mission_payload(mission))
+    if claim.get("status") == "completed":
+        out["selection"] = claim["decision"]
+        return out
+    if claim.get("status") != "winner":
+        raise EnrollmentError(
+            "verified selection for this assignment was already claimed "
+            "and its outcome is uncertain; not retransmitted")
+    evidence_payload = {
+        "assignment_key": str(assignment_key), "run_id": claim.get("run_id", ""),
+        "mission_fingerprint": fingerprint,
+        "publisher_evidence": {
+            "domain": evidence.domain, "dataset_id": evidence.dataset_id,
+            "dataset_name": evidence.dataset_name,
+            "attribution": evidence.attribution,
+            "license_id": evidence.license_id,
+            "freshness_days": evidence.freshness_days,
+            "fields": list(evidence.fields),
+            "sample_rows": evidence.sample_rows,
+            "sample_geo_values": list(evidence.sample_geo_values),
+            "evidence_digest": evidence.evidence_digest,
+            "retrieved_at": evidence.retrieved_at,
+        },
+        "enrollment_digest": enrollment["digest"],
+    }
+    evidence_digest = hashlib.sha256(
+        json.dumps(evidence_payload, sort_keys=True, separators=(",", ":"),
+                   default=str).encode()).hexdigest()
+    _RETAINED.pop(decision["digest"], None)
+    decision.update({"assignment_key": str(assignment_key),
+                     "run_id": str(claim.get("run_id") or ""),
+                     "mission_fingerprint": fingerprint,
+                     "evidence_digest": evidence_digest})
+    decision["digest"] = _digest(decision)
+    store.complete(assignment_key, decision=decision, evidence=evidence_payload)
+    _RETAINED[decision["digest"]] = json.loads(json.dumps(decision))
+    out["selection"] = decision
+    return out
+
+
 _REGISTRY_CACHE: dict[str, Any] = {"at": None, "registry": None}
 
 

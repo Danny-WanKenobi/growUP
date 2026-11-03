@@ -349,6 +349,55 @@ def discover_sources_anywhere(
                     "status": "needs_more_evidence",
                     "missing": [str(exc)],
                 }
+    elif auto_enroll and result.get("status") == "needs_review":
+        # Catalog claims were insufficient: Gabriel asks the
+        # publisher directly (bounded, at most three candidates,
+        # two requests each). Only an enrolled publisher-direct
+        # verification may turn this into a durable selection.
+        from app.agents.gabriel.sources.autonomous_enrollment import (
+            EnrollmentError, verify_and_select,
+        )
+        attempts: list[dict[str, Any]] = []
+        _tokens = [t for t in jurisdiction.lower().split() if len(t) > 2]
+        _ranked = sorted(
+            result.get("ranked") or [],
+            key=lambda e: 0 if any(
+                t in str(e.get("name") or "").lower()
+                or t in str(e.get("publisher_domain") or "").lower()
+                for t in _tokens) else 1)
+        for entry in _ranked[:5]:
+            if entry.get("adapter") != "generic_socrata" or not entry.get("resource_url"):
+                continue
+            try:
+                verified = verify_and_select(
+                    entry, jurisdiction=jurisdiction,
+                    assignment_key=f"{assignment_key or jurisdiction}:verified:"
+                                   f"{entry.get('publisher_domain')}:"
+                                   f"{str(entry.get('resource_url')).rsplit('/', 1)[-1]}",
+                )
+            except EnrollmentError as exc:
+                attempts.append({"candidate": entry.get("name"),
+                                 "status": "needs_more_evidence",
+                                 "missing": [str(exc)]})
+                continue
+            attempts.append({"candidate": entry.get("name"),
+                             "enrollment_status":
+                                 (verified.get("enrollment") or {}).get("status"),
+                             "missing": (verified.get("enrollment") or {}).get("missing")})
+            if verified.get("selection") is not None:
+                selection = verified["selection"]
+                result.update({
+                    "status": "selected",
+                    "selected_adapter": selection.get("selected_adapter"),
+                    "selected_source": selection.get("selected_candidate"),
+                    "selected_resource": selection.get("selected_resource"),
+                    "resource_digest": selection.get("resource_digest"),
+                    "selection_digest": selection.get("digest"),
+                    "selection": selection,
+                    "enrollment": verified.get("enrollment"),
+                })
+                break
+        result["autonomous_attempts"] = attempts
     return result
 
 
