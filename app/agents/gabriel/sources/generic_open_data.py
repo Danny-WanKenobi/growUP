@@ -53,12 +53,12 @@ MAX_CSV_ROWS = 5000
 _ID = ("account", "parcel_id", "parcelid", "apn", "pin", "id", "objectid", "fid", "property_id",
        "taxparcelidentificationnumber", "tax_parcel_identification_number",
        "parcelidentificationnumber", "parcel_number", "parcelnumber", "parcel_no",
-       "propertyid", "taxparcel", "folio", "reid")
-_ADDRESS = ("situs_address", "address", "street_address", "full_address", "addr",
+       "propertyid", "taxparcel", "folio", "reid", "propid", "prop_id", "geoid")
+_ADDRESS = ("situs_address", "situsconcat", "address", "street_address", "full_address", "addr",
             "property_address", "location_address")
-_CITY = ("city", "municipality", "town")
+_CITY = ("city", "municipality", "town", "situscity", "situs_city")
 _STATE = ("state", "st")
-_ZIP = ("zip_code", "zip", "zipcode", "postal_code")
+_ZIP = ("zip_code", "zip", "zipcode", "postal_code", "situszip", "situs_zip")
 _LAT = ("latitude", "lat", "y")
 _LON = ("longitude", "lon", "lng", "x")
 _USE = ("land_use", "landuse", "use_code", "property_class", "classification",
@@ -190,6 +190,29 @@ def _geometry_point(geometry: Any) -> tuple[float, float] | None:
     return None
 
 
+def _category_code_hint(row: dict, binding: dict) -> str | None:
+    """Resource-recorded appraisal-code mapping, when present.
+
+    The selection resource may carry ``category_codes`` ({field,
+    map}) recorded during publisher verification from the layer's
+    own observed code distribution. Only a code present in that
+    recorded map classifies; anything else falls through to the
+    generic observed-use classification, unchanged.
+    """
+    spec = binding.get("category_codes") if isinstance(binding, dict) else None
+    if not isinstance(spec, dict):
+        return None
+    field = str(spec.get("field") or "")
+    mapping = spec.get("map") or {}
+    if not field or not isinstance(mapping, dict) or not mapping:
+        return None
+    lowered = {str(k).lower(): v for k, v in row.items()}
+    value = lowered.get(field.lower())
+    if value in (None, ""):
+        return None
+    return mapping.get(str(value).strip().upper())
+
+
 def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
                 binding: dict) -> tuple[list[RawListing], int]:
     mapping = dict(binding.get("field_mapping") or {})
@@ -218,7 +241,8 @@ def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
             city=_pick(row, _CITY, mapping, "city") or None,
             state=_pick(row, _STATE, mapping, "state") or None,
             zip_code=_pick(row, _ZIP, mapping, "zip_code") or None,
-            category_hint=category_from_observed(row, mapping),
+            category_hint=_category_code_hint(row, binding)
+            or category_from_observed(row, mapping),
             latitude=lat, longitude=lon,
             retrieved_at=retrieved_at,
             tags={
@@ -493,22 +517,36 @@ class GenericArcGISSource(_GenericBase):
             url = str(binding["resource_url"]).rstrip("/")
             if not url.endswith("/query"):
                 url += "/query"
-            params = {
-                "where": "1=1", "outFields": "*",
-                "geometry": f"{west},{south},{east},{north}",
-                "geometryType": "esriGeometryEnvelope",
-                "inSR": "4326", "outSR": "4326", "f": "geojson",
-                "resultRecordCount": str(max(1, limit)),
-            }
-            body = self._fetch_body(url, params, timeout_seconds)
-            try:
-                payload = json.loads(body.decode("utf-8"))
-                pairs = [(dict(f.get("properties") or {}), f.get("geometry"))
-                         for f in payload.get("features", []) if isinstance(f, dict)]
-            except (ValueError, UnicodeDecodeError, AttributeError) as exc:
-                raise SourceError("generic_arcgis_invalid_response") from exc
-            listings, _ = _to_listings(pairs, source=self.name, binding=binding)
-            return _inside_strict(listings, bbox, categories, limit)
+            # Bounded paging (at most 4 pages): a layer's first
+            # page can be attribute-empty slivers, so keep paging
+            # until the limit is satisfied or the service runs out.
+            page_size = max(1, limit)
+            collected: list[RawListing] = []
+            seen_ids: set[str] = set()
+            for page in range(4):
+                params = {
+                    "where": "1=1", "outFields": "*",
+                    "geometry": f"{west},{south},{east},{north}",
+                    "geometryType": "esriGeometryEnvelope",
+                    "inSR": "4326", "outSR": "4326", "f": "geojson",
+                    "resultRecordCount": str(page_size),
+                    "resultOffset": str(page * page_size),
+                }
+                body = self._fetch_body(url, params, timeout_seconds)
+                try:
+                    payload = json.loads(body.decode("utf-8"))
+                    pairs = [(dict(f.get("properties") or {}), f.get("geometry"))
+                             for f in payload.get("features", []) if isinstance(f, dict)]
+                except (ValueError, UnicodeDecodeError, AttributeError) as exc:
+                    raise SourceError("generic_arcgis_invalid_response") from exc
+                listings, _ = _to_listings(pairs, source=self.name, binding=binding)
+                for listing in _inside_strict(listings, bbox, categories, limit):
+                    if listing.external_id not in seen_ids:
+                        seen_ids.add(listing.external_id)
+                        collected.append(listing)
+                if len(collected) >= limit or len(pairs) < page_size:
+                    break
+            return collected[:limit]
 
         return self._collect(bbox, categories, limit, timeout_seconds, _rows)
 

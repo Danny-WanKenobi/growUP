@@ -238,6 +238,30 @@ def test_generic_arcgis_polygon_uses_centroid():
     assert abs(rows[0].longitude - (-95.36)) < 1e-6
 
 
+def test_generic_arcgis_appraisal_code_mapping():
+    # Only a resource-recorded code map classifies codes; the same
+    # row without the recorded map stays generically "other".
+    def fetch(url, params, timeout):
+        return json.dumps({"features": [{
+            "properties": {"propid": "77", "situsconcat": "9 Code Ave",
+                           "propcategorycode": "F1"},
+            "geometry": {"type": "Point", "coordinates": [-95.36, 29.75]}}]}).encode()
+
+    plain = _binding(adapter="generic_arcgis", platform="arcgis",
+                     resource_url="https://data.travis.gov/arcgis/rest/services/Parcels/FeatureServer/0")
+    rows = GenericArcGISSource(fetch=fetch, binding=plain).search(
+        BBOX, ["commercial_property"], 5, 5.0)
+    assert rows == []
+
+    mapped = _binding(adapter="generic_arcgis", platform="arcgis",
+                      resource_url="https://data.travis.gov/arcgis/rest/services/Parcels/FeatureServer/0",
+                      category_codes={"field": "propCategoryCode",
+                                      "map": {"F1": "commercial_property"}})
+    rows = GenericArcGISSource(fetch=fetch, binding=mapped).search(
+        BBOX, ["commercial_property"], 5, 5.0)
+    assert len(rows) == 1 and rows[0].category_hint == "commercial_property"
+
+
 class _FakeClaimStore:
     def __init__(self):
         self.state = {}

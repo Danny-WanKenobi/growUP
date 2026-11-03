@@ -543,6 +543,49 @@ def test_effective_registry_never_enrolls_shared_esri_host():
     mod.clear_registry_cache()
 
 
+def test_arcgis_category_distribution_recorded_and_mapped():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        standard_appraisal_category, verify_arcgis_resource, verify_and_select,
+    )
+    assert standard_appraisal_category("F1") == "commercial_property"
+    assert standard_appraisal_category("F2") == "warehouse_industrial"
+    assert standard_appraisal_category("A") is None
+
+    def fetch(url, params=None):
+        if params and "outStatistics" in params:
+            return json.dumps({"features": [
+                {"attributes": {"propCategoryCode": "F1", "n": 120}},
+                {"attributes": {"propCategoryCode": "A", "n": 900}},
+            ]}).encode()
+        return _arcgis_fetch()(url, params)
+
+    layer = {
+        "name": "Parcels",
+        "editingInfo": {"lastEditDate": int(time.time() * 1000) - 86400000},
+        "fields": [{"name": "propID"}, {"name": "situsConcat"},
+                   {"name": "propCategoryCode"}],
+    }
+
+    def fetch2(url, params=None):
+        if params and "outStatistics" in params:
+            return fetch(url, params)
+        if "/query" in url:
+            return json.dumps({"type": "FeatureCollection", "features": [
+                {"properties": {"propID": "1", "county": "Tarrant"},
+                 "geometry": {"type": "Point", "coordinates": [-97.3, 32.7]}}]}).encode()
+        if "sharing/rest/content/items" in url:
+            return json.dumps({"id": "a" * 32, "owner": "tarrantcounty",
+                               "title": "Tarrant Parcels",
+                               "licenseInfo": "Public Domain",
+                               "url": "https://mapit.tarrantcounty.com/arcgis/rest/services/Tax/TCProperty/MapServer/0"}).encode()
+        return json.dumps(layer).encode()
+
+    evidence = verify_arcgis_resource(
+        _arcgis_resource(), jurisdiction="Tarrant County", fetch=fetch2)
+    assert evidence.category_distribution["field"] == "propCategoryCode"
+    assert evidence.category_distribution["values"]["F1"] == 120
+
+
 def test_non_socrata_platform_no_network():
     decision = run_autonomous_enrollment(
         _resource(platform="ckan"), jurisdiction="Seattle", store=_FakeStore(),

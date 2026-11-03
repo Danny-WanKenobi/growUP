@@ -36,6 +36,44 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 ENROLLMENT_POLICY_VERSION = "gabriel-autonomous-enrollment-1"
+
+# Published Texas appraisal category vocabulary (Comptroller/PTD
+# property category codes used by Texas appraisal districts). Only
+# real-property categories relevant to the canonical Grow Up
+# categories are mapped; residential, agricultural, personal-
+# property, and inventory codes stay unmapped on purpose. This is a
+# public code standard applied to codes *observed* in a layer's own
+# distribution during verification -- never assumed for a source
+# whose fields do not carry it, and recorded in the selection
+# resource next to the observed distribution.
+APPRAISAL_CATEGORY_MAP = {
+    "B": "commercial_property",    # multifamily residential real
+    "F": "commercial_property",    # commercial/industrial real
+    "F1": "commercial_property",   # commercial real property
+    "F2": "warehouse_industrial",  # industrial real property
+}
+
+
+def standard_appraisal_category(code: str) -> str | None:
+    """Canonical category for one observed Texas appraisal code."""
+    normalized = (code or "").strip().upper()
+    if normalized in APPRAISAL_CATEGORY_MAP:
+        return APPRAISAL_CATEGORY_MAP[normalized]
+    if normalized.startswith("F") and len(normalized) > 1:
+        return "warehouse_industrial" if normalized.startswith("F2") \
+            else "commercial_property"
+    return None
+
+
+def _category_code_field(fields: tuple[str, ...]) -> str | None:
+    for name in fields:
+        lowered = str(name).lower()
+        if lowered in ("propcategorycode", "categorycode", "catcode",
+                       "appraisalcategory", "propcatcode"):
+            return str(name)
+        if "category" in lowered and lowered.endswith("code"):
+            return str(name)
+    return None
 MAX_FRESHNESS_DAYS = 800
 REVIEW_DUE_DAYS = 180
 
@@ -71,6 +109,7 @@ class PublisherEvidence:
     item_bound: bool = False  # ArcGIS item record fetched and bound to this layer
     item_credit: str = ""  # item accessInformation (publisher-stated credit)
     item_tags: tuple[str, ...] = ()
+    category_distribution: dict = ()  # {field, values: {code: count}} observed
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -402,6 +441,31 @@ def verify_arcgis_resource(
                 if value not in (None, ""):
                     geo_values.append(str(value))
 
+    # Observed category-code distribution (one bounded statistics
+    # query, only when the layer carries a category-code field):
+    # this is what lets a later selection record an appraisal-code
+    # vocabulary mapping from the layer's own codes, not an assumption.
+    category_distribution: dict = {}
+    code_field = _category_code_field(fields)
+    if code_field:
+        try:
+            stats = json.loads(_get(query_url, {
+                "where": "1=1", "groupByFieldsForStatistics": code_field,
+                "outStatistics": json.dumps([{
+                    "statisticType": "count", "onStatisticField": code_field,
+                    "outStatisticFieldName": "n"}]),
+                "f": "json"}) or b"{}")
+            values: dict[str, int] = {}
+            for feature in (stats.get("features") or []):
+                attrs = (feature or {}).get("attributes") or {}
+                code = attrs.get(code_field)
+                if code not in (None, ""):
+                    values[str(code)] = int(attrs.get("n") or 0)
+            if values:
+                category_distribution = {"field": code_field, "values": values}
+        except Exception:
+            category_distribution = {}
+
     retrieved = datetime.now(timezone.utc).isoformat(timespec="seconds")
     body = {
         "domain": domain, "dataset_id": dataset_id, "resource_url": layer_url,
@@ -410,6 +474,7 @@ def verify_arcgis_resource(
         "license_id": license_text[:200], "license_basis": license_basis,
         "terms_digest": item_digest, "item_bound": item_bound,
         "item_credit": item_credit, "item_tags": list(item_tags),
+        "category_distribution": category_distribution,
         "freshness_days": freshness,
         "fields": list(fields), "sample_rows": sample_rows,
         "sample_geo_values": geo_values[:10],
@@ -427,6 +492,7 @@ def verify_arcgis_resource(
         retrieved_at=retrieved,
         license_basis=license_basis, terms_digest=item_digest,
         item_bound=item_bound, item_credit=item_credit, item_tags=item_tags,
+        category_distribution=category_distribution,
     )
 
 
@@ -1111,12 +1177,29 @@ def verify_and_select(
         provenance_url=resource_url,
     )
     adapter_name = "generic_arcgis" if is_arcgis else "generic_socrata"
+    resource_payload: dict[str, Any] = {
+        "resource_url": resource_url, "platform": platform,
+        "dataset_id": dataset_id, "license_id": evidence.license_id,
+        "field_mapping": {}, "fields": list(evidence.fields)}
+    # Resource-level appraisal vocabulary: only codes actually
+    # observed in this layer's distribution, mapped by the published
+    # standard. Unobserved or unmapped codes are never invented.
+    distribution = evidence.category_distribution or {}
+    if distribution.get("field") and distribution.get("values"):
+        code_map = {}
+        for code in distribution["values"]:
+            canonical = standard_appraisal_category(str(code))
+            if canonical:
+                code_map[str(code).strip().upper()] = canonical
+        if code_map:
+            resource_payload["category_codes"] = {
+                "field": distribution["field"], "map": code_map,
+                "observed": distribution["values"],
+                "standard": "Texas appraisal category codes (Comptroller/PTD)"}
     found = FoundCandidate(
         candidate=candidate, tier=1, provider="publisher_direct",
         adapter=adapter_name, evidence_ref=evidence.evidence_digest,
-        resource={"resource_url": resource_url, "platform": platform,
-                  "dataset_id": dataset_id, "license_id": evidence.license_id,
-                  "field_mapping": {}, "fields": list(evidence.fields)},
+        resource=resource_payload,
     )
     mission = SourceMission(jurisdiction=jurisdiction,
                             record_types=tuple(record_types), country="US",
