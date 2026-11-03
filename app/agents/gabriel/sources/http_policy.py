@@ -27,12 +27,24 @@ class HttpPolicyError(ValueError):
 
 
 def validate_endpoint(raw: str, *, name: str = "endpoint",
-                      resolver: Callable[..., Any] | None = None) -> str:
+                      resolver: Callable[..., Any] | None = None,
+                      allow_loopback: bool = False) -> str:
     url = (raw or "").strip()
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise HttpPolicyError(f"{name} must be a credential-free https URL")
+    if parsed.username or parsed.password or not parsed.hostname:
+        raise HttpPolicyError(f"{name} must be a credential-free URL")
     host = parsed.hostname.lower()
+    if allow_loopback and host in ("localhost", "127.0.0.1", "::1"):
+        # Narrow exception (owner-approved 2026-11-03): only for an
+        # operator-configured finder endpoint (self-hosted SearXNG).
+        # Never pass this for candidate- or publisher-derived URLs:
+        # loopback operator infrastructure is trusted by definition,
+        # everything else stays public-HTTPS-only.
+        if parsed.scheme not in ("http", "https"):
+            raise HttpPolicyError(f"{name} must be an http(s) URL")
+        return url
+    if parsed.scheme != "https":
+        raise HttpPolicyError(f"{name} must be a credential-free https URL")
     if host == "localhost" or host.endswith((".local", ".internal")):
         raise HttpPolicyError(f"{name} must not name a private/internal endpoint")
     try:

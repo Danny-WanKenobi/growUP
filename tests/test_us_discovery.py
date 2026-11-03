@@ -110,6 +110,23 @@ def test_searxng_primary_skips_government_catalogs():
     assert not any("socrata.com" in u or "arcgis.com" in u for u in calls)
 
 
+def test_searxng_primary_accepts_loopback_self_hosted_endpoint():
+    def http_get(url, params, timeout):
+        if "127.0.0.1:8888" in url:
+            return {"results": [{"title": "Denton County Parcels Lead",
+                                 "url": "https://example.org/denton"}]}
+        raise AssertionError("catalogs must not be queried")
+
+    result = discover_us_sources(
+        "Denton County", http_get=http_get, approved=True,
+        budget=DiscoveryBudget(max_requests=3),
+        env={"GABRIEL_FINDING_POLICY": "searxng_primary",
+             "GABRIEL_SEARXNG_URL": "http://127.0.0.1:8888"})
+    assert result["finding_policy"] == "searxng_primary"
+    assert result["selected_adapter"] is None
+    assert result["ranked"]
+
+
 def test_searxng_primary_without_endpoint_refuses_without_catalog_fallback():
     calls = []
 

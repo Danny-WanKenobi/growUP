@@ -32,14 +32,16 @@ FINDING_POLICY_ENV = "GABRIEL_FINDING_POLICY"
 HttpGet = Callable[..., Any]
 
 
-def _validate_endpoint(raw: str, *, name: str) -> str:
+def _validate_endpoint(raw: str, *, name: str, allow_loopback: bool = False) -> str:
     # Shared helper (app...http_policy): credential-free public HTTPS,
     # no private/internal literal or DNS-resolved endpoints, DNS
     # failure fails closed. DNS rebinding/TOCTOU is documented there.
+    # ``allow_loopback`` is passed only for the operator-configured
+    # SearXNG endpoint (self-hosted finder infrastructure).
     from app.agents.gabriel.sources.http_policy import HttpPolicyError, validate_endpoint
 
     try:
-        return validate_endpoint(raw, name=name).rstrip("/")
+        return validate_endpoint(raw, name=name, allow_loopback=allow_loopback).rstrip("/")
     except HttpPolicyError as exc:
         raise SourceSelectionError(str(exc)) from exc
 
@@ -532,7 +534,7 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
         catalog = ""  # P1 exhausted; fall through to P2/P3 below.
 
     def _searxng() -> list[FoundCandidate]:
-        url = _validate_endpoint(searxng, name=SEARXNG_URL_ENV)
+        url = _validate_endpoint(searxng, name=SEARXNG_URL_ENV, allow_loopback=True)
         payload = _get_json(f"{url}/search", {"q": query, "format": "json"}, mission, http_get,
                             evidence_sink=evidence_sink, provider="searxng")
         rows = payload.get("results", []) if isinstance(payload, dict) else []

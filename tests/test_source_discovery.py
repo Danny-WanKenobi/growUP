@@ -338,6 +338,26 @@ def test_generic_cannot_bootstrap_via_service_path():
         bootstrap_selection(source="generic_socrata", jurisdiction="Travis County")
 
 
+def test_http_policy_loopback_exception_is_operator_scoped():
+    from app.agents.gabriel.sources.http_policy import HttpPolicyError, validate_endpoint
+
+    # Operator-configured finder infrastructure may be loopback...
+    assert validate_endpoint("http://127.0.0.1:8888", name="searxng",
+                             allow_loopback=True) == "http://127.0.0.1:8888"
+    assert validate_endpoint("http://localhost:8888/search", name="searxng",
+                             allow_loopback=True).startswith("http://localhost")
+    # ...but the same URL is refused everywhere else, credentials are
+    # refused even on loopback, and private LAN hosts stay refused.
+    with pytest.raises(HttpPolicyError):
+        validate_endpoint("http://127.0.0.1:8888", name="catalog")
+    with pytest.raises(HttpPolicyError):
+        validate_endpoint("http://user:pw@127.0.0.1:8888", name="searxng",
+                          allow_loopback=True)
+    with pytest.raises(HttpPolicyError):
+        validate_endpoint("http://192.168.1.10:8888", name="searxng",
+                          allow_loopback=True)
+
+
 def test_http_policy_refuses_private_redirect_and_oversize():
     import socket
     from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
