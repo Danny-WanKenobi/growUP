@@ -99,6 +99,7 @@ _TERMS_AFFIRMATIVE = (
     "reuse", "re-use", "redistribute", "open government licence",
     "open government license", "creative commons",
     "no restrictions on use", "free for any use",
+    "for public use", "available to the public",
 )
 _TERMS_PROHIBITED = (
     "may not reproduce", "must not reproduce", "shall not reproduce",

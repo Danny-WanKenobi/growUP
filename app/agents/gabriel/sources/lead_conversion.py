@@ -106,7 +106,24 @@ def resolve_lead(lead: dict[str, Any], *, fetch: Callable[..., bytes] | None = N
     if layer_match:
         layer_url = f"https://{host}{path.rstrip('/')}"
         if layer_match.group(3) is None:
-            layer_url += "/0"
+            # Service root: ask the service which layers it has and
+            # pick the property layer by observed name (never guess
+            # an index -- layer 0 frequently does not exist).
+            body = _fetch(f"{layer_url}?f=pjson", fetch, timeout)
+            try:
+                service = json.loads(body or b"{}")
+            except ValueError as exc:
+                raise LeadConversionError("arcgis service metadata is not valid JSON") from exc
+            layers = [l for l in (service.get("layers") or []) if isinstance(l, dict)]
+            if not layers:
+                return {"outcome": "unresolved", "lead": name, "lead_url": url,
+                        "reason": "arcgis service lists no layers"}
+            chosen = next(
+                (l for l in layers if any(
+                    tok in str(l.get("name") or "").lower()
+                    for tok in ("parcel", "property", "building", "land", "appraisal"))),
+                layers[0])
+            layer_url = f"{layer_url}/{chosen.get('id')}"
         return {"outcome": "resource", "lead": name, "lead_url": url,
                 "resource": {"platform": "arcgis", "resource_url": layer_url,
                              "dataset_id": "", "publisher_domain": host,
@@ -116,6 +133,8 @@ def resolve_lead(lead: dict[str, Any], *, fetch: Callable[..., bytes] | None = N
     item_id = ""
     if "hub.arcgis.com" in host and "/datasets/" in path:
         item_id = path.rsplit("/datasets/", 1)[-1].strip("/").split("/")[0].split("-")[-1]
+    if "hub.arcgis.com" in host and "/maps/" in path:
+        item_id = path.rsplit("/maps/", 1)[-1].strip("/").split("/")[0].split("-")[-1]
     query_id = (parse_qs(parsed.query).get("id") or [""])[0]
     if query_id and _ITEM_ID.match(query_id):
         item_id = query_id

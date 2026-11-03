@@ -46,6 +46,37 @@ def test_resolve_hub_item_via_item_record():
     assert out["resource"]["publisher_name"] == "county_gis"
 
 
+def test_resolve_arcgis_service_root_picks_parcel_layer():
+    def fetch(url, params=None):
+        assert url.endswith("FeatureServer?f=pjson")
+        return json.dumps({"layers": [
+            {"id": 1, "name": "County Line"},
+            {"id": 4, "name": "Parcels"},
+            {"id": 5, "name": "Subdivisions"}]}).encode()
+
+    out = resolve_lead(
+        {"name": "CCAD Parcels",
+         "lead_url": "https://services2.arcgis.com/abc/ArcGIS/rest/services/CCAD/FeatureServer"},
+        fetch=fetch)
+    assert out["outcome"] == "resource"
+    assert out["resource"]["resource_url"].endswith("/FeatureServer/4")
+
+
+def test_resolve_hub_maps_link_via_item_record():
+    def fetch(url, params=None):
+        return json.dumps({
+            "id": "b" * 32, "owner": "ccad",
+            "url": "https://services2.arcgis.com/abc/arcgis/rest/services/CCAD/FeatureServer/4",
+        }).encode()
+
+    out = resolve_lead(
+        {"name": "CCAD Parcel Feature Set",
+         "lead_url": "https://hub.arcgis.com/maps/" + "b" * 32},
+        fetch=fetch)
+    assert out["outcome"] == "resource"
+    assert out["resource"]["resource_url"].endswith("/FeatureServer/4")
+
+
 def test_resolve_download_page_records_bulk_candidate():
     page = b'<a href="/data/parcels.zip">Parcels (zipped shapefile)</a>'
 
