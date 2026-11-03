@@ -718,7 +718,8 @@ LIFECYCLE_KINDS = {'prepared':'delivery','sent':'delivery','delivered':'delivery
 
 
 def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_event_id,
-        message_id, status, occurred_at, evidence_refs, simulated=False, label=''):
+        message_id, status, occurred_at, evidence_refs, simulated=False, label='',
+        authentication='operator_reported; provider authenticity not independently established', authentication_context=None):
     """Operator-reported evidence import, not an authenticated provider webhook."""
     from datetime import datetime, timezone
     from app.workflow import digest_payload
@@ -730,6 +731,12 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
         if not isinstance(value,str) or not value.strip() or len(value)>200:
             raise PriscillaError('explicit bounded provider/event/message correlation required')
     provider = provider.strip().casefold()
+    if authentication not in ('operator_reported; provider authenticity not independently established','configured_gateway_hmac_sha256'):
+        raise PriscillaError('unsupported authentication scope')
+    if authentication == 'configured_gateway_hmac_sha256' and not provider.startswith('gateway:'):
+        raise PriscillaError('authenticated gateway requires reserved namespace')
+    if provider.startswith('gateway:') and authentication != 'configured_gateway_hmac_sha256':
+        raise PriscillaError('gateway provider namespace requires authenticated transport')
     provider_event_id = provider_event_id.strip()
     message_id = message_id.strip()
     try:
@@ -745,7 +752,7 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
         raise PriscillaError('bounded evidence references required')
     package = str(_uuid(package_entry,'package_entry'))
     material = {'package_entry':package,'provider':provider,'provider_event_id':provider_event_id,
-        'message_id':message_id,'lifecycle_status':status,'occurred_at':occurred,'evidence_refs':refs,'simulated':simulated}
+        'message_id':message_id,'lifecycle_status':status,'occurred_at':occurred,'evidence_refs':refs,'simulated':simulated,'authentication':authentication}
     ingest_key = digest_payload({'provider':provider,'event_id':provider_event_id})
     message_key = digest_payload({'provider':provider,'message_id':message_id,'status':status,'simulated':simulated})
     # Lock in one global order. A provider event cannot be reassigned to another
@@ -759,7 +766,10 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
         if existing:
             row = dict(existing); payload = row['payload']
             if isinstance(payload,str): payload=json.loads(payload)
-            if payload.get('detail',{}).get('material_digest') != digest_payload(material):
+            expected_digests={digest_payload(material)}
+            if authentication == 'operator_reported; provider authenticity not independently established':
+                expected_digests.add(digest_payload({k:v for k,v in material.items() if k!='authentication'}))
+            if payload.get('detail',{}).get('material_digest') not in expected_digests:
                 raise PriscillaError('provider event identity conflicts with retained material')
             return {'event_id':str(row['event_id']),'replayed':True}
         cur.execute("SELECT event_id, package_entry FROM conversion_events WHERE payload->'detail'->>'message_key' = %(key)s",{'key':message_key})
@@ -771,7 +781,7 @@ def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_ev
     result = record_event_in_transaction(conn,package_entry=package,kind=LIFECYCLE_KINDS[status],
         label=('SIMULATED ' if simulated else '')+(label or 'Operator-reported '+status), simulated=simulated,
         evidence_refs=refs,detail={**material,'ingest_key':ingest_key,'message_key':message_key,
-            'material_digest':digest_payload(material),'duplicate_of':duplicate_of,'authentication':'operator_reported; provider authenticity not independently established'})
+            'material_digest':digest_payload(material),'duplicate_of':duplicate_of,'authentication':authentication,'authentication_context':authentication_context})
     return {**result,'duplicate_message_status':duplicate_of is not None}
 
 
@@ -794,7 +804,8 @@ def timeline_in_transaction(conn, *, package_entry):
             domains[domain].setdefault((detail.get('provider'),message),set()).add(status)
         events.append({'event_id':str(row['event_id']),'status':status,'simulated':domain,
             'message_id':message,'occurred_at':detail.get('occurred_at'),'recorded_at':str(row['created_at']),
-            'evidence_refs':payload.get('evidence_refs') or [],'authentication':detail.get('authentication','legacy evidence; independent authentication unknown')})
+            'evidence_refs':payload.get('evidence_refs') or [],'authentication':detail.get('authentication','legacy evidence; independent authentication unknown'),
+            'authentication_context':detail.get('authentication_context')})
     def project(messages):
         counts={status:sum(status in states for states in messages.values()) for status in LIFECYCLE_KINDS}
         delivered=counts['delivered']; replied=counts['replied']
@@ -812,8 +823,10 @@ def ingest_tracking_audited(*, principal, **inputs):
     from app.observability.policy import OperationClass
     from app.observability.transactions import run_consequential_transaction
     if not principal or not principal.strip(): raise PriscillaError('authenticated operator required')
+    if inputs.get('authentication') == 'configured_gateway_hmac_sha256' and (not principal.startswith('tracking-gateway:') or inputs.get('provider') != 'gateway:'+principal.removeprefix('tracking-gateway:')):
+        raise PriscillaError('gateway authentication requires configured ingress principal')
     event=AgentEvent(agent=AgentId.PRISCILLA,run_id=str(inputs['package_entry']),event_type='tracking.evidence_imported',
-        summary='Operator-reported campaign tracking evidence; no outbound action',
+        summary='Campaign tracking evidence; source authentication scope retained, no outbound action',
         details={'principal':principal,'status':inputs.get('status')},retention_class=RetentionClass.PERMANENT)
     return run_consequential_transaction(operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,event=event,
         mutate=lambda conn:ingest_tracking_in_transaction(conn,**inputs))

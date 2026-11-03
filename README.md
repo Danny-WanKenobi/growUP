@@ -4798,3 +4798,59 @@ at send time, full ad design and contact discovery remain future capabilities.
 Synthetic fixture contract `handoff-fixtures-3` covers the new campaign/tracking readiness boundary. Prior fixture versions remain inspectable and immutable; unfinished old contracts do not advance under a new policy. Priscilla NO-GO now exercises an explicit tracking owner-review requirement, rather than fabricating a requirement for an owner reply. Duplicate message-status aliases retain their provider event IDs and evidence but are excluded from legacy counters.
 
 Local regression for campaign/tracking: **2,571 passed, 151 skipped**, 16 warnings; final targeted permission/ingestion checks additionally exercise operator-bound approval. Deployment and live gate lifecycle acceptance are reported after the development checkpoint.
+
+## Authenticated inbound tracking and property-bound contacts
+
+`POST /integrations/tracking/{source}` implements the **Grow Up signed gateway
+contract**, not an adapter for any particular email provider. It is disabled by
+default (`TRACKING_INGRESS_ENABLED=0`). No key is provisioned, public proxy route
+opened or external gateway enrolled by this implementation. A trusted gateway
+would need to verify its own upstream provider before asserting events.
+
+`TRACKING_INGRESS_SOURCES` is a server-owned JSON mapping of lowercase source IDs
+(letters/digits/hyphens, max 40) to `secret_env`, explicit `allowed_packages` UUIDs,
+and optional boolean `allow_simulated` (default false). Wildcard package scope is
+unsupported. Key variable names must start `TRACKING_INGRESS_KEY_`; their values
+must have at least 32 characters and must be separate from all other credentials.
+Keep secrets outside Git. `.env.example` contains disabled, empty defaults only.
+
+Headers are `X-Tracking-Timestamp` (10-digit Unix seconds) and
+`X-Tracking-Signature` (lowercase SHA256 HMAC hex). Sign the exact bytes:
+`source + "." + timestamp + "." + raw_body`, using the separately configured key.
+Timestamp skew is bounded to 300 seconds. Retries can use a fresh timestamp and
+signature over identical event material; durable provider-event/message replay
+checks still prevent duplicate business effects. Body size is bounded to 32 KiB,
+signature comparison is constant-time, and JSON rejects duplicate/unknown fields.
+The strict envelope contains package_entry, provider_event_id, message_id, status,
+occurred_at (timezone-aware), evidence_refs, and optional boolean simulated.
+No caller-supplied provider, principal or authentication assertion is accepted.
+The server fixes them to `gateway:<source>` / `tracking-gateway:<source>` and
+retains `configured_gateway_hmac_sha256` as transport authentication. This does
+not prove ownership, factual truth, mailbox control, delivery or interest beyond
+the reported observation. Simulated events stay separately scoped.
+
+All successful imports use Priscilla's existing atomic event/audit transaction
+and append-only store. Wondrue's operator imports cannot claim the reserved
+`gateway:` namespace. Legacy operator-event replay digests remain accepted;
+historical rows are not reclassified or rewritten. Error responses do not echo
+keys, signatures or raw event bodies. Storage failures remain retryable 503s.
+
+Uriel's `owner_contact.value` now requires a structured object with name, one
+plain ASCII email address, property_id, and relationship (`owner` or
+`authorized_representative`). Its property UUID must match the canonical dossier;
+HTTP(S) evidence references cannot contain embedded credentials. Header/control
+injection, multiple recipients and unsupported claims such as `verified: true`
+refuse draft eligibility. Unbound legacy contact strings require evidence review
+for new preparation; old campaign records remain immutable.
+
+`contact_assessment` records draft eligibility, source references and unresolved
+ownership/mailbox/channel checks. A structurally valid contact is explicitly
+`provided_unverified`, with ownership_verified=false and channel_authorized=false.
+These checks perform no DNS, source retrieval, email or provider call. Independent
+authentication and applicable sending authorization remain necessary before any
+future delivery. Synthetic fixture contract v4 supplies clearly fictional
+property-bound contact inputs; prior contracts remain inspectable/read-only.
+
+Focused checks: `python -m pytest tests/test_tracking_ingress.py tests/test_campaign_tracking.py tests/test_dossier_coordinator.py -q`.
+
+The event retains the verified source/timestamp and raw-body SHA256 as intake provenance, without storing the signing key or echoing signatures. Authentication context is not part of the business replay identity, so a fresh signed retry cannot duplicate an event. Local full regression passed **2,587 tests** (151 skipped); final focused ingress/contact/replay checks include the subsequent source-binding and key-separation checks.

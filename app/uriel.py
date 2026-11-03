@@ -502,6 +502,8 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
                     'evidence':refs['michael'],'scope':'Conditional deterministic estimate; not actual performance or guaranteed returns.'})
     supplied = (dossier.get('specialist_inputs') or {}).get('uriel') or {}
     contact = supplied.get('owner_contact') or {}
+    from app.contact_evidence import assess_contact
+    contact_assessment = assess_contact(contact,property_id=payload['property_id'])
     policy = dossier.get('outreach_policy') or {}
     if not isinstance(policy,dict) or ('suppressed' in policy and not isinstance(policy['suppressed'],bool)):
         raise UrielError('invalid outreach suppression policy')
@@ -511,13 +513,14 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     introduction = f'Grow Up: preliminary indoor-growing opportunity for {address}.\nWe would welcome a discussion of this passive Kratky concept.\n{financial_text}\n{limitations}'
     campaign = {'version':'uriel-campaign-2','property_id':str(payload['property_id']),
         'source_dossier_digest':payload['digest'],'status':'suppressed' if policy.get('suppressed') else 'draft_not_sent',
-        'source_reports':refs,'claims':claims,'to':contact.get('value') if contact.get('evidence_refs') else None,
+        'source_reports':refs,'claims':claims,'to':contact_assessment['email'] if contact_assessment['eligible_for_draft'] else None,
+        'contact_assessment':contact_assessment,
         'contact_evidence_refs':list(contact.get('evidence_refs') or []),
         'drafts':{'introduction_email':{'subject':f'Preliminary growing concept: {address}','body':introduction},
             'follow_up_email':{'subject':f'Possible follow-up: {address}','body':introduction+'\nDraft follow-up only; send history must be checked before any contact.'},
             'letter':introduction,'flyer':introduction,'business_card':{'organization':'Grow Up','description':'Preliminary property-to-agriculture feasibility','contact':None}},
         'execution':{'enabled':False,'sent':False,'provider_calls':0},
-        'missing':([] if contact.get('evidence_refs') else ['owner_contact'])+([] if claims else ['complete_financial_assessment']),
+        'missing':([] if contact_assessment['eligible_for_draft'] else ['owner_contact_evidence'])+([] if claims else ['complete_financial_assessment']),
         'limitations':[limitations,'Draft creation does not establish channel permission or recipient identity.']}
     campaign['campaign_id'] = 'campaign:'+digest_payload(campaign)
     return campaign
