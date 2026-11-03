@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from app.config import get_database_config
+from app.config import DatabaseConfig, get_database_config
 from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.properties_db import get_connection
 
@@ -30,11 +30,14 @@ def _pending_migrations(applied: set[str]) -> list[Path]:
     return [p for p in files if p.name not in applied]
 
 
-def run_migrations() -> list[str]:
+def run_migrations(config: DatabaseConfig | None = None) -> list[str]:
     """Apply pending migrations. Returns the filenames that were applied."""
-    get_database_config()  # resolved inside get_connection; kept explicit for clarity
+    # Preserve the default operational caller; explicit configurations must
+    # never fall back to DATABASE_* (the isolated demo owns a different role).
+    if config is None:
+        get_database_config()
     try:
-        conn = get_connection()
+        conn = get_connection() if config is None else get_connection(config)
     except DatabaseNotConfiguredError:
         raise
     except DatabaseUnavailableError:

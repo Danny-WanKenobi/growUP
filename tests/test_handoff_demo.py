@@ -183,3 +183,52 @@ def test_postgresql_suite_orchestration_is_bounded(monkeypatch):
     result=demo.run_suite("demo-handoff-suite")
     assert result["result"]=="PASS" and result["scenarios"]==15
     assert sum(r["verified_receipts"] for r in result["results"])==195
+
+
+def test_initializer_uses_explicit_demo_migration_configuration(monkeypatch):
+    from app.config import DatabaseConfig
+    from app import migrate, properties_db
+    cfg=DatabaseConfig(host="127.0.0.1",port=5432,name=DATABASE,user=ROLE,password="fictional-test-only")
+    calls=[]
+    class MigrationCursor:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def execute(self,*args): pass
+        def fetchall(self): return []
+    class MigrationConnection:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def cursor(self): return MigrationCursor()
+        def commit(self): pass
+        def close(self): pass
+    def explicit_connection(config=None):
+        assert config is cfg
+        calls.append(config)
+        return MigrationConnection()
+    monkeypatch.setattr(demo,"configuration",lambda:(cfg,KEY))
+    monkeypatch.setattr(demo,"assert_database",lambda conn:None)
+    monkeypatch.setattr(properties_db,"get_connection",explicit_connection)
+    monkeypatch.setattr(migrate,"get_connection",explicit_connection)
+    monkeypatch.setattr(migrate,"get_database_config",lambda:pytest.fail("operational configuration fallback"))
+    monkeypatch.setattr(migrate,"_pending_migrations",lambda applied:[])
+    assert demo.initialize()["applied"]==[]
+    assert len(calls)==2
+
+
+def test_setup_failure_diagnostics_redact_before_truncation(monkeypatch,tmp_path,capsys):
+    import importlib.util
+    import subprocess
+    spec=importlib.util.spec_from_file_location("demo_setup",Path("deployment/setup-handoff-demo.py"))
+    setup=importlib.util.module_from_spec(spec); spec.loader.exec_module(setup)
+    env=tmp_path/"demo.env"; env.write_text("test-only",encoding="utf-8")
+    monkeypatch.setattr(setup,"ENV",env)
+    password="fictional-password-to-redact-0123456789"
+    signing="fictional-signing-key-to-redact-9876543210"
+    monkeypatch.setattr(setup,"read_private",lambda:{"HANDOFF_DEMO_DATABASE_PASSWORD":password,"HANDOFF_DEMO_HMAC_KEY":signing})
+    def fail(*args,**kwargs):
+        raise subprocess.CalledProcessError(1,["systemd-run"],output=password+"x"*5980+signing,stderr="synthetic failure")
+    monkeypatch.setattr(setup.subprocess,"run",fail)
+    with pytest.raises(subprocess.CalledProcessError): setup.command(["systemd-run"])
+    output=capsys.readouterr().out
+    assert password not in output and signing not in output
+    assert "Failed setup component" in output and "[REDACTED]" in output

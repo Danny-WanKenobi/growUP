@@ -64,8 +64,10 @@ keeps generated secrets in root-owned mode-0600
 `/var/www/growup/shared/handoff-demo.env`, initializes the **demo database only**
 with the existing migrations, and adds a service environment-file drop-in.
 It preserves existing credentials and refuses role/ownership/configuration
-conflicts. No operational schema migration is added. Enabling the drop-in restarts
-`growup.service` and checks readiness; no scenarios automatically launch.
+conflicts. Setup failure diagnostics redact the dedicated password and signing
+key. The migration runner now accepts an explicit connection configuration; demo
+initialization never falls back to the operational environment. No operational schema migration is added. Enabling the drop-in restarts
+`growup.service` and checks readiness; no scenarios automatically launch unless `--prove` is supplied.
 
 After deployment, the owner can provision the demo and run the complete bounded
 PostgreSQL proof in one Ubuntu block:
@@ -92,6 +94,12 @@ echo "SYNTHETIC POSTGRESQL PROOF COMPLETE: $proof_key"
 echo "No discovery, provider spending, operational property writes or external execution."
 BASH
 ```
+
+For a single-console setup and proof, add **`--prove`** to the setup command.
+It runs all 15 bounded cases, validates the synthetic PASS response, and archives
+a sanitized mode-0600 JSON proof owned by `ubuntu` under
+`/home/ubuntu/growup-handoff-proof-*.json`. It does not disclose credentials.
+Existing partial setup state is preserved; do not reset it after an init failure.
 
 **First dedicated PostgreSQL execution and browser visual acceptance are pending**
 until the owner performs that checkpoint. Local success does not claim the demo
@@ -145,6 +153,13 @@ with five PostgreSQL-gated skips before the final suite-orchestration check was
 added. Python syntax, extracted viewer JavaScript syntax and `git diff --check`
 passed. No database setup, operational migration, deployment or provider call
 was performed during implementation.
+
+Initialization correction: **2,546 passed, 149 skipped, 16 warnings** in the
+Windows offline suite. Added a regression exercising the actual migration-runner
+interface with explicit demo configuration and no operational fallback, plus
+credential-redaction checks for setup failures. The first owner setup stopped
+before successful schema initialization; preserve its credentials and rerun the
+corrected setup rather than resetting the demo database.
 
 ## Downstream agent foundations, version one (November 3, 2026)
 

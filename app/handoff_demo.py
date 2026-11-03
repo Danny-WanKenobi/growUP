@@ -317,7 +317,7 @@ def initialize():
     with get_connection(cfg) as conn:
         assert_database(conn)
     # Explicit init only; never automatically run during requests.
-    return {"database":DATABASE,"role":ROLE,"applied":run_migrations(cfg),"synthetic":True}
+    return {"database":DATABASE,"role":ROLE,"applied":run_migrations(config=cfg),"synthetic":True}
 
 
 def run_bounded_scenario(run_key, fail_at=None):

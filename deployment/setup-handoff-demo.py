@@ -5,6 +5,8 @@ Run from the reviewed, deployed release with --apply. Generates secrets into a
 root-only dedicated env file; never prints them. Existing credentials persist.
 """
 import argparse
+import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import secrets
@@ -22,7 +24,21 @@ DROPIN_TEXT = "[Service]\nEnvironmentFile=/var/www/growup/shared/handoff-demo.en
 
 
 def command(args, **kwargs):
-    return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout.strip()
+    try:
+        return subprocess.run(args, check=True, text=True, capture_output=True, **kwargs).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        details = (exc.stdout or "")+"\n"+(exc.stderr or "")
+        if ENV.exists():
+            try:
+                values=read_private()
+                for name in ("HANDOFF_DEMO_DATABASE_PASSWORD","HANDOFF_DEMO_HMAC_KEY"):
+                    secret=values.get(name)
+                    if secret: details=details.replace(secret,"[REDACTED]")
+            except Exception:
+                details="Diagnostic details withheld because private configuration could not be safely read."
+        print("Failed setup component:",Path(args[0]).name,"exit",exc.returncode,flush=True)
+        print(details[-6000:],flush=True)
+        raise
 
 
 def sql(text):
@@ -58,11 +74,12 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release",required=True)
     parser.add_argument("--apply",action="store_true")
+    parser.add_argument("--prove",action="store_true",help="run and archive all 15 synthetic scenarios after setup")
     args=parser.parse_args()
     release=Path(args.release).resolve(strict=True)
     if release.parent!=Path("/var/www/growup/releases") or not (release/"app/handoff_demo.py").is_file():
         raise RuntimeError("select a reviewed Grow Up development release containing the demo implementation")
-    print("Target: isolated",DB,"as",ROLE,"— operational databases and provider settings unchanged.")
+    print("Target: isolated",DB,"as",ROLE,"— operational databases and provider settings unchanged.",flush=True)
     if not args.apply:
         print("Preview only. --apply provisions the role/database/env, initializes DEMO schema and restarts growup.service.")
         return
@@ -130,7 +147,26 @@ def main():
             command(["systemctl","daemon-reload"])
             command(["systemctl","restart","growup.service"])
         raise
-    print("DEMO DATABASE READY. Secrets retained in root-only handoff-demo.env; no fixture scenarios launched.")
+    print("DEMO DATABASE READY. Secrets retained in root-only handoff-demo.env.",flush=True)
+    if args.prove:
+        prefix="demo-handoff-owner-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output=command(["systemd-run","--wait","--pipe","--collect","--quiet","-p","User=growup","-p","Group=growup",
+            "-p","WorkingDirectory="+str(release),"-p","EnvironmentFile="+str(ENV),
+            "/usr/bin/env","PYTHONDONTWRITEBYTECODE=1","OBS_ENABLED=0",
+            str(release/".venv/bin/python"),"-B","-m","app.handoff_demo","suite","--run-key",prefix])
+        result=json.loads(output)
+        if result.get("result")!="PASS" or result.get("scenarios")!=15 or result.get("synthetic") is not True:
+            raise RuntimeError("PostgreSQL proof did not return the expected synthetic PASS")
+        fd,path=tempfile.mkstemp(prefix="growup-handoff-proof-",suffix=".json",dir="/home/ubuntu")
+        import pwd
+        owner=pwd.getpwnam("ubuntu")
+        os.fchmod(fd,0o600); os.fchown(fd,owner.pw_uid,owner.pw_gid)
+        with os.fdopen(fd,"w",encoding="utf-8") as handle:
+            handle.write(json.dumps(result,indent=2)+"\n")
+        print(output,flush=True)
+        print("Sanitized proof saved:",path,flush=True)
+    else:
+        print("No fixture scenarios launched; use --prove for the bounded PostgreSQL proof.",flush=True)
     print("Open https://securecodeusa.local:8443/wondrue/handoff-demo using the existing Wondrue operator key.")
 
 
