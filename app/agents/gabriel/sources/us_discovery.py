@@ -127,6 +127,7 @@ def discover_us_sources(
             "adapter": r.get("adapter"),
             "resource_url": (r.get("resource") or {}).get("resource_url"),
             "dataset_id": (r.get("resource") or {}).get("dataset_id"),
+            "lead_url": r.get("evidence_ref"),
         }
         for r in decision.get("ranked") or []
     ]

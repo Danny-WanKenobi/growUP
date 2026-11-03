@@ -312,6 +312,7 @@ def discover_sources_anywhere(
     jurisdiction: str, category: str, *, http_get=None, assignment_key=None,
     durable_store=None, approved: bool = False, budget=None, env=None,
     auto_enroll: bool = False, enrollment_store=None,
+    auto_convert: bool = False,
 ) -> dict[str, Any]:
     """Nationwide path: any US jurisdiction, zero preliminary research.
 
@@ -415,6 +416,30 @@ def discover_sources_anywhere(
                 })
                 break
         result["autonomous_attempts"] = attempts
+    if auto_convert and result.get("status") != "selected":
+        # Lead-to-source conversion: search leads (e.g. SearXNG
+        # results) are resolved to concrete dataset resources and
+        # run through the same publisher-direct verification. Only
+        # a fully verified resource becomes a durable selection.
+        from app.agents.gabriel.sources.lead_conversion import convert_leads
+
+        converted = convert_leads(
+            result.get("ranked") or [], jurisdiction=jurisdiction,
+            assignment_key=str(assignment_key or jurisdiction),
+            directory_urls=_directory_urls)
+        result["lead_attempts"] = converted["attempts"]
+        if converted.get("selection") is not None:
+            selection = converted["selection"]
+            result.update({
+                "status": "selected",
+                "selected_adapter": selection.get("selected_adapter"),
+                "selected_source": selection.get("selected_candidate"),
+                "selected_resource": selection.get("selected_resource"),
+                "resource_digest": selection.get("resource_digest"),
+                "selection_digest": selection.get("digest"),
+                "selection": selection,
+                "enrollment": converted.get("enrollment"),
+            })
     return result
 
 
