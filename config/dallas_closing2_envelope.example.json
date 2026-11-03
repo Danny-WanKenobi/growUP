@@ -1,0 +1,62 @@
+{
+  "envelope": "dallas-closing-2",
+  "description": "Bounded Dallas closing burst v2 (owner-approved 2026-11-03): deeper candidate limit (25) so already-created accounts are skipped as duplicates and new accounts surface; creation still capped at 2 per unit / 6 total. Fresh scope because closing-1 units spent their attempts returning duplicates.",
+  "policy": "pilot",
+  "units": [
+    {
+      "id": "DFW-DAL-001-H",
+      "county": "dallas county",
+      "category": "high_rise",
+      "bbox": [
+        32.77,
+        -96.81,
+        32.79,
+        -96.785
+      ],
+      "source": "dcad_bulk"
+    },
+    {
+      "id": "DFW-DAL-001-C",
+      "county": "dallas county",
+      "category": "commercial_property",
+      "bbox": [
+        32.77,
+        -96.81,
+        32.79,
+        -96.785
+      ],
+      "source": "dcad_bulk"
+    },
+    {
+      "id": "DFW-DAL-001-W",
+      "county": "dallas county",
+      "category": "warehouse_industrial",
+      "bbox": [
+        32.77,
+        -96.81,
+        32.79,
+        -96.785
+      ],
+      "source": "dcad_bulk"
+    }
+  ],
+  "max_passes": 4,
+  "max_duration_seconds": 1800,
+  "max_created_total": 6,
+  "max_created_per_unit": 2,
+  "max_discovery_attempts_per_unit": 1,
+  "pass_limit": 25,
+  "pass_timeout_seconds": 12.0,
+  "max_evaluations_per_pass": 6,
+  "evaluation_attempt_limit": 1,
+  "evaluation_timeout_seconds": 12.0,
+  "max_overpass_requests": 1,
+  "max_census_requests": 6,
+  "census_attempt_limit": 1,
+  "max_consecutive_failures": 3,
+  "pacing_seconds": 5.0,
+  "backoff_cap_seconds": 60.0,
+  "claim_lease_seconds": 900.0,
+  "meta_calls": 0,
+  "outreach": "disabled"
+}
