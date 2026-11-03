@@ -429,6 +429,94 @@ def test_verify_and_select_arcgis_enrolls_and_selects():
     assert out["selection"]["selected_adapter"] == "generic_arcgis"
 
 
+def test_item_scoped_authority_enrolls_shared_host_item():
+    decision = decide_enrollment(
+        _evidence(domain="services2.arcgis.com", publisher_name="CCAD_Maps",
+                  attribution="CCAD Parcel Feature Set",
+                  dataset_name="CCAD Parcel Feature Set",
+                  item_bound=True, sample_geo_values=()),
+        jurisdiction="Collin County",
+        evidence_directory={"identity_matched": True,
+                            "identity_name": "Collin Central Appraisal District",
+                            "identity_acronym": "CCAD",
+                            "identity_domain": "www.collincad.org",
+                            "identity_digest": "d"})
+    assert decision["status"] == "enrolled"
+    assert decision["authority_scope"] == "item"
+    assert decision["criteria"]["item_scoped_authority"] is True
+
+
+def test_item_scoped_authority_requires_identity_binding():
+    decision = decide_enrollment(
+        _evidence(domain="services2.arcgis.com", item_bound=True,
+                  sample_geo_values=()),
+        jurisdiction="Collin County")
+    assert decision["status"] == "needs_more_evidence"
+    assert "publisher_authority_basis" in decision["missing"]
+
+
+def test_directory_identity_binds_acronym_via_district_site():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        verify_directory_identity,
+    )
+    index = b'<a href="collin.php">043 Collin</a>'
+    county = (b"Appraisal District Last Updated: 07/15/2026 Chief Appraiser: X "
+              b"Website: www.collincad.org Phone: 469-742-9200")
+    site = (b"<title>Collin Central Appraisal District</title>"
+            b"<p>Welcome to CCAD. The Collin Central Appraisal District "
+            b"appraises property in Collin County.</p>")
+
+    def fetch(url, params=None):
+        if url.endswith("collin.php"):
+            return county
+        if "collincad.org" in url:
+            return site
+        return index
+
+    ev = verify_directory_identity(
+        {"CCAD"}, jurisdiction="Collin County",
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",),
+        fetch=fetch)
+    assert ev["identity_matched"] is True
+    assert ev["identity_name"] == "Collin Central Appraisal District"
+    assert ev["identity_acronym"] == "CCAD"
+
+
+def test_directory_identity_rejects_unstated_acronym():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        verify_directory_identity,
+    )
+
+    def fetch(url, params=None):
+        if url.endswith("collin.php"):
+            return b"Appraisal District Website: www.collincad.org"
+        if "collincad.org" in url:
+            return b"<p>Collin Central Appraisal District home page.</p>"
+        return b'<a href="collin.php">043 Collin</a>'
+
+    ev = verify_directory_identity(
+        {"CCAD"}, jurisdiction="Collin County",
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",),
+        fetch=fetch)
+    # Initials match but the acronym itself is never stated on the
+    # district's own site: not bound.
+    assert ev["identity_matched"] is False
+
+
+def test_effective_registry_never_enrolls_shared_esri_host():
+    from app.agents.gabriel.sources import autonomous_enrollment as mod
+    decision = decide_enrollment(
+        _evidence(domain="services2.arcgis.com", item_bound=True,
+                  sample_geo_values=()),
+        jurisdiction="Seattle",
+        evidence_directory={"identity_matched": True})
+    assert decision["status"] == "enrolled"
+    mod.clear_registry_cache()
+    registry = effective_registry(store=_ListStore([decision]))
+    assert registry.source_class_of("https://services2.arcgis.com/x") is SourceClass.UNVETTED
+    mod.clear_registry_cache()
+
+
 def test_non_socrata_platform_no_network():
     decision = run_autonomous_enrollment(
         _resource(platform="ckan"), jurisdiction="Seattle", store=_FakeStore(),

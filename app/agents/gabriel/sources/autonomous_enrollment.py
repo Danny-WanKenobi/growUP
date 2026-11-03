@@ -68,6 +68,7 @@ class PublisherEvidence:
     retrieved_at: str = ""
     license_basis: str = ""  # dataset_metadata | data_json | portal_terms | ""
     terms_digest: str = ""
+    item_bound: bool = False  # ArcGIS item record fetched and bound to this layer
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -346,6 +347,7 @@ def verify_arcgis_resource(
     attribution = publisher_name
     dataset_name = str(layer.get("name") or "")
     item_digest = ""
+    item_bound = False
     if dataset_id and re.fullmatch(r"[0-9a-fA-F]{32}", dataset_id):
         try:
             item = json.loads(_get(
@@ -356,6 +358,10 @@ def verify_arcgis_resource(
         if isinstance(item, dict) and item.get("id"):
             item_digest = hashlib.sha256(
                 json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
+            item_url = str(item.get("url") or "").rstrip("/")
+            layer_service = layer_url.rsplit("/", 1)[0] if layer_url.rsplit("/", 1)[-1].isdigit() else layer_url
+            item_bound = bool(item_url) and (
+                item_url == layer_url or item_url == layer_service)
             publisher_name = str(item.get("owner") or publisher_name)
             attribution = str(item.get("title") or dataset_name or attribution)
             dataset_name = str(item.get("title") or dataset_name)
@@ -396,7 +402,8 @@ def verify_arcgis_resource(
         "layer_url": layer_url, "retrieved_at": retrieved,
         "dataset_name": dataset_name, "attribution": attribution,
         "license_id": license_text[:200], "license_basis": license_basis,
-        "terms_digest": item_digest, "freshness_days": freshness,
+        "terms_digest": item_digest, "item_bound": item_bound,
+        "freshness_days": freshness,
         "fields": list(fields), "sample_rows": sample_rows,
         "sample_geo_values": geo_values[:10],
     }
@@ -412,6 +419,7 @@ def verify_arcgis_resource(
         ).hexdigest(),
         retrieved_at=retrieved,
         license_basis=license_basis, terms_digest=item_digest,
+        item_bound=item_bound,
     )
 
 
@@ -530,6 +538,113 @@ def verify_directory_corroboration(
             "matched_domain": target, "matched_text": "", "digest": ""}
 
 
+def _acronyms_of(*texts: str) -> set[str]:
+    out: set[str] = set()
+    for text in texts:
+        for token in re.split(r"[^A-Za-z]+", text or ""):
+            if len(token) >= 3 and token.isupper():
+                out.add(token)
+    return out
+
+
+def verify_directory_identity(
+    acronyms: set[str],
+    *,
+    jurisdiction: str,
+    directory_urls: tuple[str, ...] | list[str],
+    fetch: Callable[..., bytes] | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Bind an acronym-named publisher to a directory-named district.
+
+    Chain (every hop fetched under ``http_policy``, digest-bound):
+    a ``.gov`` directory's per-jurisdiction page names its appraisal
+    district's website in the district section; that publisher site
+    itself states its full district name (containing the
+    jurisdiction token) and uses the acronym. Identity is matched
+    only when the acronym equals the initials of the site's own
+    stated district name *and* the acronym appears on that site.
+    An acronym alone, or a directory listing alone, proves nothing.
+    """
+    from app.agents.gabriel.sources.http_policy import (
+        HttpPolicyError, fetch_bytes, validate_endpoint,
+    )
+    empty = {"identity_matched": False, "identity_name": "",
+             "identity_acronym": "", "identity_domain": "",
+             "identity_digest": ""}
+    if not acronyms:
+        return empty
+    tokens = set(_jurisdiction_tokens(jurisdiction))
+
+    def _get(url: str) -> bytes | None:
+        try:
+            if fetch is not None:
+                return fetch(url, {})
+            return fetch_bytes(url, timeout=timeout, max_bytes=1_000_000,
+                               name="publisher identity")
+        except Exception:
+            return None
+
+    for raw_url in directory_urls or []:
+        raw_url = str(raw_url or "").strip()
+        if not raw_url:
+            continue
+        try:
+            validate_endpoint(raw_url, name="publisher directory")
+        except HttpPolicyError:
+            continue
+        host = (urlparse(raw_url).hostname or "").lower()
+        if not host.endswith(".gov"):
+            continue
+        body = _get(raw_url)
+        if body is None:
+            continue
+        text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body)
+        anchors = re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', text)
+        sub_url = ""
+        for href, label in anchors:
+            label_tokens = {t for t in re.split(r"[^a-z]+", label.lower()) if t}
+            if not (tokens & label_tokens):
+                continue
+            parsed = urlparse(href if "://" in href else raw_url.rsplit("/", 1)[0] + "/" + href)
+            if (parsed.hostname or "").lower() == host:
+                sub_url = parsed.geturl()
+                break
+        if not sub_url:
+            continue
+        sub = _get(sub_url)
+        if sub is None:
+            continue
+        sub_text = sub.decode("utf-8", "replace") if isinstance(sub, (bytes, bytearray)) else str(sub)
+        plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sub_text))
+        segment_match = re.search(r"Appraisal District(.{0,600})", plain)
+        segment = segment_match.group(1) if segment_match else plain[:1200]
+        domain_match = re.search(r"(www\.[a-z0-9.-]+\.(?:org|com|net))", segment)
+        if not domain_match:
+            continue
+        publisher_domain = domain_match.group(1).lower()
+        site = _get(f"https://{publisher_domain}/")
+        if site is None:
+            continue
+        site_text = site.decode("utf-8", "replace") if isinstance(site, (bytes, bytearray)) else str(site)
+        site_plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", site_text))
+        for name_match in re.finditer(
+                r"([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+){1,5} Appraisal District)", site_plain):
+            full_name = name_match.group(1)
+            if not any(tok in full_name.lower() for tok in tokens):
+                continue
+            initials = "".join(word[0] for word in full_name.split()).upper()
+            for acronym in acronyms:
+                if acronym == initials and re.search(
+                        rf"\b{re.escape(acronym)}\b", site_plain):
+                    return {"identity_matched": True,
+                            "identity_name": full_name,
+                            "identity_acronym": acronym,
+                            "identity_domain": publisher_domain,
+                            "identity_digest": hashlib.sha256(bytes(site)).hexdigest()}
+    return empty
+
+
 def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
                       evidence_directory: dict[str, Any] | None = None) -> dict[str, Any]:
     """Deterministic enrollment decision over observed evidence only.
@@ -557,11 +672,15 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
     corroborated = bool(
         (evidence_directory or {}).get("matched")
         and (evidence_directory or {}).get("matched_domain") == evidence.domain)
+    identity_bound = bool((evidence_directory or {}).get("identity_matched"))
+    shared_host = evidence.domain == "arcgis.com" or evidence.domain.endswith(".arcgis.com")
+    item_scoped = bool(evidence.item_bound and shared_host and identity_bound)
     criteria = {
         "government_domain": evidence.domain.endswith(".gov"),
         "directory_corroborated_official_domain": corroborated,
+        "item_scoped_authority": item_scoped,
         "publisher_identity_matches_jurisdiction": bool(
-            domain_jurisdiction or named_jurisdiction),
+            domain_jurisdiction or named_jurisdiction or identity_bound),
         "license_known_clear": bool(evidence.license_clear),
         "freshness_known_and_recent": bool(
             evidence.freshness_days is not None
@@ -573,9 +692,11 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
     }
     missing = [name for name, ok in criteria.items() if not ok
                and name not in ("government_domain",
-                                "directory_corroborated_official_domain")]
+                                "directory_corroborated_official_domain",
+                                "item_scoped_authority")]
     if not (criteria["government_domain"]
-            or criteria["directory_corroborated_official_domain"]):
+            or criteria["directory_corroborated_official_domain"]
+            or criteria["item_scoped_authority"]):
         missing.append("publisher_authority_basis")
     now = datetime.now(timezone.utc)
     decision: dict[str, Any] = {
@@ -589,6 +710,7 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
         "criteria": criteria,
         "missing": missing,
         "license_basis": evidence.license_basis,
+        "authority_scope": "item" if item_scoped else "domain",
         "directory_evidence": dict(evidence_directory or {}),
         "evidence_digest": evidence.evidence_digest,
         "retrieved_at": evidence.retrieved_at,
@@ -764,11 +886,18 @@ def _directory_evidence_for(evidence: PublisherEvidence, *, jurisdiction: str,
                             directory_urls, fetch) -> dict[str, Any]:
     if evidence.domain.endswith(".gov") or not directory_urls:
         return {}
-    return verify_directory_corroboration(
+    evidence_out = verify_directory_corroboration(
         evidence.domain,
         publisher_name=evidence.publisher_name or evidence.attribution,
         jurisdiction=jurisdiction, directory_urls=tuple(directory_urls),
         fetch=fetch)
+    acronyms = _acronyms_of(evidence.publisher_name, evidence.attribution,
+                            evidence.dataset_name)
+    if acronyms:
+        evidence_out.update(verify_directory_identity(
+            acronyms, jurisdiction=jurisdiction,
+            directory_urls=tuple(directory_urls), fetch=fetch))
+    return evidence_out
 
 
 def run_autonomous_enrollment(
@@ -1053,6 +1182,11 @@ def effective_registry(*, store: EnrollmentStore | None = None):
             continue
         domain = str(decision.get("domain") or "").strip().lower()
         if not domain or domain in entries:
+            continue
+        if domain == "arcgis.com" or domain.endswith(".arcgis.com"):
+            # Item-scoped authority never becomes a domain entry:
+            # enrolling a shared Esri host would authorize every
+            # tenant on it. Item scope binds at selection time only.
             continue
         entries[domain] = RegistryEntry(
             hostname=domain,
