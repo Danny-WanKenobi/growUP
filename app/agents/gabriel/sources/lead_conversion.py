@@ -43,6 +43,31 @@ class LeadConversionError(ValueError):
     """A lead could not be resolved under the bounded policy."""
 
 
+def _pick_property_layer(service_url: str, *, fetch: Callable[..., bytes] | None,
+                         timeout: float) -> str | None:
+    """Service root -> property layer URL, by observed layer name.
+
+    Layer 0 frequently does not exist, so the index is never guessed:
+    the service itself lists its layers and the first whose name
+    names a property subject (parcel/property/building/land/
+    appraisal) wins, else the first layer.
+    """
+    body = _fetch(f"{service_url}?f=pjson", fetch, timeout)
+    try:
+        service = json.loads(body or b"{}")
+    except ValueError as exc:
+        raise LeadConversionError("arcgis service metadata is not valid JSON") from exc
+    layers = [l for l in (service.get("layers") or []) if isinstance(l, dict)]
+    if not layers:
+        return None
+    chosen = next(
+        (l for l in layers if any(
+            tok in str(l.get("name") or "").lower()
+            for tok in ("parcel", "property", "building", "land", "appraisal"))),
+        layers[0])
+    return f"{service_url}/{chosen.get('id')}"
+
+
 def _fetch(url: str, fetch: Callable[..., bytes] | None, timeout: float) -> bytes:
     from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
     if fetch is not None:
@@ -106,24 +131,10 @@ def resolve_lead(lead: dict[str, Any], *, fetch: Callable[..., bytes] | None = N
     if layer_match:
         layer_url = f"https://{host}{path.rstrip('/')}"
         if layer_match.group(3) is None:
-            # Service root: ask the service which layers it has and
-            # pick the property layer by observed name (never guess
-            # an index -- layer 0 frequently does not exist).
-            body = _fetch(f"{layer_url}?f=pjson", fetch, timeout)
-            try:
-                service = json.loads(body or b"{}")
-            except ValueError as exc:
-                raise LeadConversionError("arcgis service metadata is not valid JSON") from exc
-            layers = [l for l in (service.get("layers") or []) if isinstance(l, dict)]
-            if not layers:
+            layer_url = _pick_property_layer(layer_url, fetch=fetch, timeout=timeout)
+            if layer_url is None:
                 return {"outcome": "unresolved", "lead": name, "lead_url": url,
                         "reason": "arcgis service lists no layers"}
-            chosen = next(
-                (l for l in layers if any(
-                    tok in str(l.get("name") or "").lower()
-                    for tok in ("parcel", "property", "building", "land", "appraisal"))),
-                layers[0])
-            layer_url = f"{layer_url}/{chosen.get('id')}"
         return {"outcome": "resource", "lead": name, "lead_url": url,
                 "resource": {"platform": "arcgis", "resource_url": layer_url,
                              "dataset_id": "", "publisher_domain": host,
@@ -147,7 +158,13 @@ def resolve_lead(lead: dict[str, Any], *, fetch: Callable[..., bytes] | None = N
         except ValueError as exc:
             raise LeadConversionError("hub item record is not valid JSON") from exc
         layer_url = str(item.get("url") or "").strip()
-        if layer_url and _LAYER.search(urlparse(layer_url).path or ""):
+        item_match = _LAYER.search(urlparse(layer_url).path or "") if layer_url else None
+        if item_match and item_match.group(3) is None:
+            picked = _pick_property_layer(layer_url.rstrip("/"),
+                                          fetch=fetch, timeout=timeout)
+            layer_url = picked or layer_url
+            item_match = _LAYER.search(urlparse(layer_url).path or "")
+        if layer_url and item_match:
             return {"outcome": "resource", "lead": name, "lead_url": url,
                     "resource": {"platform": "arcgis",
                                  "resource_url": layer_url.rstrip("/"),
