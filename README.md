@@ -4951,3 +4951,44 @@ does not establish live Resend compatibility or public callback reachability.
 References: [Resend verification](https://resend.com/docs/webhooks/verify-webhooks-requests),
 [Svix manual verification](https://docs.svix.com/receiving/verifying-payloads/how-manual),
 [Resend received metadata](https://resend.com/docs/webhooks/emails/received).
+
+
+#### Resend development without a public callback host
+
+A public hostname is **not** required to build or run the signed-fixture tests.
+The local VM can remain private. Resend handles email transport; Grow Up receives
+HTTPS event notifications, not inbound SMTP. No mail server or public SMTP ports
+need to be installed on the VM. A future separately approved VPS deployment or
+public HTTPS relay/tunnel may host the callback; none is provisioned here.
+
+Search for **REPLACE_ME_CALLBACK_HOST** in `.env.example`. Its deliberately
+nonfunctional value is:
+
+```text
+RESEND_PUBLIC_CALLBACK_URL=https://REPLACE_ME_CALLBACK_HOST.example.invalid/integrations/resend/webhook
+```
+
+Leave `RESEND_TRACKING_ENABLED=0` and the signing secret blank during preparation.
+Do not register that placeholder with Resend. The future sender remains
+`uriel@securecodeusa.com`; sender-domain verification does not supply a public
+application callback or authorize changing website/MX routing.
+
+Run the configuration-only preview in the environment you want to inspect:
+
+```bash
+python -B -m app.resend_readiness
+```
+
+This command does not load a private file automatically, query DNS, connect to
+Resend/PostgreSQL, enroll messages, or display secrets. It reports which required
+settings remain incomplete. `RESEND_PUBLIC_CALLBACK_URL` is informational for
+setup/preflight, not an endpoint authentication mechanism and not an instruction
+to open a port. Offline fixture tests still exercise the real application route.
+A syntactically plausible URL is not proof of TLS, routing, or public reachability.
+
+Later replace only the callback URL and actual receiving-domain settings, install
+the signing secret privately, and verify routing on the selected host before
+activation. The webhook path stays `/integrations/resend/webhook`; keep enrollment
+and Wondrue private. Existing VM disk-space and PostgreSQL validation requirements
+still apply. Production deployment, public routing, outbound sends and live-event
+compatibility remain unperformed and unproven by this preparation.
