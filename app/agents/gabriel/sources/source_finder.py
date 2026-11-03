@@ -28,6 +28,7 @@ from app.agents.gabriel.sources.source_selection import (
 
 CATALOG_URL_ENV = "GABRIEL_CATALOG_API_URL"
 SEARXNG_URL_ENV = "GABRIEL_SEARXNG_URL"
+FINDING_POLICY_ENV = "GABRIEL_FINDING_POLICY"
 HttpGet = Callable[..., Any]
 
 
@@ -437,8 +438,21 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
     if mission.budget.max_requests < 1:
         raise SourceSelectionError("source finding budget allows zero requests; refusing without network")
     env = os.environ if env is None else env
-    catalog = str(env.get(CATALOG_URL_ENV, "") or "").strip()
+    # Finding policy (owner directive 2026-11-03): the default
+    # "catalog_first" keeps the historical P1 catalogs -> P2 SearXNG
+    # -> P3 Brave precedence. "searxng_primary" disables government
+    # catalog/portal sourcing entirely: SearXNG is the primary (and
+    # only unpaid) finder, Brave remains a budget-approved last
+    # resort. With no SearXNG endpoint configured, searxng_primary
+    # refuses honestly instead of silently returning to catalogs.
+    finding_policy = str(env.get(FINDING_POLICY_ENV, "") or "").strip().lower()
+    if finding_policy not in ("", "catalog_first", "searxng_primary"):
+        raise SourceSelectionError(f"unknown {FINDING_POLICY_ENV}: {finding_policy!r}")
+    searxng_primary = finding_policy == "searxng_primary"
+    catalog = "" if searxng_primary else str(env.get(CATALOG_URL_ENV, "") or "").strip()
     searxng = str(env.get(SEARXNG_URL_ENV, "") or "").strip()
+    if searxng_primary:
+        catalog_urls = None
     query = f"{mission.jurisdiction} official {' '.join(mission.record_types)} dataset"
     attempts = 0
     last_error: SourceSelectionError | None = None

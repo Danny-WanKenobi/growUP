@@ -106,6 +106,8 @@ def discover_us_sources(
         # was selected and (for approval/budget) nothing transmitted.
         return {
             "jurisdiction": name, "country": "US", "ranked": [],
+            "finding_policy": str(env.get("GABRIEL_FINDING_POLICY", "") or "").strip().lower()
+            or "catalog_first",
             "selected_adapter": None, "selected_source": None,
             "selected_resource": None, "resource_digest": None,
             "status": "blocked",
@@ -134,6 +136,8 @@ def discover_us_sources(
     return {
         "jurisdiction": name,
         "country": "US",
+        "finding_policy": str(env.get("GABRIEL_FINDING_POLICY", "") or "").strip().lower()
+        or "catalog_first",
         "ranked": ranked,
         "selected_adapter": decision.get("selected_adapter"),
         "selected_source": decision.get("selected_candidate"),

@@ -83,6 +83,49 @@ def test_candidate_with_unknown_terms_stays_review_never_selected():
     assert result["ranked"][0]["status"] == "needs_review"
 
 
+def test_searxng_primary_skips_government_catalogs():
+    calls = []
+
+    def http_get(url, params, timeout):
+        calls.append(url)
+        if "socrata.com" in url or "arcgis.com" in url:
+            raise AssertionError("government catalog must not be queried")
+        if "search.example.org" in url:
+            return {"results": [
+                {"title": "Tarrant County Parcels - Example Lead",
+                 "url": "https://example.org/tarrant-parcels"}]}
+        raise RuntimeError("unexpected endpoint")
+
+    result = discover_us_sources(
+        "Tarrant County", http_get=http_get, approved=True,
+        budget=DiscoveryBudget(max_requests=3),
+        env={"GABRIEL_FINDING_POLICY": "searxng_primary",
+             "GABRIEL_SEARXNG_URL": "https://search.example.org"})
+    assert result["finding_policy"] == "searxng_primary"
+    # A SearXNG result is a lead, not a source: it claims no license,
+    # freshness, or adapter, so it is honestly never selected.
+    assert result["status"] in ("needs_review", "no_supported_adapter")
+    assert result["selected_adapter"] is None
+    assert any("search.example.org" in u for u in calls)
+    assert not any("socrata.com" in u or "arcgis.com" in u for u in calls)
+
+
+def test_searxng_primary_without_endpoint_refuses_without_catalog_fallback():
+    calls = []
+
+    def http_get(url, params, timeout):
+        calls.append(url)
+        return {"results": []}
+
+    result = discover_us_sources(
+        "Tarrant County", http_get=http_get, approved=True,
+        budget=DiscoveryBudget(max_requests=3),
+        env={"GABRIEL_FINDING_POLICY": "searxng_primary"})
+    assert result["status"] == "blocked"
+    assert result["selected_adapter"] is None
+    assert calls == []
+
+
 def test_default_unapproved_zero_budget_cannot_network():
     calls = []
     result = discover_us_sources(
