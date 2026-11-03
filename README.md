@@ -4689,3 +4689,5 @@ runs require explicit new assessment/reconciliation, not an automatic retry loop
 Focused verification: `python -m pytest tests/test_dossier_coordinator.py -q`.
 These use disposable synthetic SQL doubles; deployed PostgreSQL and operational
 real-data acceptance must be reported separately.
+
+Coordinator recovery acceptance: `test_live_coordinator_interruption_and_concurrent_replay` is gated to `growup_mvp_gate`. It interrupts after a real report/snapshot append and checks rollback, then races two identical requests and checks exactly one stage commit and one replay. Disposable properties/workflow rows are cleaned; immutable test custody rows remain under the established gate-database retention convention. No operational records or providers are used. Live execution results must be reported separately.

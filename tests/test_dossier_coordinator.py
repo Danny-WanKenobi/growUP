@@ -115,3 +115,56 @@ def test_coordinator_approval_is_bound_to_operator(monkeypatch):
     with pytest.raises(WondrueAuthError, match='different operator'):
         handle_command(mode='ask', max_mode='full', target='real', text='', principal='foreign',
             intent_override=intent, approval_token=preview['approval_token'])
+
+@pytest.mark.skipif(__import__('os').getenv('GROWUP_PG_INTEGRATION') != '1', reason='PostgreSQL integration explicitly disabled')
+def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.properties_db import create_property, get_connection
+    from app.workflow import digest_payload
+    from app.workflow_db import get_record_in_transaction, put_record_in_transaction
+    from app.custody_db import create_version_in_transaction, snapshot_in_transaction, issue_receipt_in_transaction, verify_chain_in_transaction, latest_version_in_transaction
+    from tests.test_dcad_admission import _require_gate_database, _pg_env, _pg_seed_parent, _pg_cleanup
+    _require_gate_database(); _pg_env(monkeypatch)
+    prop = create_property({'name':'Coordinator disposable PG recovery proof', 'street_address':'2323 Chalk Hill Rd',
+        'city':'Dallas','state':'TX','zip_code':'75212','category':'commercial_property'})
+    parent = _pg_seed_parent(str(prop['id']))
+    from uuid import UUID
+    rid = UUID(parent['run_id']); key = parent['dossier_key']; did = None
+    try:
+        with get_connection() as conn:
+            record = get_record_in_transaction(conn, rid, 'dossier_version', key)
+            version = create_version_in_transaction(conn, property_id=prop['id'], created_by='gabriel',
+                payload={'dossier':record.payload['dossier'],'dossier_digest':record.digest})
+            did = version.dossier_id
+            snapshot_in_transaction(conn, dossier_id=did, version=1)
+            issue_receipt_in_transaction(conn, dossier_id=did, version=1, kind='forward', from_agent='gabriel',
+                to_agent='raphael', issued_by='pg-test', note='disposable coordinator proof')
+            link = {'dossier_id':str(did),'custody_version':1,'property_id':str(prop['id']),'dossier_key':key,'receipts':{}}
+            put_record_in_transaction(conn,rid,kind='custody_link',record_key=key,version=1,payload=link,digest=digest_payload(link))
+            conn.commit()
+        original = coordinator.append_agent_report_in_transaction
+        def interrupted(*args, **kwargs):
+            original(*args, **kwargs)
+            raise KeyboardInterrupt('controlled interruption after report and snapshot')
+        monkeypatch.setattr(coordinator,'append_agent_report_in_transaction',interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            coordinator.process(principal='pg-test',run_id=rid,dossier_key=key,expected_sequence=0)
+        monkeypatch.setattr(coordinator,'append_agent_report_in_transaction',original)
+        with get_connection() as conn:
+            assert latest_version_in_transaction(conn,did).version == 1
+            assert verify_chain_in_transaction(conn,did) == 1
+            assert get_record_in_transaction(conn,rid,'research_artifact','coordinator:'+key) is None
+        barrier = Barrier(2)
+        def attempt():
+            barrier.wait(timeout=10)
+            return coordinator.process(principal='pg-test',run_id=rid,dossier_key=key,expected_sequence=0)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _:attempt(),range(2)))
+        assert sum(bool(r.get('replayed')) for r in results) == 1
+        assert all(r['status']=='returned' and r['sequence']==1 for r in results)
+        with get_connection() as conn:
+            assert latest_version_in_transaction(conn,did).version == 2
+            assert verify_chain_in_transaction(conn,did) == 2
+    finally:
+        _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
