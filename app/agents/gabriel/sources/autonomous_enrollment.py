@@ -333,7 +333,8 @@ def verify_directory_corroboration(
         except Exception:
             continue
         text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body)
-        for href, label in re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', text):
+        anchors = re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', text)
+        for href, label in anchors:
             link_host = (urlparse(href if "://" in href else f"https://{href}").hostname or "").lower()
             if link_host != target:
                 continue
@@ -345,6 +346,41 @@ def verify_directory_corroboration(
                     "matched_text": label.strip()[:120],
                     "digest": hashlib.sha256(bytes(body)).hexdigest(),
                 }
+        # Two-level directories: an index page links to a per-
+        # jurisdiction page (same .gov host, anchor naming the
+        # jurisdiction), and that page links the publisher's site.
+        # The jurisdiction-named path from an official directory is
+        # the corroboration; bounded at two subpages per directory.
+        subpages = 0
+        for href, label in anchors:
+            if subpages >= 2:
+                break
+            label_tokens = {t for t in re.split(r"[^a-z]+", label.lower()) if t}
+            if not (tokens & label_tokens):
+                continue
+            parsed = urlparse(href if "://" in href else raw_url.rsplit("/", 1)[0] + "/" + href)
+            if (parsed.hostname or "").lower() != host:
+                continue
+            subpages += 1
+            try:
+                if fetch is not None:
+                    sub = fetch(parsed.geturl(), {})
+                else:
+                    sub = fetch_bytes(parsed.geturl(), timeout=timeout,
+                                      max_bytes=1_000_000,
+                                      name="publisher directory")
+            except Exception:
+                continue
+            sub_text = sub.decode("utf-8", "replace") if isinstance(sub, (bytes, bytearray)) else str(sub)
+            for sub_href, sub_label in re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', sub_text):
+                sub_host = (urlparse(sub_href if "://" in sub_href else f"https://{sub_href}").hostname or "").lower()
+                if sub_host == target:
+                    return {
+                        "matched": True, "directory_url": parsed.geturl(),
+                        "directory_host": host, "matched_domain": target,
+                        "matched_text": sub_label.strip()[:120],
+                        "digest": hashlib.sha256(bytes(sub)).hexdigest(),
+                    }
     return {"matched": False, "directory_url": "", "directory_host": "",
             "matched_domain": target, "matched_text": "", "digest": ""}
 

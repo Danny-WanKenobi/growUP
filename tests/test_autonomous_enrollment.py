@@ -284,6 +284,25 @@ def test_directory_corroboration_enrolls_org_domain():
     assert ev["directory_host"] == "comptroller.texas.gov"
 
 
+def test_directory_two_level_county_page_corroborates():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        verify_directory_corroboration,
+    )
+    index = b'<a href="tarrant.php">220 Tarrant</a><a href="dallas.php">63 Dallas</a>'
+    county = b'<p>Appraisal District Website: <a href="http://www.tad.org/">www.tad.org</a></p>'
+
+    def fetch(url, params=None):
+        return county if url.endswith("tarrant.php") else index
+
+    ev = verify_directory_corroboration(
+        "www.tad.org", publisher_name="Tarrant Appraisal District",
+        jurisdiction="Tarrant County",
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",),
+        fetch=fetch)
+    assert ev["matched"] is True
+    assert ev["directory_url"].endswith("tarrant.php")
+
+
 def test_directory_must_be_government_hosted():
     from app.agents.gabriel.sources.autonomous_enrollment import (
         verify_directory_corroboration,
