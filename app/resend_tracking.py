@@ -9,7 +9,8 @@ import json
 import os
 import re
 import time
-from email.utils import parseaddr
+from email import policy
+from email.parser import HeaderParser
 from uuid import UUID
 
 from app.priscilla import PriscillaError, ingest_tracking_in_transaction, record_event_in_transaction
@@ -22,10 +23,24 @@ STATUSES = {"email.sent": "sent", "email.delivered": "delivered", "email.bounced
 def address(value):
     if not isinstance(value, str) or len(value) > 320 or any(c in value for c in "\r\n"):
         raise PriscillaError("invalid email address")
-    _, email = parseaddr(value)
-    if not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+", email):
-        raise PriscillaError("invalid email address")
-    return email.casefold()
+    try:
+        header = HeaderParser(policy=policy.default).parsestr("From: "+value+"\n\n")["From"]
+        if header is None or header.defects or len(header.addresses) != 1:
+            raise ValueError()
+        mailbox = header.addresses[0]
+        local, domain = mailbox.username, mailbox.domain
+        if (not local or len(local) > 64 or local.startswith(".") or local.endswith(".") or ".." in local
+                or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+", local)
+                or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", domain)
+                or "." not in domain or ".." in domain
+                or any(part.startswith("-") or part.endswith("-") or len(part) > 63 for part in domain.split("."))):
+            raise ValueError()
+        email = mailbox.addr_spec
+        if len(email) > 254:
+            raise ValueError()
+        return email.casefold()
+    except (ValueError, TypeError, AttributeError, IndexError):
+        raise PriscillaError("one unambiguous email mailbox required") from None
 
 
 def verify(body, headers, secret, now=None):

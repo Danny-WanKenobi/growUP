@@ -4910,7 +4910,9 @@ Message ID and reply-alias locks make enrollment immutable and idempotent;
 conflicting reassignment refuses. Callbacks cannot self-enroll using tags or
 caller-selected package IDs. Outbound callbacks match the enrolled email ID,
 sender and single recipient. Inbound callbacks match exactly one enrolled
-Reply-To and the enrolled recipient's apparent From address. This is routing
+Reply-To and the enrolled recipient's apparent From address. Each envelope field must parse as exactly one valid mailbox; multiple mailboxes,
+malformed display-name syntax, header injection and invalid local/domain syntax
+refuse before tracking writes. Display names remain supported. This is routing
 correlation, not verification of sender identity, ownership, or interest.
 No subjects, attachments, bodies or arbitrary inbound headers are fetched.
 Unknown/ambiguous correlations return 409 rather than guessed association;

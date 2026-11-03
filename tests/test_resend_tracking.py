@@ -233,3 +233,28 @@ def test_native_inbox_events_require_exact_configured_scope(monkeypatch):
     assert calls[0]["authentication_context"]["inbox_id"] == inbox
     payload["data"]["inbox_id"]=str(uuid4())
     with pytest.raises(PriscillaError): service.consume(None,payload,"wrong_inbox","b"*64)
+
+
+@pytest.mark.parametrize("value", [
+    "owner@example.com, intruder@example.com", "Owner <owner@example.com>, Other <other@example.com>",
+    "owner@example.com trailing junk", "owner@example.com;other@example.com",
+    "Owner <owner@example.com", ".owner@example.com", "own..er@example.com",
+    "owner@-example.com", "owner@example..com", "owner@localhost",
+    "owner@example.com\r\nBcc: intruder@example.com",
+])
+def test_ambiguous_or_malformed_mailbox_refuses(value):
+    with pytest.raises(PriscillaError): service.address(value)
+
+
+def test_display_name_remains_supported():
+    assert service.address("Uriel <uriel@securecodeusa.com>") == "uriel@securecodeusa.com"
+
+
+def test_signed_multi_recipient_sender_cannot_match_enrollment(monkeypatch):
+    data = enrollment()
+    material = {**data, "sender":"uriel@securecodeusa.com"}
+    monkeypatch.setattr(service,"_enrollment",lambda *a:(data["package_entry"],material))
+    monkeypatch.setattr(service,"ingest_tracking_in_transaction",lambda *a,**k:pytest.fail("no tracking write"))
+    payload = {"type":"email.received","created_at":"2026-11-03T23:00:00Z","data":{
+        "email_id":str(uuid4()),"from":"owner@example.com, intruder@example.com","to":[data["reply_to"]]}}
+    with pytest.raises(PriscillaError): service.consume(None,payload,"ambiguous_sender","a"*64)
