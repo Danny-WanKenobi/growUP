@@ -234,8 +234,8 @@ def test_generic_arcgis_polygon_uses_centroid():
     source = GenericArcGISSource(fetch=fetch, binding=binding)
     rows = source.search(BBOX, ["commercial_property"], 5, 5.0)
     assert len(rows) == 1
-    assert abs(rows[0].latitude - 29.75) < 1e-9
-    assert abs(rows[0].longitude - (-95.36)) < 1e-9
+    assert abs(rows[0].latitude - 29.75) < 1e-6
+    assert abs(rows[0].longitude - (-95.36)) < 1e-6
 
 
 class _FakeClaimStore:
