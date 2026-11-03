@@ -9,7 +9,7 @@ enter the real pipeline. All fourteen operational roles share **one** demo
 database and the same canonical custody implementation:
 
 Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole →
-Theresia Keys → Simeon → Solomon → Elmer → Yoseph → Deborah → Dan.
+Theresia Keys → Simeon → Solomon → Elmer → Yoseph → Deborah → Manny.
 
 `app/handoff_demo.py` generates one fully labeled GO scenario and a distinct
 missing-input NO-GO scenario for every checkpoint. Successful reports are attached
@@ -17,7 +17,7 @@ to full inherited copies of the same canonical dossier. Each forward transfer
 uses `app/custody_db.py` and its real version, snapshot, latest-holder, HMAC and
 predecessor-chain rules. A rejection stays at its checkpoint, then returns **one
 agent at a time** through the intervening stages to Gabriel, preserving its reason
-and the enhanced dossier. The Dan NO-GO case proves the entire reverse route.
+and the enhanced dossier. The Manny NO-GO case proves the entire reverse route.
 Gabriel's own NO-GO has no upstream recipient and terminates at Gabriel.
 
 The fixture suite has **15 scenarios**, **195 verified receipts** in total:
@@ -105,9 +105,26 @@ root filesystem before uploading or creating a release. It never deletes older
 releases, caches or databases automatically. A full disk requires inspecting and
 approving specific cleanup targets; the currently active release stays intact.
 
-**First dedicated PostgreSQL execution and browser visual acceptance are pending**
-until the owner performs that checkpoint. Local success does not claim the demo
-DB/role/drop-in has already been installed or that its PostgreSQL proof passed.
+**Dedicated PostgreSQL proof passed on release `a44a9d8`: 15 scenarios,
+195 verified custody receipts, zero provider calls, operational writes or
+external actions.** Authenticated browser inspection confirmed the stored GO
+and final-checkpoint NO-GO timelines and labeled dossier details.
+
+Manny is now the permanent active Owner Agent and Asset Manager (`manny`).
+Historical records retain the former `dan` identifier and their original
+signed bytes; they are not rewritten. Old audit identifiers and custody
+meanings remain readable, but new dispatch and handoffs use `manny` only.
+New synthetic runs use `handoff-fixtures-2`; unfinished prior-fixture runs
+remain inspectable but cannot advance under the renamed contract. Completed
+historical proofs remain accessible using their original run keys.
+The viewer synchronizes its Scenario selector with inspected results,
+including a labeled historical option for retired names. Narrow screens wrap
+controls and identifiers; only the custody table scrolls horizontally.
+Local validation of the Manny rename and presentation corrections: **2,553
+passed, 149 skipped**, including executed viewer JavaScript and historical-run
+read-only checks. Ubuntu regression and deployed browser acceptance follow
+the owner-authorized development checkpoint.
+
 The prior owner health check passed on release `fdad42a`; skipped-test investigation
 and genuine-property preview remain separately deferred.
 
@@ -181,7 +198,7 @@ Grow Up is a **single-owner autonomous system**, not a multi-user product. Norma
 internal work is intended to proceed under configured backend permissions without
 repeated human prompts. Unresolved blockers, edge cases, emergencies and sensitive
 decisions belong in the human owner's review queue. Wondrue remains the sole
-operational interface. Dan is a software owner-representative/asset role; he is
+operational interface. Manny is a software owner-representative/asset role; he is
 not the human owner and cannot grant signing, spending or execution authority.
 A future power of attorney needs a separate authenticated authority integration;
 its planned existence is not present permission to sign documents.
@@ -205,7 +222,7 @@ implementations remain the package/event authorities.
 | Elmer / `elmer` | Period, transaction, entity/jurisdiction and reconciliation intake | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
 | Yoseph / `yoseph` | Risk, policy and coverage-requirement intake | Carrier quotes, policy interpretation, coverage validation, binding and claims |
 | Deborah / `deborah` | Legal-question, jurisdiction and governing-document issue register | Current-law research, supported legal opinions, filings and representation |
-| Dan / `dan` | Ownership, operating-mandate and asset-obligation intake | Verified asset register, performance/maintenance automation and delegated transactions |
+| Manny / `manny` | Ownership, operating-mandate and asset-obligation intake | Verified asset register, performance/maintenance automation and delegated transactions |
 
 ### Canonical handoff contract from the outset
 
@@ -563,7 +580,7 @@ The agents share a common property record and coordinated workflow rather than o
 
 **MVP scope:** the coordinated MVP implements the full six-stage pipeline plus the Wondrue cockpit. Gabriel assembles evidence-backed dossiers; Raphael performs deterministic authorization over persisted dossier versions (preliminary simulation scoping only); Onesimus evaluates two passive-Kratky engineering configurations; Michael owns all financial arithmetic and feasibility verdicts; Uriel prepares genuine campaign packages (no sender exists); Priscilla tracks conversion events with simulated and actual evidence strictly separated. Wondrue enforces read-only / ask / full access modes server-side. Dossiers move between agents under shared operational custody (append-only versions, immutable snapshots, authenticated receipts); a resumable 36-cell pilot ledger tracks the 144-dossier target. No outreach execution exists.
 
-**Long-term capabilities (planned, not implemented):** Nicole — Permits & Licenses; Theresia Key — Underwriting; Simeon — Deal Coordination/Closing; Solomon — Construction Coordination; Gabriella — Vacant-Lot Discovery; Elmer — Accounting; Yoseph — Insurance & Liability; Deborah — Legal; Dan — Owner/Asset Management. These names reserve future responsibilities only: no placeholder agents exist, and the implemented canonical roles stay Michael (finance), Uriel (outreach), and Priscilla (conversion tracking). Future execution agents follow the same boundary as outreach — demo dispatch is labeled simulation only, and live mode alone grants no spending, sending, contract, filing, or construction authority.
+**Long-term capabilities (planned, not implemented):** Nicole — Permits & Licenses; Theresia Key — Underwriting; Simeon — Deal Coordination/Closing; Solomon — Construction Coordination; Gabriella — Vacant-Lot Discovery; Elmer — Accounting; Yoseph — Insurance & Liability; Deborah — Legal; Manny — Owner/Asset Management. These names reserve future responsibilities only: no placeholder agents exist, and the implemented canonical roles stay Michael (finance), Uriel (outreach), and Priscilla (conversion tracking). Future execution agents follow the same boundary as outreach — demo dispatch is labeled simulation only, and live mode alone grants no spending, sending, contract, filing, or construction authority.
 
 **Successor processing (bounded, implemented):** admitted DCAD or Census evidence is assessed on the same property, dossier, and custody lineage: the successor run references its parent, replays retained evidence without a new acquisition, appends the next custody version under an enrolled authorizer, and routes a fresh Raphael decision. Identical retries replay; original history is never rewritten and pilot counts replay without new credit. Census successors apply county-only attribution with the ordinary fail-closed category verdict. Further successor sources remain planned, not built.
 

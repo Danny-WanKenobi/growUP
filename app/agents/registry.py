@@ -1,7 +1,7 @@
 """Version-one downstream roles and executable intake contracts.
 
 These are deterministic preparation capabilities, not trained specialist models
-or external-action permissions. The owner is the only human user. Dan is a
+or external-action permissions. The owner is the only human user. Manny is a
 software role and cannot grant itself the owner's legal or operating authority.
 """
 from dataclasses import asdict, dataclass
@@ -58,7 +58,7 @@ SPECS = (
         ("jurisdiction", "legal_question", "governing_documents"),
         "Legal issue register and document-review intake; no assertion of legal compliance or enforceability.",
         ("Current-law research and legal reasoning with authoritative citations", "Legal opinions, filings and representation")),
-    AgentSpec("dan", "Dan", "Owner Agent and Asset Manager", ("michael",),
+    AgentSpec("manny", "Manny", "Owner Agent and Asset Manager", ("michael",),
         ("asset_ownership", "operating_mandate", "asset_obligations"),
         "Asset/obligation intake and owner-exception brief; represents software coordination, not the human owner.",
         ("Verified asset register, performance monitoring and maintenance lifecycle", "Delegated transaction authority and asset transfers")),

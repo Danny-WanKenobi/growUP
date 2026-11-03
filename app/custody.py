@@ -75,6 +75,7 @@ _CANONICAL_MEANINGS = {
     "uriel": "Uriel opportunity and outreach packages",
     "priscilla": "Priscilla delivery and conversion tracking",
     **NEW_AGENT_ROLES,
+    "dan": "Dan Owner Agent and Asset Manager (historical name; now Manny)",
     "human_review": "Human review",
 }
 

@@ -24,7 +24,7 @@ def test_roster_is_registered_without_workers_or_execution_grants():
         check_handoff_routing("return", name, "gabriel")
     assert interpret_custody_agent("mvp-1", "michael")["meaning"].startswith("Outreach")
     with pytest.raises(CustodyError):
-        check_handoff_routing("forward", "dan", "gabriel")
+        check_handoff_routing("forward", "manny", "gabriel")
 
 
 @pytest.mark.parametrize("agent", tuple(AGENT_SPECS))
@@ -46,3 +46,14 @@ def test_data_commands_do_not_fabricate_results_without_database(intent):
     with pytest.raises(WondrueError, match="database connection"):
         handle_command(mode="read-only", max_mode="read-only", target="real", text="",
                        intent_override={"intent":intent, "args":{}})
+
+
+def test_manny_is_active_and_dan_remains_historical_only():
+    assert AGENT_SPECS["manny"].name == "Manny"
+    assert "dan" not in AGENT_SPECS and "dan" not in NEW_AGENT_ROLES
+    assert AgentId("dan").value == "dan"  # Read existing audit history.
+    assert "historical name" in interpret_custody_agent("canonical-1", "dan")["meaning"]
+    check_handoff_routing("forward", "deborah", "manny")
+    check_handoff_routing("return", "manny", "deborah")
+    with pytest.raises(CustodyError, match="unknown handoff agent"):
+        check_handoff_routing("forward", "deborah", "dan")

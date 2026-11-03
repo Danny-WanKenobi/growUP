@@ -49,7 +49,8 @@ class AgentId(str, Enum):
     ELMER = "elmer"
     YOSEPH = "yoseph"
     DEBORAH = "deborah"
-    DAN = "dan"
+    MANNY = "manny"
+    DAN = "dan"  # Historical audit records only; not an active roster entry.
 
 
 class Severity(str, Enum):

@@ -13,13 +13,13 @@ TEMPLATE = r'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Grow Up — Synthetic Custody Demonstration</title>
 <style>
-body{font:16px system-ui,sans-serif;margin:0;background:#eef3ef;color:#18342b}main{max-width:1120px;margin:auto;padding:24px}
-h1{margin-bottom:8px}.notice{padding:16px;background:#fff3ce;border:2px solid #ad7800;border-radius:8px}
+*{box-sizing:border-box}body{font:16px system-ui,sans-serif;margin:0;background:#eef3ef;color:#18342b}main{max-width:1120px;margin:auto;padding:24px}
+main,section,label,input,select{min-width:0}main{overflow-wrap:anywhere}label{max-width:100%}input,select{width:100%;max-width:100%}h1{margin-bottom:8px}.notice{padding:16px;background:#fff3ce;border:2px solid #ad7800;border-radius:8px}
 section{margin-top:18px;padding:20px;background:white;border-radius:10px;box-shadow:0 2px 8px #0001}
 label{display:inline-flex;flex-direction:column;gap:6px;margin:6px 14px 10px 0}input,select,button{font:inherit;padding:9px;border:1px solid #a8b9af;border-radius:5px}
 button{background:#205b43;color:white;cursor:pointer;margin:4px}button:disabled{opacity:.45;cursor:default}#stop{background:#8c342f}
 #status{font-weight:650;padding:12px;background:#eaf3ed;border-radius:6px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:9px;border-bottom:1px solid #dde5df;vertical-align:top}
-.go{color:#14663f}.nogo{color:#a12525}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;background:#f3f5f4;padding:12px}a{color:#205b43}.scroll{overflow-x:auto}
+.go{color:#14663f}.nogo{color:#a12525}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;background:#f3f5f4;padding:12px}a{color:#205b43}.scroll{max-width:100%;overflow-x:auto}table{min-width:650px}@media(max-width:600px){main{padding:14px}section{padding:14px}label{display:flex;width:100%;margin-right:0}button{max-width:100%;white-space:normal}}
 </style></head><body><main>
 <a href="/wondrue">Back to Wondrue</a><h1>Canonical handoff demonstration</h1>
 <p class="notice"><strong>SYNTHETIC DATA — NOT REAL PROPERTY OR PROFESSIONAL APPROVAL.</strong><br>
@@ -36,7 +36,11 @@ Separate demo database and signing key. Shared custody services. No discovery, p
 'use strict';
 const el=id=>document.getElementById(id); let state=null,busy=false,stopped=false;
 function controls(value){busy=value;for(const id of ['new','step','play','inspect'])el(id).disabled=value;}
-function render(data){state=data;el('status').textContent=`${data.phase} | current holder: ${data.current_holder} | verified receipts: ${data.verified_receipts}`;
+function render(data){state=data;
+const scenario=data.scenario==='all_go'?'':data.scenario;
+let option=Array.from(el('scenario').options).find(item=>item.value===scenario);
+if(!option){option=document.createElement('option');option.value=scenario;option.textContent=`Historical NO-GO at ${scenario}`;option.disabled=true;el('scenario').appendChild(option);}
+el('scenario').value=scenario;el('status').textContent=`${data.phase} | current holder: ${data.current_holder} | verified receipts: ${data.verified_receipts}`;
 el('identity').textContent=`SYNTHETIC dossier ${data.dossier_id} | property ${data.property_id}`;el('events').replaceChildren();
 for(const event of data.events){const row=document.createElement('tr');for(const value of [event.sequence,event.agent,event.checkpoint||'RETURN',event.to_agent?`${event.agent} → ${event.to_agent}`:'—',event.version||'—',event.reason||'']){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);}row.className=event.checkpoint==='NO-GO'?'nogo':'go';el('events').appendChild(row);}
 el('details').textContent=JSON.stringify(data,null,2);}

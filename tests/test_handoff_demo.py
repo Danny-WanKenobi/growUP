@@ -43,7 +43,7 @@ def test_all_checkpoints_go_and_each_nogo_return_to_gabriel(monkeypatch):
     results=[]
     with scope(conn,KEY):
         success=drive(conn,"demo-handoff-all-go")
-        assert success["current_holder"]=="dan"
+        assert success["current_holder"]=="manny"
         assert success["phase"]=="complete_go"
         assert [e["agent"] for e in success["events"]]==list(demo.STAGES)
         assert all(e["checkpoint"]=="GO" for e in success["events"])
@@ -290,3 +290,58 @@ def test_related_audited_entrypoints_require_run_identity(monkeypatch,agent):
         from app.retained_assessment import commit_audited
         commit_audited(parent_run_id=run_id,preview_digest="a"*64)
     assert captured[0].run_id==run_id
+
+
+def test_old_unfinished_fixture_refuses_mutation_but_stays_inspectable():
+    from app.workflow_db import WorkflowError
+    db = _new_db(); conn = Conn(db)
+    with scope(conn, KEY):
+        result = demo.start_in_transaction(conn, run_key="demo-handoff-legacy")
+        run = demo._get(conn, result["run_key"])
+        # Emulate a retained run created under the prior fixture contract.
+        for row in db["runs"]:
+            if str(row["run_id"]) == str(run.run_id):
+                limits = row["limits"]
+                if isinstance(limits, str):
+                    limits = json.loads(limits)
+                    limits["fixture_version"] = "handoff-fixtures-1"
+                    row["limits"] = json.dumps(limits)
+                else:
+                    limits["fixture_version"] = "handoff-fixtures-1"
+        before = copy.deepcopy(db)
+        with pytest.raises(WorkflowError, match="historical fixture run is read-only"):
+            demo.advance_in_transaction(conn, run_key=result["run_key"], expected_sequence=0)
+        assert db == before
+        inspected = demo.inspect_in_transaction(conn, run_key=result["run_key"])
+        assert inspected["sequence"] == 0
+        assert inspected["fixture_version"] == "handoff-fixtures-1"
+
+
+def test_viewer_render_synchronizes_current_and_historical_scenarios():
+    import shutil
+    import subprocess
+    from app.handoff_demo_page import page
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for actual viewer JavaScript execution")
+    script = page().split("<script>", 1)[1].split("</script>", 1)[0]
+    harness = r"""
+const assert=require('node:assert/strict');
+function element(){return {value:'',options:[],children:[],appendChild(child){this.children.push(child);this.options.push(child);},replaceChildren(){this.children=[];}};}
+const elements={};
+for(const id of ['scenario','status','identity','events','details','key','run','new','step','play','inspect','stop'])elements[id]=element();
+elements.scenario.options=[{value:''},{value:'manny'}];
+const document={getElementById:id=>elements[id],createElement:()=>element()};
+"""
+    assertions = r"""
+const data={phase:'complete_go',current_holder:'manny',verified_receipts:13,dossier_id:'fictional',property_id:'fictional',events:[]};
+render({...data,scenario:'manny'});assert.equal(elements.scenario.value,'manny');
+render({...data,scenario:'all_go'});assert.equal(elements.scenario.value,'');
+render({...data,scenario:'dan'});assert.equal(elements.scenario.value,'dan');
+assert.equal(elements.scenario.options.at(-1).textContent,'Historical NO-GO at dan');
+assert.equal(elements.scenario.options.at(-1).disabled,true);
+render({...data,scenario:'dan'});assert.equal(elements.scenario.options.length,3);
+render({...data,scenario:'all_go'});assert.equal(elements.scenario.value,'');
+"""
+    result = subprocess.run([node, "-"], input=harness+script+assertions, text=True, encoding="utf-8", capture_output=True)
+    assert result.returncode == 0, result.stderr

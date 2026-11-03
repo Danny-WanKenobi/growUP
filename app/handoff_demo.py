@@ -1,4 +1,4 @@
-"""Permanent, bounded synthetic proof of the shared Gabriel-to-Dan custody path.
+"""Permanent, bounded synthetic proof of the shared Gabriel-to-Manny custody path.
 
 Only the dedicated PostgreSQL demo realm is accepted. No property discovery,
 models, outreach, contract signing, professional approvals or operational quotas.
@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = ("gabriel", "raphael", "onesimus", "michael", *AGENT_SPECS)
-FIXTURE_VERSION = "handoff-fixtures-1"
+FIXTURE_VERSION = "handoff-fixtures-2"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version")!=FIXTURE_VERSION or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -215,6 +215,8 @@ def advance_in_transaction(conn, *, run_key, expected_sequence):
         raise WorkflowError("sequence ahead of stored checkpoint")
     if state["phase"] in ("complete_go","returned_to_gabriel"):
         return inspect_in_transaction(conn,run_key=run_key)
+    if run.limits.get("fixture_version") != FIXTURE_VERSION:
+        raise WorkflowError("historical fixture run is read-only; create a new Manny scenario")
     source = get_record_in_transaction(conn,run.run_id,"dossier_version","main")
     if source is None or source.digest!=digest_payload({k:v for k,v in source.payload.items() if k!="digest"}):
         raise WorkflowError("demo dossier failed digest verification")
@@ -272,7 +274,7 @@ def inspect_in_transaction(conn, *, run_key):
         raise WorkflowError("synthetic display does not bind the current canonical dossier")
     verified = verify_chain_in_transaction(conn,did)
     holder = current_custody_in_transaction(conn,did)
-    return marked({"run_key":run_key,"fixture_version":FIXTURE_VERSION,"scenario":run.limits.get("fail_at") or "all_go",
+    return marked({"run_key":run_key,"fixture_version":run.limits["fixture_version"],"scenario":run.limits.get("fail_at") or "all_go",
         "property_id":source.payload["property_id"],"dossier_id":str(did),"phase":state["phase"],
         "sequence":state["sequence"],"current_holder":holder["holder"] if holder else "gabriel",
         "verified_receipts":verified,"events":deepcopy(state["events"]),
@@ -338,7 +340,7 @@ def run_suite(prefix):
         run_key = prefix+("-go" if fail_at is None else "-nogo-"+fail_at)
         result = run_bounded_scenario(run_key,fail_at)
         expected_phase = "complete_go" if fail_at is None else "returned_to_gabriel"
-        expected_holder = "dan" if fail_at is None else "gabriel"
+        expected_holder = "manny" if fail_at is None else "gabriel"
         failed = [e for e in result["events"] if e.get("checkpoint")=="NO-GO"]
         if result["phase"]!=expected_phase or result["current_holder"]!=expected_holder:
             raise WorkflowError("synthetic scenario failed terminal custody assertion")
