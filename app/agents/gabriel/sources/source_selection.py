@@ -636,6 +636,16 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
             "evidence_ref": selected.evidence_ref,
             "candidate_name": selected.candidate.name,
         }
+        # Collection vocabulary belongs to the selected resource, not just
+        # the ranked candidate. Keep it inside the resource/decision digests
+        # so binding and durable replay carry the exact verified mapping.
+        if isinstance((selected.resource or {}).get("category_codes"), dict):
+            selected_resource["category_codes"] = copy.deepcopy(selected.resource["category_codes"])
+        if "max_pages" in (selected.resource or {}):
+            max_pages = selected.resource["max_pages"]
+            if isinstance(max_pages, bool) or not isinstance(max_pages, int) or not 1 <= max_pages <= 4:
+                raise SourceSelectionError("generic max_pages must be an integer in 1..4")
+            selected_resource["max_pages"] = max_pages
     payload = {"policy_version": POLICY_VERSION, "bootstrap": False, "scope_note": None,
                "mission": {"jurisdiction": mission.jurisdiction,
                            "record_types": list(mission.record_types), "country": mission.country},

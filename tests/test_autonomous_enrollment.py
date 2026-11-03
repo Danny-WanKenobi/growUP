@@ -17,6 +17,14 @@ from app.agents.gabriel.sources.autonomous_enrollment import (
 from app.agents.gabriel.source_registry import PRODUCTION_REGISTRY, SourceClass
 
 
+@pytest.fixture(autouse=True)
+def _offline_dns(monkeypatch):
+    # Endpoint checks still run; fixture transports must not depend on real DNS.
+    import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k:
+                        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))])
+
+
 def _resource(**over):
     base = {
         "platform": "socrata",
@@ -591,6 +599,60 @@ def test_non_socrata_platform_no_network():
         _resource(platform="ckan"), jurisdiction="Seattle", store=_FakeStore(),
         fetch=_fetch(calls=[]))
     assert decision["status"] == "needs_more_evidence"
+
+
+def test_appraisal_mapping_survives_verified_selection(monkeypatch):
+    from app.agents.gabriel.sources import autonomous_enrollment as mod
+    from app.agents.gabriel.sources.source_selection import resource_digest_for
+    evidence = _evidence(
+        domain="data.texas.gov", publisher_name="Collin County Appraisal District",
+        attribution="Collin County", sample_geo_values=("Collin",),
+        category_distribution={"field": "propCategoryCode",
+                               "values": {"F1": 20, "A": 100}, "state": "TX"})
+    monkeypatch.setattr(mod, "verify_socrata_resource", lambda *a, **k: evidence)
+    enrollment_store = _FakeStore()
+    monkeypatch.setattr(mod, "EnrollmentStore", lambda: enrollment_store)
+    store = _FakeSelectionStore()
+    out = mod.verify_and_select(
+        _resource(publisher_domain="data.texas.gov",
+                  resource_url="https://data.texas.gov/resource/teqw-tu6e.json"),
+        jurisdiction="Collin County", selection_store=store,
+        assignment_key="test:mapping:retained")
+    resource = out["selection"]["selected_resource"]
+    assert resource["category_codes"]["map"] == {"F1": "commercial_property"}
+    assert resource["category_codes"]["observed"] == {"F1": 20, "A": 100}
+    assert out["selection"]["resource_digest"] == resource_digest_for(resource)
+    assert store.completed[0]["selected_resource"] == resource
+    assert store.completed[1]["publisher_evidence"]["category_distribution"] == evidence.category_distribution
+    assert enrollment_store.completed_with is not None
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_texas_vocabulary_scope_requires_layer_bound_item(bound):
+    from app.agents.gabriel.sources.autonomous_enrollment import verify_arcgis_resource
+    resource = _arcgis_resource()
+    layer = {"name": "Parcels", "fields": [{"name": "propCategoryCode"}]}
+    item = {"id": "a" * 32, "title": "Texas Appraisal Parcels",
+            "url": resource["resource_url"] if bound else "https://unrelated.example/FeatureServer"}
+    def fetch(url, params=None):
+        if params and "outStatistics" in params:
+            return json.dumps({"features": [{"attributes": {"propCategoryCode": "F1", "n": 2}}]}).encode()
+        return _arcgis_fetch(layer=layer, item=item)(url, params)
+    evidence = verify_arcgis_resource(resource, jurisdiction="Tarrant County", fetch=fetch)
+    assert (evidence.category_distribution.get("state") == "TX") is bound
+
+
+def test_unknown_appraisal_codes_and_non_texas_vocabulary_are_unmapped(monkeypatch):
+    from app.agents.gabriel.sources import autonomous_enrollment as mod
+    assert mod.standard_appraisal_category("F999") is None
+    assert mod.standard_appraisal_category("F2ZZ") is None
+    evidence = _evidence(category_distribution={"field": "categoryCode", "values": {"F1": 4}})
+    monkeypatch.setattr(mod, "verify_socrata_resource", lambda *a, **k: evidence)
+    monkeypatch.setattr(mod, "EnrollmentStore", _FakeStore)
+    out = mod.verify_and_select(
+        _resource(), jurisdiction="Seattle", selection_store=_FakeSelectionStore(),
+        assignment_key="test:mapping:non-texas")
+    assert "category_codes" not in out["selection"]["selected_resource"]
 
 
 def _evidence(**over) -> PublisherEvidence:

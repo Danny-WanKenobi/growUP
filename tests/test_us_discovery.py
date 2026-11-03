@@ -314,6 +314,110 @@ def test_collection_claim_replay_zero_network_and_uncertain_consumed():
         stuck.search(BBOX, ["warehouse_industrial"], 5, 5.0)
 
 
+def test_arcgis_paging_is_explicit_reserved_and_all_pages_retained():
+    import base64
+
+    class Store(_FakeClaimStore):
+        reservation = None
+
+        def claim(self, run_id, assignment, fingerprint, payload):
+            self.reservation = payload["requests_reserved"]
+            return super().claim(run_id, assignment, fingerprint, payload)
+
+    calls = []
+    bodies = []
+    store = Store()
+
+    def fetch(url, params, timeout):
+        assert store.reservation == 2  # durably claimed before first/page-two send
+        calls.append(dict(params))
+        offset = int(params["resultOffset"])
+        features = [
+            {"properties": {"propid": str(offset + i),
+                             "situsconcat": "9 Page Ave",
+                             "land_use": "OFFICE" if offset == 0 and i == 0 else "RESIDENTIAL"},
+             "geometry": {"type": "Point", "coordinates": [-95.36, 29.75]}}
+            for i in range(2)
+        ]
+        body = json.dumps({"features": features}).encode()
+        bodies.append(body)
+        return body
+
+    source = GenericArcGISSource(
+        fetch=fetch, claim_store=store,
+        binding=_binding(adapter="generic_arcgis", platform="arcgis",
+                         resource_url="https://data.travis.gov/arcgis/rest/services/Parcels/FeatureServer/0",
+                         assignment_key="pages", claim_run_id="run", max_pages=2))
+    rows = source.search(BBOX, ["commercial_property"], 2, 5.0)
+    assert len(rows) == 1
+    assert len(calls) == 2
+    outcome = store.state["pages"]
+    assert outcome["requests_reserved"] == outcome["requests_made"] == 2
+    pages = outcome["response_pages"]
+    assert [base64.b64decode(p["body_b64"]) for p in pages] == bodies
+    assert [p["params"]["resultOffset"] for p in pages] == ["0", "2"]
+    assert all(p["url"].endswith("/0/query") for p in pages)
+    assert len(source.search(BBOX, ["commercial_property"], 2, 5.0)) == 1
+    assert len(calls) == 2  # exact replay fetches neither page
+    pages[0]["digest"] = "0" * 64
+    with pytest.raises(SourceError, match="page digest"):
+        source.search(BBOX, ["commercial_property"], 2, 5.0)
+    assert len(calls) == 2
+
+
+def test_arcgis_default_single_page_and_interruption_does_not_reopen_cap():
+    calls = []
+
+    def fetch(url, params, timeout):
+        calls.append(params["resultOffset"])
+        return json.dumps({"features": [{
+            "properties": {"propid": "1", "land_use": "RESIDENTIAL"},
+            "geometry": {"type": "Point", "coordinates": [-95.36, 29.75]}}]}).encode()
+
+    binding = _binding(adapter="generic_arcgis", platform="arcgis",
+                       resource_url="https://data.travis.gov/arcgis/rest/services/Parcels/FeatureServer/0")
+    assert GenericArcGISSource(fetch=fetch, binding=binding).search(
+        BBOX, ["commercial_property"], 1, 5.0) == []
+    assert calls == ["0"]
+    store = _FakeClaimStore()
+
+    def interrupted(url, params, timeout):
+        if params["resultOffset"] != "0":
+            raise SourceError("interrupted page two")
+        return fetch(url, params, timeout)
+
+    source = GenericArcGISSource(fetch=interrupted, claim_store=store,
+                                binding={**binding, "max_pages": 2,
+                                         "assignment_key": "interrupted", "claim_run_id": "run"})
+    with pytest.raises(SourceError, match="interrupted page two"):
+        source.search(BBOX, ["commercial_property"], 1, 5.0)
+    assert store.state["interrupted"] is None
+    with pytest.raises(SourceError, match="uncertain"):
+        source.search(BBOX, ["commercial_property"], 1, 5.0)
+
+
+@pytest.mark.parametrize("cap", [0, 5, True, 1.5, "2"])
+def test_arcgis_invalid_page_cap_refuses_before_transmission(cap):
+    def forbidden(*args):
+        raise AssertionError("invalid envelope must not transmit")
+
+    source = GenericArcGISSource(fetch=forbidden,
+        binding=_binding(adapter="generic_arcgis", platform="arcgis", max_pages=cap))
+    with pytest.raises(SourceError, match="max_pages"):
+        source.search(BBOX, ["commercial_property"], 1, 5.0)
+
+
+def test_appraisal_use_code_preserves_observed_high_rise():
+    from app.agents.gabriel.sources.generic_open_data import _to_listings
+
+    rows, _ = _to_listings([({"propid": "1", "building_type": "OFFICE",
+                              "stories": 25, "propCategoryCode": "F1"}, None)],
+        source="generic_arcgis", binding={
+            "category_codes": {"field": "propCategoryCode",
+                               "map": {"F1": "commercial_property"}}})
+    assert rows[0].category_hint == "high_rise"
+
+
 def test_generic_adapters_registered_and_fail_closed_unbound():
     import app.agents.gabriel.sources  # noqa: F401
 

@@ -59,9 +59,6 @@ def standard_appraisal_category(code: str) -> str | None:
     normalized = (code or "").strip().upper()
     if normalized in APPRAISAL_CATEGORY_MAP:
         return APPRAISAL_CATEGORY_MAP[normalized]
-    if normalized.startswith("F") and len(normalized) > 1:
-        return "warehouse_industrial" if normalized.startswith("F2") \
-            else "commercial_property"
     return None
 
 
@@ -109,7 +106,7 @@ class PublisherEvidence:
     item_bound: bool = False  # ArcGIS item record fetched and bound to this layer
     item_credit: str = ""  # item accessInformation (publisher-stated credit)
     item_tags: tuple[str, ...] = ()
-    category_distribution: dict = ()  # {field, values: {code: count}} observed
+    category_distribution: dict = field(default_factory=dict)
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -422,6 +419,7 @@ def verify_arcgis_resource(
     sample_rows = 0
     geo_values: list[str] = []
     query_url = layer_url + "/query"
+    observed_states: set[str] = set()
     try:
         payload = json.loads(_get(query_url, {
             "where": "1=1", "outFields": "*", "resultRecordCount": 5,
@@ -436,6 +434,10 @@ def verify_arcgis_resource(
             if not isinstance(props, dict):
                 continue
             lowered = {str(k).lower(): v for k, v in props.items()}
+            for key in ("state", "st", "situsstate", "situs_state"):
+                value = str(lowered.get(key) or "").strip().upper()
+                if value:
+                    observed_states.add(value)
             for key in ("city", "county", "municipality", "situscity", "city_name"):
                 value = lowered.get(key)
                 if value not in (None, ""):
@@ -463,6 +465,15 @@ def verify_arcgis_resource(
                     values[str(code)] = int(attrs.get("n") or 0)
             if values:
                 category_distribution = {"field": code_field, "values": values}
+                metadata_text = " ".join(str(layer.get(k) or "") for k in
+                                         ("name", "description", "copyrightText"))
+                if item_bound:
+                    metadata_text += " " + " ".join((dataset_name, attribution,
+                                                       item_credit, " ".join(item_tags)))
+                if observed_states == {"TX"} or observed_states == {"TEXAS"}:
+                    category_distribution["state"] = "TX"
+                elif not observed_states and re.search(r"\bTexas\b", metadata_text, re.I):
+                    category_distribution["state"] = "TX"
         except Exception:
             category_distribution = {}
 
@@ -1095,7 +1106,7 @@ def verify_and_select(
     """
     from app.agents.gabriel.sources.source_selection import (
         DiscoveryBudget, FoundCandidate, SourceMission, SourceSelectionError,
-        mission_fingerprint, mission_payload, select_sources,
+        mission_fingerprint, mission_payload, select_sources, _digest,
     )
     from app.agents.gabriel.sources.qualification import SourceCandidate
 
@@ -1150,6 +1161,7 @@ def verify_and_select(
                                 "license_clear": evidence.license_clear,
                                 "freshness_days": evidence.freshness_days,
                                 "fields": list(evidence.fields),
+                                "category_distribution": dict(evidence.category_distribution),
                                 "sample_rows": evidence.sample_rows,
                                 "sample_geo_values": list(evidence.sample_geo_values),
                                 "evidence_digest": evidence.evidence_digest,
@@ -1185,7 +1197,8 @@ def verify_and_select(
     # observed in this layer's distribution, mapped by the published
     # standard. Unobserved or unmapped codes are never invented.
     distribution = evidence.category_distribution or {}
-    if distribution.get("field") and distribution.get("values"):
+    if (distribution.get("state") == "TX" and distribution.get("field")
+            and distribution.get("values")):
         code_map = {}
         for code in distribution["values"]:
             canonical = standard_appraisal_category(str(code))
@@ -1195,6 +1208,7 @@ def verify_and_select(
             resource_payload["category_codes"] = {
                 "field": distribution["field"], "map": code_map,
                 "observed": distribution["values"],
+                "state": "TX", "evidence_digest": evidence.evidence_digest,
                 "standard": "Texas appraisal category codes (Comptroller/PTD)"}
     found = FoundCandidate(
         candidate=candidate, tier=1, provider="publisher_direct",
@@ -1235,6 +1249,7 @@ def verify_and_select(
             "license_id": evidence.license_id,
             "freshness_days": evidence.freshness_days,
             "fields": list(evidence.fields),
+            "category_distribution": dict(evidence.category_distribution),
             "sample_rows": evidence.sample_rows,
             "sample_geo_values": list(evidence.sample_geo_values),
             "evidence_digest": evidence.evidence_digest,

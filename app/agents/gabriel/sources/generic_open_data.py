@@ -232,6 +232,12 @@ def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
             point = _geometry_point(geometry)
             if point is not None:
                 lon, lat = point
+        observed_category = category_from_observed(row, mapping)
+        code_category = _category_code_hint(row, binding)
+        # A broad appraisal use code does not negate observed building
+        # height/stories. Preserve the more specific high-rise class.
+        category = (observed_category if observed_category == "high_rise"
+                    else code_category or observed_category)
         listings.append(RawListing(
             source=source,
             external_id=f"{source}:{external}",
@@ -241,8 +247,7 @@ def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
             city=_pick(row, _CITY, mapping, "city") or None,
             state=_pick(row, _STATE, mapping, "state") or None,
             zip_code=_pick(row, _ZIP, mapping, "zip_code") or None,
-            category_hint=_category_code_hint(row, binding)
-            or category_from_observed(row, mapping),
+            category_hint=category,
             latitude=lat, longitude=lon,
             retrieved_at=retrieved_at,
             tags={
@@ -329,7 +334,12 @@ class WorkflowCollectionStore:
                     conn, run_uuid, kind=KIND_RESEARCH_ARTIFACT, record_key=key,
                     version=1, payload=payload, digest=digest_payload(payload))
                 if inserted is not None:
-                    add_usage_in_transaction(conn, run_uuid, "generic_collection_requests_reserved", 1)
+                    request_cap = payload.get("requests_reserved", 1)
+                    if (isinstance(request_cap, bool) or not isinstance(request_cap, int)
+                            or not 1 <= request_cap <= 4):
+                        raise SourceError("generic collection request reservation is invalid")
+                    add_usage_in_transaction(
+                        conn, run_uuid, "generic_collection_requests_reserved", request_cap)
                     conn.commit()
                     return {"status": "winner"}
                 done = get_record_in_transaction(
@@ -398,10 +408,17 @@ class _GenericBase:
         self._binding = dict(binding)
 
     def _fetch_body(self, url: str, params: dict, timeout: float) -> bytes:
+        if len(self._response_pages) >= self._request_cap:
+            raise SourceError("generic collection request cap exhausted")
         body = self._fetch(url, params, timeout)
         if not isinstance(body, bytes) or len(body) > MAX_BODY_BYTES:
             raise SourceError("generic resource body must be bounded bytes")
         self._response_body = body
+        self._response_pages.append({
+            "url": url, "params": dict(params),
+            "body_b64": base64.b64encode(body).decode("ascii"),
+            "digest": hashlib.sha256(body).hexdigest(),
+        })
         return body
 
     def _require_binding(self) -> dict:
@@ -427,6 +444,12 @@ class _GenericBase:
         if any(c not in ("high_rise", "commercial_property", "warehouse_industrial") for c in categories):
             raise SourceError("generic collection category is unsupported")
         binding = self._require_binding()
+        request_cap = binding.get("max_pages", 1) if self.platform == "arcgis" else 1
+        if (isinstance(request_cap, bool) or not isinstance(request_cap, int)
+                or not 1 <= request_cap <= 4):
+            raise SourceError("generic ArcGIS max_pages must be an integer in 1..4")
+        self._request_cap = request_cap
+        self._response_pages: list[dict[str, Any]] = []
         resource = {key: value for key, value in binding.items()
                     if key not in {"selection_digest", "resource_digest", "assignment_key", "claim_run_id"}}
         fingerprint = hashlib.sha256(json.dumps({
@@ -445,6 +468,7 @@ class _GenericBase:
                                 fingerprint, {"state": "claimed", "fingerprint": fingerprint,
                                               "resource_digest": binding.get("resource_digest"),
                                               "resource": resource,
+                                              "requests_reserved": request_cap,
                                               "resource_url": binding.get("resource_url")})
             if claim.get("status") == "completed":
                 outcome = claim.get("outcome") or {}
@@ -459,6 +483,23 @@ class _GenericBase:
                     raise SourceError("generic collection retained response is malformed") from exc
                 if hashlib.sha256(raw).hexdigest() != outcome.get("raw_response_digest"):
                     raise SourceError("generic collection retained response digest mismatch")
+                pages = outcome.get("response_pages")
+                if pages is not None:
+                    if not isinstance(pages, list) or not 1 <= len(pages) <= request_cap:
+                        raise SourceError("generic collection retained page count mismatch")
+                    for page in pages:
+                        if (not isinstance(page, dict) or not isinstance(page.get("url"), str)
+                                or not isinstance(page.get("params"), dict)):
+                            raise SourceError("generic collection retained page is malformed")
+                        try:
+                            page_body = base64.b64decode(page.get("body_b64", ""), validate=True)
+                        except (ValueError, TypeError) as exc:
+                            raise SourceError("generic collection retained page is malformed") from exc
+                        if (len(page_body) > MAX_BODY_BYTES
+                                or hashlib.sha256(page_body).hexdigest() != page.get("digest")):
+                            raise SourceError("generic collection retained page digest mismatch")
+                    if pages[-1].get("body_b64") != outcome.get("raw_response_b64"):
+                        raise SourceError("generic collection final retained page mismatch")
                 rows = [RawListing(**r) for r in raw_rows]
                 return _inside_strict(rows, bbox, categories, limit)
             if claim.get("status") != "winner":
@@ -469,6 +510,9 @@ class _GenericBase:
                 "resource_digest": binding.get("resource_digest"),
                 "raw_response_b64": base64.b64encode(self._response_body).decode("ascii"),
                 "raw_response_digest": hashlib.sha256(self._response_body).hexdigest(),
+                "response_pages": self._response_pages,
+                "requests_reserved": request_cap,
+                "requests_made": len(self._response_pages),
                 "response_digest": hashlib.sha256(
                     json.dumps([asdict(x) for x in listings], sort_keys=True, default=str).encode()).hexdigest(),
                 "rows": [asdict(x) for x in listings]})
@@ -517,13 +561,13 @@ class GenericArcGISSource(_GenericBase):
             url = str(binding["resource_url"]).rstrip("/")
             if not url.endswith("/query"):
                 url += "/query"
-            # Bounded paging (at most 4 pages): a layer's first
-            # page can be attribute-empty slivers, so keep paging
-            # until the limit is satisfied or the service runs out.
+            # The default remains one request. More pages require an
+            # explicit retained resource bound (1..4), reserved in the
+            # durable claim before any transmission.
             page_size = max(1, limit)
             collected: list[RawListing] = []
             seen_ids: set[str] = set()
-            for page in range(4):
+            for page in range(binding.get("max_pages", 1)):
                 params = {
                     "where": "1=1", "outFields": "*",
                     "geometry": f"{west},{south},{east},{north}",
