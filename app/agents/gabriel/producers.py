@@ -202,7 +202,19 @@ def build_candidate_verification(
     leave both unset, which preserves the Phase 2A behavior
     byte for byte.
     """
-    active = PRODUCTION_REGISTRY if registry is None else registry
+    if registry is None:
+        # Default: curated registry merged with Gabriel's unexpired
+        # autonomous enrollments (durable, digest-verified). Any
+        # failure yields the curated registry alone -- fail closed.
+        try:
+            from app.agents.gabriel.sources.autonomous_enrollment import (
+                effective_registry,
+            )
+            active = effective_registry()
+        except Exception:
+            active = PRODUCTION_REGISTRY
+    else:
+        active = registry
     mechanical = evaluate_category_evidence(
         member_category_observations(members, items, candidate.key)
     )

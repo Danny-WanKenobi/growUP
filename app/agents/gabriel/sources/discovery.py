@@ -311,13 +311,20 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
 def discover_sources_anywhere(
     jurisdiction: str, category: str, *, http_get=None, assignment_key=None,
     durable_store=None, approved: bool = False, budget=None, env=None,
+    auto_enroll: bool = False, enrollment_store=None,
 ) -> dict[str, Any]:
     """Nationwide path: any US jurisdiction, zero preliminary research.
 
     Thin delegation to the shared durable selection path over the
-    national catalogs. The DFW pilot path above stays curated; this
-    path never enrolls a publisher and reports catalog failure
-    honestly. Default (unapproved / zero budget) cannot network.
+    national catalogs. The DFW pilot path above stays curated.
+    Default (unapproved / zero budget) cannot network.
+
+    With ``auto_enroll`` (owner-authorized autonomous enrollment),
+    a selected generic resource is additionally verified directly
+    against its publisher's own domain and Gabriel records his own
+    enrollment decision (enrolled / needs_more_evidence) in the
+    durable enrollment store. Selection executability never depends
+    on enrollment; enrollment governs fact-level authority only.
     """
     if category not in CATEGORIES:
         raise ValueError(f"unknown pilot category: {category!r}")
@@ -327,6 +334,21 @@ def discover_sources_anywhere(
         jurisdiction, http_get=http_get, assignment_key=assignment_key,
         durable_store=durable_store, approved=approved, budget=budget, env=env)
     result["category"] = category
+    if auto_enroll and result.get("status") == "selected":
+        selection = result.get("selection") or {}
+        resource = selection.get("selected_resource") or result.get("selected_resource")
+        if isinstance(resource, dict) and resource:
+            from app.agents.gabriel.sources.autonomous_enrollment import (
+                EnrollmentError, run_autonomous_enrollment,
+            )
+            try:
+                result["enrollment"] = run_autonomous_enrollment(
+                    resource, jurisdiction=jurisdiction, store=enrollment_store)
+            except EnrollmentError as exc:
+                result["enrollment"] = {
+                    "status": "needs_more_evidence",
+                    "missing": [str(exc)],
+                }
     return result
 
 
