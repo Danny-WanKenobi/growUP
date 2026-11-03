@@ -668,7 +668,8 @@ def evaluate_real(
     if official_ref is not None and run.stage != "created":
         from app.agents.gabriel.sources.official_records import load_retained_official_in_transaction
         artifacts = [record for record in list_records_in_transaction(conn, run_id, KIND_RESEARCH_ARTIFACT)
-                     if (record.payload or {}).get("collection_provenance") == "official_retained"]
+                     if (record.payload or {}).get("collection_provenance")
+                     in ("official_retained", "generic_retained")]
         if len(artifacts) != 1:
             raise WorkflowError("official replay lacks one retained evidence binding")
         artifact = artifacts[0]

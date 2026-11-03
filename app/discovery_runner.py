@@ -1727,7 +1727,8 @@ def run_worker(
                     if config.census_request_bound > 0:
                         report["census_preempted"] = "census request bound reached"
                 official_mode = "auto" if any(
-                    c.source in ("dcad_bulk",) for c in config.cells) else None
+                    c.source in ("dcad_bulk", "generic_socrata", "generic_arcgis",
+                                 "generic_ckan") for c in config.cells) else None
                 return evaluate_property(
                     scope, pid, approved=approved,
                     timeout_seconds=timeout,

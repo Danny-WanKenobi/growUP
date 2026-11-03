@@ -40,6 +40,11 @@ from app.workflow import KIND_RESEARCH_ARTIFACT, digest_payload
 from app.workflow_db import WorkflowError, get_record_in_transaction, put_record_in_transaction
 
 OFFICIAL_SOURCES = frozenset({"dcad_bulk"})
+# Generic retained discovery is admitted with clearly labeled
+# provenance: a generic open-data source is *not* thereby official
+# or authenticated, and no candidate_verification is minted for it.
+GENERIC_SOURCES = frozenset({"generic_socrata", "generic_arcgis", "generic_ckan"})
+ADMITTED_SOURCES = OFFICIAL_SOURCES | GENERIC_SOURCES
 BRIDGE_VERSION = "official-bridge-1"
 DECISION_EVENT_TYPE = "gabriel.discovery.decision"
 
@@ -112,8 +117,8 @@ def load_retained_official_in_transaction(
     if not isinstance(observed, dict) or not observed:
         raise OfficialRecordError("retained discovery decision carries no observed fields")
     source = str(observed.get("source", "") or "")
-    if source not in OFFICIAL_SOURCES:
-        raise OfficialRecordError(f"source {source!r} is not an admitted official discovery source")
+    if source not in ADMITTED_SOURCES:
+        raise OfficialRecordError(f"source {source!r} is not an admitted retained discovery source")
     if not str(observed.get("street_address", "") or "").strip():
         raise OfficialRecordError("retained observed fields carry no street address")
     digest = evidence_digest_for(run_id_text, event_id_text, details)
@@ -136,6 +141,9 @@ def load_retained_official_in_transaction(
         "event_id": event_id_text,
         "property_id": str(prop_uuid),
         "source": source,
+        "source_kind": "official" if source in OFFICIAL_SOURCES else "generic_open_data",
+        "collection_provenance": (
+            "official_retained" if source in OFFICIAL_SOURCES else "generic_retained"),
         "external_id": str(observed.get("external_id", "") or ""),
         "element_url": str(observed.get("element_url", "") or ""),
         "retrieved_at": str(observed.get("retrieved_at", "") or ""),
@@ -169,7 +177,7 @@ def find_retained_official_in_transaction(conn: Any, *, property_id: str) -> dic
             except ValueError:
                 continue
         observed = (details or {}).get("observed") or {}
-        if str(observed.get("source", "") or "") not in OFFICIAL_SOURCES:
+        if str(observed.get("source", "") or "") not in ADMITTED_SOURCES:
             continue
         try:
             return load_retained_official_in_transaction(
@@ -189,10 +197,35 @@ def build_official_dossier(retained: dict[str, Any]) -> Any:
 
     observed = retained["observed"]
     prop = retained["property"]
+    generic = retained.get("source_kind") == "generic_open_data"
+    origin = "generic_record_claim" if generic else "official_record_claim"
     category_hint = str(observed.get("category_hint", "") or "other")
-    observations = [CategoryObservation(value=category_hint, origin="official_record_claim",
+    observations = [CategoryObservation(value=category_hint, origin=origin,
                                        source_url=retained.get("element_url", ""))]
     structured = retained.get("structured") or {}
+    if generic and structured.get("platform_record"):
+        # Preserve each observed category-bearing field separately so
+        # mixed/contradictory observations stay contradictory.
+        from app.agents.gabriel.sources.generic_open_data import category_from_observed
+
+        try:
+            record = json.loads(structured["platform_record"])
+            if not isinstance(record, dict):
+                raise ValueError("invalid platform record")
+        except (ValueError, TypeError) as exc:
+            raise OfficialRecordError("retained platform record is malformed") from exc
+        for field in ("land_use", "use_code", "property_class", "classification",
+                      "building_class", "building", "building_type"):
+            value = str(record.get(field) or "").strip()
+            if not value:
+                continue
+            mapped = category_from_observed({field: value,
+                                             "num_stories": record.get("num_stories", ""),
+                                             "stories": record.get("stories", "")})
+            if mapped != "other":
+                observations.append(CategoryObservation(
+                    value=mapped, origin=origin,
+                    source_url=str(structured.get("dataset_url") or "")))
     if structured.get("improvements"):
         from app.agents.gabriel.sources.dcad_bulk import map_land_use
         try:
@@ -208,7 +241,8 @@ def build_official_dossier(retained: dict[str, Any]) -> Any:
                 observations.append(CategoryObservation(value=value, origin="official_record_claim",
                                                        source_url=retained.get("element_url", "")))
     attribution = evaluate_category_evidence(observations)
-    source_ref = retained.get("element_url") or f"{retained['source']}:{retained.get('external_id', '')}"
+    source_ref = (structured.get("dataset_url") or retained.get("element_url")
+                  or f"{retained['source']}:{retained.get('external_id', '')}")
     facts = []
     statement_bits = [f"{key}={observed[key]}" for key in
                       ("street_address", "city", "state", "zip_code", "category_hint", "external_id")
@@ -218,8 +252,10 @@ def build_official_dossier(retained: dict[str, Any]) -> Any:
         if structured.get(key) not in (None, ""):
             statement_bits.append(f"{key}={structured[key]}")
     facts.append(ConsolidatedClaim(
-        topic="official_record",
-        statement="Observed official-source claim (unverified): " + "; ".join(statement_bits)[:280],
+        topic="official_record" if not generic else "generic_record",
+        statement=("Observed generic open-data claim (unverified; not official/authenticated): "
+                   if generic else "Observed official-source claim (unverified): ")
+        + "; ".join(statement_bits)[:280],
         evidence=[]))
     missing = ["occupancy unknown", "vacancy/distress unknown", "zoning unknown",
                "county unverified (no Census collector claim)", "category not verified by authenticated publisher evidence"]
@@ -234,7 +270,9 @@ def build_official_dossier(retained: dict[str, Any]) -> Any:
         sources=[source_ref] if source_ref else [],
         missing=missing,
         remaining_questions=list(missing),
-        summary="Official retained discovery admitted as observed claim only; verification pending.",
+        summary=("Generic retained discovery admitted as observed claim only; "
+                 "not official/authenticated; verification pending." if generic else
+                 "Official retained discovery admitted as observed claim only; verification pending."),
         county_attribution=CountyAttribution(),
         category_attribution=attribution,
     )
@@ -271,7 +309,11 @@ def admit_official_in_transaction(
             "external_id": retained.get("external_id", ""),
             "retrieved_at": retained.get("retrieved_at", ""),
             "evidence_digest": retained["evidence_digest"],
-            "collection_provenance": "official_retained",
+            "collection_provenance": retained.get("collection_provenance", "official_retained"),
+            "source_kind": retained.get("source_kind", "official"),
+            "dataset_url": str((retained.get("structured") or {}).get("dataset_url", "") or ""),
+            "selection_digest": str((retained.get("structured") or {}).get("selection_digest", "") or ""),
+            "resource_digest": str((retained.get("structured") or {}).get("resource_digest", "") or ""),
             "attempt": "completed",
             "error": "",
         }

@@ -218,7 +218,8 @@ def discover_sources(county: str, category: str) -> dict[str, Any]:
 def select_for_mission(mission, *, http_get=None, supported_adapters=None,
                        persist: bool = False, run_id: str = "",
                        assignment_key: str | None = None, durable_store=None,
-                       brave_execute=None, reserve=None, env=None) -> dict[str, Any]:
+                       brave_execute=None, reserve=None, env=None,
+                       catalog_urls=None) -> dict[str, Any]:
     """Find, qualify, rank, and select for any jurisdiction (not only the 12 pilot counties).
 
     Without ``assignment_key`` this is the legacy in-process path.
@@ -247,7 +248,7 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
         decision = select_sources(
             mission,
             find_candidates(mission, http_get=http_get, brave_execute=brave_execute,
-                            reserve=reserve, env=env),
+                            reserve=reserve, env=env, catalog_urls=catalog_urls),
             supported_adapters=supported_adapters)
         if persist:
             persist_selection(decision, run_id=run_id or f"source-selection:{decision['digest'][:16]}")
@@ -277,7 +278,8 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
     run_identity = str(claim.get("run_id") or "")
     evidence_sink: list = []
     found = find_candidates(mission, http_get=http_get, brave_execute=brave_execute,
-                            reserve=reserve, env=env, evidence_sink=evidence_sink)
+                            reserve=reserve, env=env, evidence_sink=evidence_sink,
+                            catalog_urls=catalog_urls)
     decision = select_sources(mission, found, supported_adapters=supported_adapters)
     import hashlib as _hashlib
     import json as _json
@@ -288,7 +290,7 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
         "candidates": [
             {"name": f.candidate.name, "publisher_domain": f.candidate.publisher_domain,
              "tier": f.tier, "provider": f.provider, "adapter": f.adapter,
-             "evidence_ref": f.evidence_ref}
+             "evidence_ref": f.evidence_ref, "resource": dict(f.resource or {})}
             for f in found[: mission.budget.max_results]],
     }
     evidence_digest = _hashlib.sha256(
@@ -307,20 +309,23 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
 
 
 def discover_sources_anywhere(
-    jurisdiction: str, category: str, *, http_get=None
+    jurisdiction: str, category: str, *, http_get=None, assignment_key=None,
+    durable_store=None, approved: bool = False, budget=None, env=None,
 ) -> dict[str, Any]:
     """Nationwide path: any US jurisdiction, zero preliminary research.
 
-    Delegates to the national-catalog discovery (Socrata, ArcGIS
-    Hub, data.gov CKAN) and the generic platform adapters. The DFW
-    pilot path above stays curated; this path never enrolls a
-    publisher and reports catalog failure honestly.
+    Thin delegation to the shared durable selection path over the
+    national catalogs. The DFW pilot path above stays curated; this
+    path never enrolls a publisher and reports catalog failure
+    honestly. Default (unapproved / zero budget) cannot network.
     """
     if category not in CATEGORIES:
         raise ValueError(f"unknown pilot category: {category!r}")
     from app.agents.gabriel.sources.us_discovery import discover_us_sources
 
-    result = discover_us_sources(jurisdiction, http_get=http_get)
+    result = discover_us_sources(
+        jurisdiction, http_get=http_get, assignment_key=assignment_key,
+        durable_store=durable_store, approved=approved, budget=budget, env=env)
     result["category"] = category
     return result
 

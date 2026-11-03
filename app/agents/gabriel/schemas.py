@@ -67,6 +67,8 @@ class SourceSelectionAttestation(BaseModel):
     run_id: str | None = Field(default=None, max_length=36)
     mission_fingerprint: str | None = Field(default=None, max_length=64)
     evidence_digest: str | None = Field(default=None, max_length=64)
+    selected_resource: dict | None = None
+    resource_digest: str | None = Field(default=None, max_length=64)
 
 
 class DiscoveryRunRequest(BaseModel):

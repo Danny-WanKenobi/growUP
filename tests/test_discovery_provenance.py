@@ -360,6 +360,80 @@ def test_tracked_create_commits_atomically(monkeypatch: pytest.MonkeyPatch, disc
     assert conn_ids[prop_pos[0]] == conn_ids[obs_pos[0]] == conn_ids[audit_pos[0]] == conn_ids[commit_pos[0]]
 
 
+def test_generic_bound_source_through_service_retains_structured_record(
+        monkeypatch: pytest.MonkeyPatch, disc_store: _Store) -> None:
+    """Actual discovery service -> retained generic decision event.
+
+    The retained event (source, structured dataset/platform record,
+    digests) is exactly what the generic admission in
+    tests/test_official_records.py consumes into dossier/Raphael.
+    """
+    import json as _json
+
+    from app.agents.gabriel.schemas import SourceSelectionAttestation
+    from app.agents.gabriel.sources.base import register_source
+    from app.agents.gabriel.sources.generic_open_data import GenericSocrataSource
+    from app.agents.gabriel.sources.source_finder import _candidate
+    from app.agents.gabriel.sources.source_selection import (
+        SourceMission, select_sources)
+
+    def fetch(url, params, timeout):
+        assert url == "https://data.travis.gov/resource/abc1.json"
+        return _json.dumps([{
+            "account": "T1", "situs_address": "100 Main St", "city": "Austin",
+            "state": "TX", "zip_code": "78701", "latitude": "30.2672",
+            "longitude": "-97.7431", "land_use": "WAREHOUSE"}]).encode()
+
+    instance = GenericSocrataSource(fetch=fetch)
+    register_source(instance)
+    mission = SourceMission(jurisdiction="Travis County", approved=True)
+    raw = {"name": "Travis Parcels", "publisher_name": "Travis County",
+           "publisher_domain": "data.travis.gov", "claimed_official": True,
+           "jurisdiction": "Travis County", "country": "US",
+           "record_types": ["parcels", "appraisal"], "access_method": "api",
+           "license_clear": True, "formats": ["json"], "update_age_days": 3,
+           "provenance_url": "https://data.travis.gov/resource/abc1.json",
+           "adapter": "generic_socrata",
+           "resource": {"resource_url": "https://data.travis.gov/resource/abc1.json",
+                        "platform": "socrata", "dataset_id": "abc1",
+                        "license_id": "cc0-1.0", "field_mapping": {}, "fields": []}}
+    decision = select_sources(
+        mission, [_candidate(raw, mission, tier=1, provider="socrata_catalog")],
+        supported_adapters={"generic_socrata"})
+    assert decision["status"] == "selected"
+    monkeypatch.setattr(gabriel_service, "get_source", lambda name: instance)
+    request = DiscoveryRunRequest.model_validate({
+        "source": "generic_socrata", "jurisdiction": "Travis County",
+        "selection": SourceSelectionAttestation.model_validate(decision).model_dump(exclude_unset=True),
+        "bbox": {"south": 30.25, "west": -97.76, "north": 30.30, "east": -97.70},
+        "categories": ["warehouse_industrial"],
+        "limit": 5, "timeout_seconds": 15.0})
+    result = gabriel_service.run_discovery(request)
+    assert result.counts.created == 1
+    (event,) = _decisions(disc_store, result.run_id)
+    details = _details(event)
+    assert details["outcome"] == "created"
+    assert details["observed"]["source"] == "generic_socrata"
+    assert details["observed"]["category_hint"] == "warehouse_industrial"
+    structured = details["structured"]
+    assert structured["dataset_url"].endswith("abc1.json")
+    assert structured["platform"] == "socrata"
+    assert _json.loads(structured["platform_record"])["land_use"] == "WAREHOUSE"
+    assert structured["selection_digest"] == decision["digest"]
+    register_source(GenericSocrataSource())  # restore unbound singleton
+
+
+def test_service_cannot_bootstrap_generic_collection(
+        monkeypatch: pytest.MonkeyPatch, disc_store: _Store) -> None:
+    from app.agents.gabriel.sources.base import SourceError
+    from app.agents.gabriel.sources.generic_open_data import GenericSocrataSource
+
+    monkeypatch.setattr(gabriel_service, "get_source",
+                        lambda name: GenericSocrataSource(fetch=lambda *a: b"[]"))
+    with pytest.raises((SourceError, ValueError)):
+        gabriel_service.run_discovery(_request(source="generic_socrata"))
+
+
 # 2. Untracked creation: property and event commit together.
 
 

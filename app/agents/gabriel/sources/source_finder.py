@@ -32,43 +32,15 @@ HttpGet = Callable[..., Any]
 
 
 def _validate_endpoint(raw: str, *, name: str) -> str:
-    url = (raw or "").strip()
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise SourceSelectionError(f"{name} must be a credential-free https URL")
-    host = parsed.hostname.lower()
-    if host in ("localhost",) or host.endswith((".local", ".internal")):
-        raise SourceSelectionError(f"{name} must not name a private/internal endpoint")
+    # Shared helper (app...http_policy): credential-free public HTTPS,
+    # no private/internal literal or DNS-resolved endpoints, DNS
+    # failure fails closed. DNS rebinding/TOCTOU is documented there.
+    from app.agents.gabriel.sources.http_policy import HttpPolicyError, validate_endpoint
+
     try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        ip = None
-    if ip is not None:
-        if not ip.is_global:
-            raise SourceSelectionError(f"{name} must not name a private/internal endpoint")
-        return url.rstrip("/")
-    # DNS-resolved addresses are validated as well as literals: any
-    # resolved non-global address refuses before connecting. DNS
-    # failure fails closed (no transmission). Residual risk, stated
-    # honestly: pre-resolution does not solve DNS rebinding/TOCTOU --
-    # the transport may resolve a different address at connect time;
-    # pinning/verified transport would be needed to close that.
-    try:
-        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
-    except (OSError, UnicodeError) as exc:
-        raise SourceSelectionError(
-            f"{name} DNS resolution failed; refusing without network") from exc
-    if not infos:
-        raise SourceSelectionError(
-            f"{name} DNS resolution returned no addresses; refusing without network")
-    for info in infos or []:
-        try:
-            resolved = ipaddress.ip_address(info[4][0])
-        except (ValueError, IndexError, TypeError):
-            continue
-        if not resolved.is_global:
-            raise SourceSelectionError(f"{name} must not resolve to a private/internal address")
-    return url.rstrip("/")
+        return validate_endpoint(raw, name=name).rstrip("/")
+    except HttpPolicyError as exc:
+        raise SourceSelectionError(str(exc)) from exc
 
 
 def _response_parts(resp: Any) -> tuple[int, dict, bytes]:
@@ -191,9 +163,14 @@ def _candidate(raw: dict, mission: SourceMission, *, tier: int, provider: str) -
         provenance_url=url[:500],
     )
     adapter = raw.get("adapter") or raw.get("adapter_name")
+    resource = dict(raw.get("resource") or {})
+    if resource:
+        resource.setdefault("resource_url", url)
+        resource.setdefault("platform", provider)
     return FoundCandidate(candidate=candidate, tier=tier, provider=provider,
                           adapter=str(adapter)[:100] if adapter else None,
-                          evidence_ref=(url or domain)[:500])
+                          evidence_ref=(url or domain)[:500],
+                          resource=resource)
 
 
 # License identifiers whose terms are known-clear without further
@@ -254,7 +231,9 @@ def _ckan_rows(payload: Any, mission: SourceMission) -> list[FoundCandidate] | N
             continue
         org = pkg.get("organization") if isinstance(pkg.get("organization"), dict) else {}
         resources = [r for r in (pkg.get("resources") or []) if isinstance(r, dict)]
-        first = resources[0] if resources else {}
+        csv_res = next((r for r in resources
+                        if str(r.get("format") or "").lower() == "csv" and r.get("url")), None)
+        first = csv_res or (resources[0] if resources else {})
         url = str(first.get("url") or pkg.get("url") or "").strip()
         extras = _extras_map(pkg)
         record_types = pkg.get("record_types")
@@ -275,16 +254,146 @@ def _ckan_rows(payload: Any, mission: SourceMission) -> list[FoundCandidate] | N
             "country": str(pkg.get("country") or extras.get("country") or "")[:20],
             "license_clear": license_id.lower() in _KNOWN_CLEAR_LICENSES,
             "update_age_days": _observed_age_days(pkg, extras),
+            "adapter": "generic_ckan" if csv_res else None,
+            "resource": {
+                "resource_url": url, "platform": "ckan",
+                "dataset_id": str(pkg.get("id") or pkg.get("name") or ""),
+                "license_id": license_id,
+                "field_mapping": {},
+                "fields": [str(f) for f in (first.get("fields") or [])] if isinstance(first.get("fields"), list) else [],
+            } if url else {},
         }
         found.append(_candidate(raw, mission, tier=1, provider="official_catalog"))
     return found
+
+
+def _age_from_iso(raw: Any) -> int | None:
+    from datetime import datetime, timezone
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - parsed).days
+    return age if age >= 0 else 0
+
+
+def _socrata_rows(payload: Any, mission: SourceMission) -> list[FoundCandidate] | None:
+    """Parse a Socrata catalog payload; observed metadata only."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return None
+    found: list[FoundCandidate] = []
+    for item in payload["results"]:
+        if not isinstance(item, dict):
+            continue
+        resource = item.get("resource") if isinstance(item.get("resource"), dict) else {}
+        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        domain = str(meta.get("domain") or "").strip()
+        dataset_id = str(resource.get("id") or "")
+        if not domain or not dataset_id:
+            continue
+        resource_url = f"https://{domain}/resource/{dataset_id}.json"
+        license_id = str(meta.get("license") or resource.get("license") or "").strip()
+        fields = [str(x) for x in (resource.get("columns_field_name") or []) if x]
+        raw = {
+            "name": resource.get("name") or domain,
+            "publisher_name": meta.get("publisher") or domain,
+            "publisher_domain": domain,
+            "provenance_url": resource_url,
+            "claimed_official": domain.endswith(".gov"),
+            # Jurisdiction/record types only when the catalog itself
+            # states them; never copied from the search query.
+            "jurisdiction": str(meta.get("jurisdiction") or resource.get("jurisdiction") or "")[:200],
+            "country": str(meta.get("country") or resource.get("country") or "")[:20],
+            "record_types": resource.get("record_types") if isinstance(resource.get("record_types"), list)
+                            else (["parcels", "appraisal"] if meta.get("record_types") == "parcels,appraisal" else []),
+            "access_method": "api",
+            "license_clear": license_id.lower() in _KNOWN_CLEAR_LICENSES,
+            "formats": ["json", "csv"] if resource.get("type") == "dataset" else [],
+            "property_level": resource.get("type") == "dataset",
+            "update_age_days": _age_from_iso(resource.get("updatedAt") or resource.get("updated_at")),
+            "adapter": "generic_socrata" if resource.get("type") == "dataset" else None,
+            "resource": {"resource_url": resource_url, "platform": "socrata",
+                         "dataset_id": dataset_id, "license_id": license_id,
+                         "field_mapping": {}, "fields": fields},
+        }
+        found.append(_candidate(raw, mission, tier=1, provider="socrata_catalog"))
+    return found
+
+
+def _arcgis_rows(payload: Any, mission: SourceMission) -> list[FoundCandidate] | None:
+    """Parse an ArcGIS Hub search payload; observed metadata only."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return None
+    found: list[FoundCandidate] = []
+    for item in payload["data"]:
+        if not isinstance(item, dict):
+            continue
+        attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        url = str(attrs.get("url") or "").strip()
+        if not url:
+            continue
+        domain = urlparse(url).hostname or ""
+        license_text = str(attrs.get("licenseInfo") or attrs.get("accessInformation") or "").strip()
+        license_id = license_text if license_text.lower() in _KNOWN_CLEAR_LICENSES else ""
+        fields = [str(f.get("name")) for f in (attrs.get("fields") or [])
+                  if isinstance(f, dict) and f.get("name")]
+        modified = attrs.get("modified")
+        age = None
+        if isinstance(modified, (int, float)) and not isinstance(modified, bool):
+            from datetime import datetime, timezone
+            age = max(0, (datetime.now(timezone.utc)
+                          - datetime.fromtimestamp(modified / 1000, tz=timezone.utc)).days)
+        raw = {
+            "name": attrs.get("name") or domain,
+            "publisher_name": attrs.get("owner") or domain,
+            "publisher_domain": domain,
+            "provenance_url": url,
+            "claimed_official": domain.endswith(".gov"),
+            "jurisdiction": str(attrs.get("jurisdiction") or "")[:200],
+            "country": str(attrs.get("country") or "")[:20],
+            "record_types": attrs.get("record_types") if isinstance(attrs.get("record_types"), list) else [],
+            "access_method": "api",
+            "license_clear": bool(license_id),
+            "formats": ["geojson", "json"],
+            "property_level": True,
+            "update_age_days": age,
+            "adapter": "generic_arcgis",
+            "resource": {"resource_url": url, "platform": "arcgis",
+                         "dataset_id": str(item.get("id") or ""),
+                         "license_id": license_id,
+                         "field_mapping": {}, "fields": fields},
+        }
+        found.append(_candidate(raw, mission, tier=1, provider="arcgis_catalog"))
+    return found
+
+
+def _dedupe_identity(found: list[FoundCandidate]) -> list[FoundCandidate]:
+    """Resolve duplicate dataset titles by identity, not name."""
+    seen: set[tuple[str, str, str]] = set()
+    out: list[FoundCandidate] = []
+    for item in found:
+        res = item.resource or {}
+        key = (item.candidate.publisher_domain.lower(),
+               str(res.get("resource_url") or item.evidence_ref or ""),
+               str(res.get("dataset_id") or item.candidate.name))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
 
 
 def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
                     brave_execute: Callable[..., Any] | None = None,
                     reserve: Callable[..., Any] | None = None,
                     env: Any = None,
-                    evidence_sink: list | None = None) -> list[FoundCandidate]:
+                    evidence_sink: list | None = None,
+                    catalog_urls: list | None = None) -> list[FoundCandidate]:
     """Find candidates with P1 -> P2 -> P3 precedence, bounded in total.
 
     Fallback happens only on a definitive provider failure (endpoint
@@ -322,6 +431,39 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
             raise SourceSelectionError("catalog response has no source list")
         return [_candidate(r, mission, tier=1, provider="official_catalog")
                 for r in rows[:mission.budget.max_results] if isinstance(r, dict)]
+
+    if catalog_urls:
+        # P1 tier: query *all* configured national catalogs, but only
+        # within the shared finite allowance. Candidates aggregate;
+        # P2/P3 run only when this tier yields nothing.
+        collected: list[FoundCandidate] = []
+        parsers = {"socrata": _socrata_rows, "arcgis": _arcgis_rows, "ckan": _ckan_rows}
+        for entry in catalog_urls:
+            if attempts >= mission.budget.max_requests:
+                break
+            provider_name, raw_url, kind = (list(entry) + ["", "", ""])[:3] if not isinstance(entry, dict) \
+                else (entry.get("provider", ""), entry.get("url", ""), entry.get("kind", ""))
+            if not raw_url:
+                continue
+            attempts += 1
+            try:
+                url = _validate_endpoint(str(raw_url), name=str(provider_name or "catalog"))
+                params = ({"q": mission.jurisdiction, "page[size]": 5} if kind == "arcgis"
+                          else {"q": mission.jurisdiction, "limit": mission.budget.max_results})
+                payload = _get_json(url, params, mission, http_get,
+                                    evidence_sink=evidence_sink, provider=str(provider_name))
+                parsed = parsers.get(str(kind), lambda p, m: None)(payload, mission)
+                if parsed is None:
+                    ckan = _ckan_rows(payload, mission)
+                    parsed = ckan if ckan is not None else []
+                collected.extend(parsed)
+            except UncertainFindingError:
+                raise
+            except SourceSelectionError as exc:
+                last_error = exc
+        if collected:
+            return _dedupe_identity(collected)[:mission.budget.max_results]
+        catalog = ""  # P1 exhausted; fall through to P2/P3 below.
 
     def _searxng() -> list[FoundCandidate]:
         url = _validate_endpoint(searxng, name=SEARXNG_URL_ENV)

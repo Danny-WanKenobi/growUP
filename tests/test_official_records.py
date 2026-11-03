@@ -52,6 +52,54 @@ def _seed(monkeypatch, category="warehouse_industrial"):
     return db, conn, run_id, prop
 
 
+def _seed_generic(monkeypatch):
+    db, conn, run_id, prop = _seed(monkeypatch)
+    db["property"] = {"id": str(prop), "name": "1200 Congress Ave",
+                      "street_address": "1200 Congress Ave", "city": "Austin",
+                      "state": "TX", "zip_code": "78701"}
+    db["events"][0]["details"]["observed"] = {
+        "source": "generic_socrata", "external_id": "generic_socrata:TRAVIS-1",
+        "street_address": "1200 Congress Ave", "city": "Austin", "state": "TX",
+        "zip_code": "78701", "category_hint": "warehouse_industrial",
+        "retrieved_at": "2026-11-02T00:00:00+00:00", "element_url": None, "name": None}
+    db["events"][0]["details"]["structured"] = {
+        "dataset_url": "https://data.travis.gov/resource/abc1.json",
+        "platform": "socrata", "selection_digest": "sel-digest",
+        "resource_digest": "res-digest",
+        "platform_record": json.dumps({
+            "account": "TRAVIS-1", "situs_address": "1200 Congress Ave",
+            "land_use": "WAREHOUSE", "latitude": "30.27", "longitude": "-97.74"})}
+    return db, conn, run_id, prop
+
+
+def test_non_dallas_generic_to_raphael_needs_evidence_same_identity(monkeypatch):
+    db, conn, run_id, prop = _seed_generic(monkeypatch)
+    s = _eval(conn, run_id, prop)
+    assert s["decision"] == "needs_evidence"
+    assert s["current_holder"] == "gabriel" and s["feedback_reason"]
+    assert s["dossier_id"] and s["official"]["property_id"] == str(prop)
+    artifacts = [r for r in db["records"] if r["kind"] == "research_artifact"]
+    assert artifacts and artifacts[0]["payload"]["collection_provenance"] == "generic_retained"
+    assert artifacts[0]["payload"]["provider"] == "generic_socrata"
+    dossiers = [r for r in db["records"] if r["kind"] == "dossier_version"]
+    assert dossiers[0]["payload"]["candidate_verification"] is None
+    assert dossiers[0]["payload"]["dossier"]["category_attribution"]["observed"] == \
+        "warehouse_industrial"
+    assert dossiers[0]["payload"]["dossier"]["county_attribution"]["evidence_status"] == \
+        "unresolved"  # no fabricated Travis county credit
+    recs_before = len(db["records"]); receipts_before = len(db["receipts"])
+    s2 = _eval(conn, run_id, prop)
+    assert s2["dossier_id"] == s["dossier_id"] and s2["decision"] == "needs_evidence"
+    assert len(db["records"]) == recs_before and len(db["receipts"]) == receipts_before
+
+
+def test_generic_conflicting_digest_refuses(monkeypatch):
+    db, conn, run_id, prop = _seed_generic(monkeypatch)
+    from app.agents.gabriel.sources.official_records import OfficialRecordError
+    with pytest.raises(OfficialRecordError, match="digest"):
+        _eval(conn, run_id, prop, digest="0" * 64)
+
+
 def _eval(conn, run_id, prop, digest=None, **kwargs):
     from app import mvp
     ref = {"discovery_run_id": "disc-1", "event_id": "evt-1", "property_id": str(prop)}

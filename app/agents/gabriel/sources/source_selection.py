@@ -86,6 +86,10 @@ class FoundCandidate:
     provider: str
     adapter: str | None = None
     evidence_ref: str = ""
+    # Observed resource binding (exact dataset/resource URL, platform,
+    # field mapping, observed license/freshness metadata). Never
+    # inferred from the search query; empty when not observed.
+    resource: dict[str, Any] = field(default_factory=dict)
 
 
 def _host(value: str) -> str:
@@ -141,7 +145,23 @@ ADAPTER_BINDINGS: dict[str, AdapterBinding] = {
     "osm_api": AdapterBinding(
         publishers=frozenset({"www.openstreetmap.org", "openstreetmap.org", "api.openstreetmap.org"}),
         endpoints=frozenset({"api.openstreetmap.org"})),
+    # Generic platform adapters are bound by the retained resource
+    # itself (exact URL/publisher in ``selected_resource``), not by a
+    # fixed publisher list; enforce_selection checks that binding.
+    "generic_socrata": AdapterBinding(record_types=frozenset({"parcels", "appraisal"})),
+    "generic_arcgis": AdapterBinding(record_types=frozenset({"parcels", "appraisal"})),
+    "generic_ckan": AdapterBinding(record_types=frozenset({"parcels", "appraisal"})),
 }
+
+GENERIC_ADAPTERS = frozenset({"generic_socrata", "generic_arcgis", "generic_ckan"})
+_ADAPTER_PLATFORM = {"generic_socrata": "socrata", "generic_arcgis": "arcgis",
+                     "generic_ckan": "ckan"}
+
+
+def resource_digest_for(resource: dict[str, Any]) -> str:
+    body = {k: v for k, v in resource.items() if k not in ("resource_digest", "claim_store")}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
 def register_adapter_binding(adapter: str, *, publishers=(), endpoints=(), record_types=()) -> None:
@@ -405,6 +425,10 @@ class WorkflowSelectionStore:
 
 def _validate_bootstrap(source: str, scope: str, *, server_source: Any = None) -> str:
     """Return the bootstrap descriptor kind or refuse (fail closed)."""
+    if source in GENERIC_ADAPTERS:
+        raise SourceSelectionError(
+            "generic adapters cannot use bootstrap; a retained resource-bound "
+            "selection is required")
     descriptor = BOOTSTRAP_DESCRIPTORS.get(source)
     if descriptor is None:
         resolved = str(getattr(server_source, "name", "") or "").strip() \
@@ -495,6 +519,12 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
             executable_blockers.append("candidate jurisdiction does not cover the mission jurisdiction")
         if candidate.record_types and not ({x.lower() for x in candidate.record_types} & {x.lower() for x in mission.record_types}):
             executable_blockers.append("candidate record types do not cover the mission")
+        if item.adapter in GENERIC_ADAPTERS:
+            res = item.resource or {}
+            if not str(res.get("resource_url") or "").strip():
+                executable_blockers.append("generic candidate carries no observed resource URL")
+            if str(res.get("adapter") or item.adapter) != item.adapter:
+                executable_blockers.append("generic resource does not match its adapter")
         if not item.adapter:
             executable_blockers.append("no adapter declared for candidate")
         elif item.adapter not in supported:
@@ -519,6 +549,7 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
             "evidence_ref": item.evidence_ref,
             "registry_enrolled": _registry_enrolled(candidate),
             "executable_blockers": executable_blockers,
+            "resource": dict(item.resource or {}),
         })
         if selected is None and not executable_blockers:
             selected, selected_adapter = item, item.adapter
@@ -533,11 +564,34 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
     else:
         status = NO_SUPPORTED_ADAPTER
         blockers.append("no candidate sources were found")
+    selected_resource: dict[str, Any] | None = None
+    if selected is not None and selected_adapter in GENERIC_ADAPTERS:
+        selected_resource = {
+            "adapter": selected_adapter,
+            "platform": str((selected.resource or {}).get("platform")
+                            or _ADAPTER_PLATFORM.get(selected_adapter or "", "")),
+            "resource_url": str((selected.resource or {}).get("resource_url") or ""),
+            "dataset_id": str((selected.resource or {}).get("dataset_id") or ""),
+            "publisher_name": selected.candidate.publisher_name,
+            "publisher_domain": selected.candidate.publisher_domain,
+            "jurisdiction": selected.candidate.jurisdiction,
+            "country": selected.candidate.country,
+            "record_types": list(selected.candidate.record_types),
+            "license_clear": bool(selected.candidate.license_clear),
+            "license_id": str((selected.resource or {}).get("license_id") or ""),
+            "update_age_days": selected.candidate.update_age_days,
+            "field_mapping": dict((selected.resource or {}).get("field_mapping") or {}),
+            "fields": list((selected.resource or {}).get("fields") or []),
+            "evidence_ref": selected.evidence_ref,
+            "candidate_name": selected.candidate.name,
+        }
     payload = {"policy_version": POLICY_VERSION, "bootstrap": False, "scope_note": None,
                "mission": {"jurisdiction": mission.jurisdiction,
                            "record_types": list(mission.record_types), "country": mission.country},
                "ranked": ranked, "selected_candidate": selected.candidate.name if selected else None,
-               "selected_adapter": selected_adapter, "status": status, "blockers": blockers}
+               "selected_adapter": selected_adapter, "status": status, "blockers": blockers,
+               "selected_resource": selected_resource,
+               "resource_digest": resource_digest_for(selected_resource) if selected_resource else None}
     return _retain(payload)
 
 
@@ -653,4 +707,29 @@ def enforce_selection(*, source: str, jurisdiction: str | None,
                 raise
             except Exception:
                 pass
+    if str(source) in GENERIC_ADAPTERS:
+        # Generic collection consumes exactly this retained binding:
+        # any change to URL, publisher, jurisdiction, category-bearing
+        # record types, assignment or digest refuses before transmit.
+        if selection.get("bootstrap"):
+            raise SourceSelectionError("generic adapters cannot use bootstrap selection")
+        res = selection.get("selected_resource")
+        if not isinstance(res, dict) or not res:
+            raise SourceSelectionError("generic selection carries no retained resource binding")
+        if selection.get("resource_digest") != resource_digest_for(res):
+            raise SourceSelectionError("generic resource binding digest does not verify")
+        if res.get("adapter") != source or res.get("candidate_name") != selection.get("selected_candidate"):
+            raise SourceSelectionError("generic resource binding does not match the selected candidate/adapter")
+        if res.get("platform") != _ADAPTER_PLATFORM.get(str(source)):
+            raise SourceSelectionError("generic resource platform does not match its adapter")
+        url = str(res.get("resource_url") or "")
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise SourceSelectionError("generic resource URL must be a credential-free https URL")
+        if _host(str(res.get("publisher_domain") or "")) != (parsed.hostname or "").lower():
+            raise SourceSelectionError("generic resource host does not match the retained publisher")
+        if str(res.get("jurisdiction") or "").strip().lower() != str(jurisdiction).strip().lower():
+            raise SourceSelectionError("generic resource jurisdiction does not match the request")
+        if not res.get("license_clear"):
+            raise SourceSelectionError("generic resource terms are not verified clear")
     return selection

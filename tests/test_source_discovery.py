@@ -282,6 +282,119 @@ def test_brave_fallback_reserves_before_transmit():
     assert order == ["reserve", "transmit"] and found == []
 
 
+def _generic_decision():
+    from app.agents.gabriel.sources.source_finder import _candidate
+    from app.agents.gabriel.sources.source_selection import (
+        DiscoveryBudget, SourceMission, select_sources)
+    mission = SourceMission(jurisdiction="Travis County", approved=True,
+                            budget=DiscoveryBudget(max_requests=1))
+    raw = {"name": "Travis Parcels", "publisher_name": "Travis County",
+           "publisher_domain": "data.travis.gov", "claimed_official": True,
+           "jurisdiction": "Travis County", "country": "US",
+           "record_types": ["parcels", "appraisal"], "access_method": "api",
+           "license_clear": True, "formats": ["json"], "update_age_days": 3,
+           "provenance_url": "https://data.travis.gov/resource/abc1.json",
+           "adapter": "generic_socrata",
+           "resource": {"resource_url": "https://data.travis.gov/resource/abc1.json",
+                        "platform": "socrata", "dataset_id": "abc1",
+                        "license_id": "cc0-1.0", "field_mapping": {}, "fields": []}}
+    found = _candidate(raw, mission, tier=1, provider="socrata_catalog")
+    return select_sources(mission, [found], supported_adapters={"generic_socrata"})
+
+
+def test_generic_selection_binds_exact_resource():
+    decision = _generic_decision()
+    assert decision["status"] == "selected"
+    assert decision["selected_resource"]["resource_url"].endswith("abc1.json")
+    assert decision["selected_resource"]["license_id"] == "cc0-1.0"
+    assert decision["resource_digest"]
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d["selected_resource"].update(resource_url="https://data.travis.gov/resource/evil.json"),
+    lambda d: d["selected_resource"].update(publisher_domain="evil.example.gov"),
+    lambda d: d["selected_resource"].update(jurisdiction="Cook County"),
+    lambda d: d.update(resource_digest="0" * 64),
+])
+def test_generic_resource_swapping_or_forged_decision_refuses(mutate):
+    import copy
+    from app.agents.gabriel.sources.source_selection import (
+        SourceSelectionError, enforce_selection)
+    forged = copy.deepcopy(_generic_decision())
+    mutate(forged)
+    # Recompute the outer digest so only the resource binding can refuse.
+    from app.agents.gabriel.sources.source_selection import _digest, _RETAINED
+    forged["digest"] = _digest(forged)
+    _RETAINED[forged["digest"]] = copy.deepcopy(forged)
+    with pytest.raises(SourceSelectionError):
+        enforce_selection(source="generic_socrata", jurisdiction="Travis County",
+                          selection=forged)
+
+
+def test_generic_cannot_bootstrap_via_service_path():
+    from app.agents.gabriel.sources.source_selection import (
+        SourceSelectionError, bootstrap_selection)
+    with pytest.raises(SourceSelectionError, match="bootstrap"):
+        bootstrap_selection(source="generic_socrata", jurisdiction="Travis County")
+
+
+def test_http_policy_refuses_private_redirect_and_oversize():
+    import socket
+    from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
+
+    with pytest.raises(HttpPolicyError):
+        fetch_bytes("https://127.0.0.1/x", transport=lambda *a, **k: b"{}")
+    with pytest.raises(HttpPolicyError):
+        fetch_bytes("https://public.example/x", resolver=lambda *a, **k:
+                    [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))],
+                    transport=lambda *a, **k: b"{}")
+    with pytest.raises(HttpPolicyError):
+        fetch_bytes("https://dns-fails.example/x",
+                    resolver=lambda *a, **k: (_ for _ in ()).throw(OSError("no")),
+                    transport=lambda *a, **k: b"{}")
+
+    class _Resp:
+        status_code = 302
+        headers = {}
+
+        def iter_bytes(self):
+            yield b""
+
+    with pytest.raises(HttpPolicyError, match="redirect"):
+        fetch_bytes("https://ok.example/x", transport=lambda *a, **k: _Resp(),
+                    resolver=lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))])
+
+    class _Big:
+        status_code = 200
+        headers = {}
+
+        def iter_bytes(self):
+            yield b"x" * 600
+            yield b"x" * 600
+
+    with pytest.raises(HttpPolicyError, match="byte bound"):
+        fetch_bytes("https://ok.example/x", transport=lambda *a, **k: _Big(),
+                    max_bytes=1000,
+                    resolver=lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))])
+
+
+def test_duplicate_dataset_titles_resolve_by_identity():
+    from app.agents.gabriel.sources.source_finder import _candidate, _dedupe_identity
+    from app.agents.gabriel.sources.source_selection import SourceMission
+    mission = SourceMission(jurisdiction="Travis County", approved=True)
+    base = {"name": "Same Title", "publisher_domain": "data.travis.gov",
+            "provenance_url": "https://data.travis.gov/resource/a.json"}
+    a = _candidate({**base, "resource": {"resource_url": base["provenance_url"], "dataset_id": "a"}},
+                   mission, tier=1, provider="socrata_catalog")
+    b = _candidate({**base, "provenance_url": "https://data.travis.gov/resource/b.json",
+                    "resource": {"resource_url": "https://data.travis.gov/resource/b.json",
+                                 "dataset_id": "b"}},
+                   mission, tier=1, provider="socrata_catalog")
+    dup = _candidate({**base, "resource": {"resource_url": base["provenance_url"], "dataset_id": "a"}},
+                     mission, tier=1, provider="socrata_catalog")
+    assert len(_dedupe_identity([a, b, dup])) == 2
+
+
 def test_selection_events_from_same_decision_have_unique_ids():
     # Regression (live PostgreSQL, 2026-11-02): the audit event ID was
     # derived from the decision digest, so independent runs sharing a

@@ -9,6 +9,7 @@ Provider failures abort the run with nothing fabricated.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import time
 from dataclasses import dataclass
@@ -244,12 +245,22 @@ def _build_candidate_event(
             "mutation_status": mutation_status,
             "observed": _observed_from_item(item),
             **({"structured": {
-                key: str(item.tags[key])[:65536] for key in (
+                key: (item.tags[key] if isinstance(item.tags[key], str)
+                      else _json.dumps(item.tags[key], default=str))[:65536]
+                for key in (
                     "dataset", "exchange_file", "account", "land_use", "improvement_description",
                     "improvement_area_sqft", "year_built", "num_stories", "improvement_count",
                     "improvements", "appraised_value", "value_year_label",
                 ) if key in item.tags
             }} if item.source == "dcad_bulk" else {}),
+            **({"structured": {
+                key: (item.tags[key] if isinstance(item.tags[key], str)
+                      else _json.dumps(item.tags[key], default=str))[:65536]
+                for key in (
+                    "dataset_url", "platform", "platform_record", "geometry",
+                    "observed_use", "selection_digest", "resource_digest", "field_mapping",
+                ) if key in item.tags
+            }} if item.source in ("generic_socrata", "generic_arcgis", "generic_ckan") else {}),
             "inferred": _inferred_for(item, payload, dedup_key_value),
             "considered_property_ids": list(considered),
             "conflicting_property_ids": list(conflicting),
@@ -644,7 +655,20 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
                           jurisdiction=request.jurisdiction or selection["mission"]["jurisdiction"],
                           selection=selection)
         _persist_decision_dedicated(build_selection_event(selection, run_id=run_id))
-        source = resolved_source if resolved_source is not None else get_source(request.source)
+        if request.source in ("generic_socrata", "generic_arcgis", "generic_ckan"):
+            # Bound collector for exactly this retained resource; the
+            # registered singleton stays unbound and no GENERIC_* env
+            # locator is consulted. A test-registered fetch is reused.
+            from app.agents.gabriel.sources.generic_open_data import source_for_selection
+
+            registered = get_source(request.source)
+            source = source_for_selection(
+                selection, request.source,
+                fetch=getattr(registered, "_fetch", None),
+                claim_store=getattr(registered, "_claim_store", None))
+            resolved_source = source
+        else:
+            source = resolved_source if resolved_source is not None else get_source(request.source)
         resolved_source = source.name
         listings = source.search(bbox, categories, request.limit, request.timeout_seconds)
 
