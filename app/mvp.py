@@ -904,6 +904,26 @@ def evaluate_real(
         if not holder or holder["holder"] != "michael":
             raise WorkflowError("Michael must receive the enhanced dossier before assessment")
         from app.michael import assess as michael_assess
+        from app.custody_db import latest_version_in_transaction, lock_dossier_in_transaction
+        did=UUID(str(link["dossier_id"]))
+        lock_dossier_in_transaction(conn,did)
+        holder=current_custody_in_transaction(conn,did)
+        if not holder or holder["holder"]!="michael":
+            raise WorkflowError("Michael no longer holds the received dossier")
+        latest=latest_version_in_transaction(conn,did)
+        current=get_record_in_transaction(conn,run_id,"dossier_version",target)
+        if (latest is None or current is None or latest.version!=int(link["custody_version"])
+                or latest.payload.get("dossier_digest")!=current.digest):
+            raise WorkflowError("Michael input is not the latest received dossier")
+        engineering_report=(current.payload.get("dossier",{}).get("reports") or {}).get("onesimus")
+        if not engineering_report:
+            raise WorkflowError("Michael requires the inherited engineering report")
+        for config,payload in scenarios.items():
+            record=get_record_in_transaction(conn,run_id,"scenario",f"scenario-{config}")
+            _require_record_integrity(record,"engineering scenario")
+            inherited=(engineering_report.get("alternatives",{}).get(config) or {}).get("scenario") or {}
+            if {k:v for k,v in payload.items() if k!="financial_assessment"} != {k:v for k,v in inherited.items() if k!="financial_assessment"}:
+                raise WorkflowError("financial input differs from the received engineering scenario")
         assessments = {}
         for config, payload in scenarios.items():
             assessment = (payload.get("financial_assessment", {}) or {}).get("assessment")
@@ -928,6 +948,19 @@ def evaluate_real(
             if config in (summary.get("scenarios") or {}):
                 summary["scenarios"][config].update(financial_complete=assessment.get("complete", False),
                                                      financial_verdict=assessment.get("verdict", "insufficient_evidence"))
+        from app.dossier_reports import append_agent_report_in_transaction
+        financial_report={"schema_version":"michael-finance-report-1","source_dossier_digest":current.digest,
+            "source_engineering_digest":engineering_report["digest"],"assessments":assessments,
+            "scope":"Conditional preliminary feasibility; not verified profitability or permission to execute."}
+        financial_report["digest"]=digest_payload(financial_report)
+        append_agent_report_in_transaction(conn,run_id,target,agent="michael",report=financial_report)
+        link,_=_link_in_transaction(conn,run_id,target)
+        summary["financial_assessments"]=assessments
+        if (run.limits or {}).get("stop_after_michael"):
+            advance_stage_in_transaction(conn,run_id,"onesimus","done",
+                status="complete_financial" if any(a.get("complete") for a in assessments.values()) else "complete_stopped")
+            summary.update(stage="done",current_holder="michael",finance="assessed; no outreach stage requested")
+            return summary
         if not any(bool(item.get("complete", False)) for item in assessments.values()):
             advance_stage_in_transaction(conn, run_id, "onesimus", "done", status="complete_stopped")
             summary["stage"] = "done"

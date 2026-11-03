@@ -134,6 +134,8 @@ INTENTS = frozenset(
         "inspect_review",
         "start_real_evaluation",
         "release_engineering",
+        "preview_retained_assessment",
+        "commit_retained_assessment",
         "start_demo",
         "explain_decision",
         "compare_scenarios",

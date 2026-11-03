@@ -387,6 +387,14 @@ class WorkflowSelectionStore:
                     conn, run.run_id, kind=KIND_RESEARCH_ARTIFACT,
                     record_key="selection", version=1, payload=decision,
                     digest=str(decision.get("digest") or ""))
+                for index, child in enumerate(decision.get("source_plan") or []):
+                    if (child.get("run_id") != str(run.run_id)
+                            or child.get("evidence_digest") != decision.get("evidence_digest")
+                            or child.get("mission_fingerprint") != decision.get("mission_fingerprint")
+                            or child.get("digest") != _digest(child)):
+                        raise SourceSelectionError("source plan child binding failed")
+                    put_record_in_transaction(conn,run.run_id,kind=KIND_RESEARCH_ARTIFACT,
+                        record_key=f"selection:{index}",version=1,payload=child,digest=child["digest"])
                 conn.commit()
         except SourceSelectionError:
             _rollback_quietly(conn)
@@ -410,7 +418,7 @@ class WorkflowSelectionStore:
             with conn:
                 rec = get_record_by_digest_in_transaction(
                     conn, KIND_RESEARCH_ARTIFACT, str(digest))
-                if rec is None or rec.record_key != "selection":
+                if rec is None or not (rec.record_key == "selection" or rec.record_key.startswith("selection:")):
                     return None
                 run = get_run_in_transaction(conn, rec.run_id)
                 return self._verified_decision(conn, run, rec) if run is not None else None
@@ -524,7 +532,7 @@ def _has_property_fields(item: FoundCandidate) -> bool:
 
 
 def select_sources(mission: SourceMission, found: list[FoundCandidate],
-                   *, supported_adapters: Any = None) -> dict[str, Any]:
+                   *, supported_adapters: Any = None, _cache: bool = True) -> dict[str, Any]:
     """Rank found candidates and select one executable adapter, if any."""
     mission.validate()
     if supported_adapters is None:
@@ -653,7 +661,31 @@ def select_sources(mission: SourceMission, found: list[FoundCandidate],
                "selected_adapter": selected_adapter, "status": status, "blockers": blockers,
                "selected_resource": selected_resource,
                "resource_digest": resource_digest_for(selected_resource) if selected_resource else None}
-    return _retain(payload)
+    return _retain(payload) if _cache else {**payload, "digest": _digest(payload)}
+
+
+def build_source_plan(mission, found, *, supported_adapters=None):
+    """Reuse qualification/ranking to produce every executable resource, in order."""
+    combined = select_sources(mission,found,supported_adapters=supported_adapters,_cache=False)
+    rows = list(combined.get("ranked") or [])
+    # Preserve the existing property-relevance preference, then ranked order.
+    rows.sort(key=lambda r: 0 if r.get("name") == combined.get("selected_candidate") else 1)
+    plan=[]
+    seen=set()
+    for row in rows:
+        if row.get("executable_blockers"):
+            continue
+        item=next((f for f in found if f.candidate.name == row["name"]
+                   and f.adapter == row.get("adapter") and dict(f.resource or {}) == row.get("resource",{})),None)
+        if item is None:
+            continue
+        decision=select_sources(mission,[item],supported_adapters=supported_adapters,_cache=False)
+        identity=(decision.get("selected_adapter"),decision.get("resource_digest") or decision.get("selected_candidate"))
+        if decision.get("status") != SELECTED or identity in seen:
+            continue
+        seen.add(identity)
+        plan.append(decision)
+    return plan
 
 
 def build_selection_event(decision: dict[str, Any], *, run_id: str):

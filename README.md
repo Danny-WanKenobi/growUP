@@ -1,5 +1,218 @@
 # 🌱 Grow Up
 
+## Stored-evidence assessment through Michael (November 3, 2026)
+
+This local implementation adds an **offline reassessment** of an existing genuine
+property; it does not run discovery, fetch evidence, relax source authentication,
+or enable inference/outreach. `app/retained_assessment.py` consumes an existing
+collector-minted DCAD account page, its original transmission claim, and its
+property-bound assessment. The collection, claim, assessment, original research
+artifacts and latest dossier/custody digests must agree. The page's actual retained
+bytes are parsed again and evaluated by the existing shared verification policy.
+A bare discovery row, uploaded HTML, filename, publisher name or supplied verdict
+cannot substitute for those records. Acquisition enablement and account
+allowlisting are not required to **read already collected evidence**; collection
+itself retains its existing gates. No source registry enrollment is added.
+
+The same canonical property/dossier continues immediately when Raphael authorizes
+it. There is no batch, county quota or source-completion wait. An exact normalized
+street binding, unchanged city/state, original property-bound collection assessment
+and any retained original DCAD account binding prevent evidence from another
+property being substituted. Mixed or contradictory classes remain unresolved or
+rejected under the shared policy; missing evidence still produces needs-evidence.
+DCAD's scope is recorded appraisal classification/account identity, **not** current
+vacancy, structural/electrical capacity, agricultural permission or profitability.
+
+### Read preview, then approve the exact append
+
+Wondrue provides two structured intents on the existing `/wondrue/command` route:
+
+- `preview_retained_assessment`: read-only, target `real`; accepts
+  `parent_run_id`, `dossier_key`, `collection_run_id`, and optional JSON-string
+  `site_inputs` / `financial_inputs`. Returns the rebuilt dossier, computed
+  decision, inspection preview, evidence locators, current custody, zero external
+  request bounds and `preview_digest`. No database writes or transport calls.
+- `commit_retained_assessment`: operator mutation, target `real`, accepts those
+  **identical** inputs plus `preview_digest` and a nonempty `reason`. The server's
+  authenticated principal must already be enrolled in existing `CUSTODY_AMENDERS`;
+  no enrollment or secret is changed by this command. Ask mode previews the append
+  and binds its approval token to the operator. The commit rechecks the preview
+  under the canonical dossier lock. Changed evidence, inputs or custody require a
+  fresh preview. Business changes and a permanent event commit atomically through
+  the shared audited transaction. Exact replay returns the saved result without
+  new dossier versions or agent execution; amendment authority is checked again.
+
+After owner deployment/validation, a read-only example (replace identifiers and
+provide the existing Wondrue credential in `$headers`; never commit credentials):
+
+```powershell
+$assessmentArgs = @{
+    parent_run_id = '<latest stored evaluation UUID>'
+    dossier_key = 'main'
+    collection_run_id = '<stored DCAD collection evaluation UUID>'
+    site_inputs = '{}'
+    financial_inputs = '{}'
+}
+$previewBody = @{
+    mode = 'read-only'; target = 'real'; use_live = $false
+    intent = @{ intent = 'preview_retained_assessment'; args = $assessmentArgs }
+}
+$preview = Invoke-RestMethod -Method Post `
+    -Uri 'https://securecodeusa.local:8443/wondrue/command' `
+    -Headers $headers -ContentType 'application/json' `
+    -Body ($previewBody | ConvertTo-Json -Depth 12)
+$preview.data.assessment_preview
+```
+
+This example does **not** append. Only after reviewing that result and authorizing
+the database write, submit `commit_retained_assessment` with the same arguments,
+its returned `preview_digest`, a reason and the appropriate operator mode. These
+instructions do not authorize a live append or deployment.
+
+### Reports, assumptions and incomplete results
+
+The append preserves the original workflow and every historical custody version.
+It records the parent run/digest and explicit run/key/digest locators for inherited
+research evidence, including repeated reassessments. Previous agent reports move
+into `report_history` in the new copy; historical copies are never overwritten.
+Raphael appends his inspection, Onesimus appends his passive-Kratky concept report,
+and Michael appends his deterministic financial assessment to successive full
+copies of the **same** dossier. Snapshots and holder-linked custody receipts use
+the existing shared store. On this path processing stops with Michael; no Uriel
+package, conversion simulation or outreach is requested.
+
+Michael requires the latest received engineering report and checks scenario
+integrity and exact agreement with its inherited scenario before calculating.
+His `michael-finance-report-1` binds both the engineering report and input dossier
+digests. A normal complete report-bearing chain now has an additional Michael
+version (Gabriel / Raphael / Onesimus / Michael); older three-version examples
+below describe the earlier implementation. Reports for missing inputs are retained
+as incomplete results, not a positive feasibility claim. A fully supplied
+assumption bundle can produce conditional calculations; this is not evidence of
+real building capacity or profitability.
+
+Financial calculator version `michael-3` rejects incompatible currencies, units,
+periods and classification labels. No implicit currency or gallon conversion is
+performed. Canonical units are USD/kg, USD/L, USD/kWh, h/m2/week, USD/h and
+USD/m2/year as appropriate to the named input. Nutrient periods distinguish
+prepared solution from concentrate; unsupported bases refuse. Legacy blank units
+and periods preserve the existing documented planning assumptions. A missing
+observation date stays blank rather than being replaced with today's date.
+Financial input names cannot override inspected geometry. Physical assumptions
+belong in `site_inputs`, financial entries in `financial_inputs`; engineering
+unknowns and safety limitations remain explicit.
+
+**Validation / operational limits:** offline tests exercise genuine-record-shaped
+**test material**, not newly acquired property evidence. They cover read-only
+preview, same-dossier progression through all three reports, needs-evidence,
+original-history preservation, replay, successor lineage, changed evidence/input
+refusal, amendment permission, operator-bound approval, audited dispatch and
+financial unit validation. Owner Ubuntu PostgreSQL regression and a separately
+approved stored-real-dossier demonstration are still required after deployment.
+Final Windows offline regression: **2,517 passed, 149 skipped, 16 warnings**,
+zero failures; syntax and `git diff --check` passed. PostgreSQL-gated checks
+were not executed locally. No new dependency, schema migration, discovery run
+or provider allowance is added.
+This does not implement authentication adapters for every discovered dataset or
+solve missing/contradictory source facts by assertion.
+
+## Current discovery contract: source-first, no batches (November 3, 2026)
+
+**The 144-dossier / 36-cell batch workflow is retired, not paused.** Gabriel
+qualifies and ranks sources, then scans one resource at a time from that retained
+ranked plan. A source's permitted pages finish before the next resource is visited.
+County and category are descriptive evidence, never scheduling quotas, completion
+gates or geographic ranking bonuses. Source-ordered scans cover the entire selected
+dataset, without the old geographic-cell or category filters. Collection still requires an approved
+resource and request allowance; this does not authorize
+unbounded browsing or change source licensing/access rules.
+
+Each persisted candidate proceeds to the existing dossier/Raphael coordinator
+without waiting for other counties, classes or source completion. The durable
+backlog is recovery/backpressure, not a batch hold: it drains before more discovery.
+An authorized dossier proceeds individually to Onesimus and Michael unless the
+operator explicitly requested an inspection hold or first-authorization stop.
+Research qualification never substitutes for Raphael authorization. Needs-evidence
+returns and original dossier/custody history are preserved.
+
+Historical pilot ledger rows and documents remain for audit. Old `pilot` and
+`timed` runner policy inputs normalize to `source_ordered`; neither restores quota
+behavior. `app.pilot plan` and `resume` refuse before database access. Historical
+status and stop remain available. Old batch checkpoints are not silently imported:
+use a new scope for this source-ordered workflow. No table deletion or migration
+is required. The older pilot/batch descriptions below are historical and are
+superseded by this section.
+
+### Ranked plans and continuation
+
+Durable source finding now retains `source_plan`: each executable resource keeps
+its own qualified selection, resource digest and original finding-evidence binding.
+The existing publisher, licensing, freshness and supported-adapter checks still
+apply. Children are committed alongside the parent finding, loadable by digest,
+and replay without another catalog/provider call. No uncommitted plan is cached
+as authorization. The runner accepts an envelope `source_plan` parent digest plus
+a legacy `bbox` context field, or an explicit `sources` list with retained `selection` proofs
+and rank numbers. Wondrue accepts scalar `source_plan` and JSON-string `bbox` args
+for the same backend path. Selection is not category verification.
+
+DCAD bulk uses stable file ordering, a saved CSV position and exchange-snapshot
+identity. Whole-resource pages stream a bounded number of rows without loading the
+entire exchange into memory; duplicate/unusable rows still advance the cursor. A changed snapshot refuses the old cursor. Socrata uses ordered offsets;
+ArcGIS requires an observed stable object-id field. The whole-resource query
+omits the old cell geometry; Socrata and DCAD likewise do not filter by cell. Generic response pages and
+continuations remain tied to the selected resource and shared durable acquisition
+claims. All-duplicate or filtered pages advance using raw page positions rather
+than new-property counts. A provider repeating the same page is blocked. Dataset exhaustion requires an explicit provider end; it never means all properties
+on the internet, every dataset on a website, or verified property facts. Mutable APIs can
+change during a scan; their offsets do not establish snapshot completeness.
+
+CKAN/CSV, Overpass and any other adapter without a supported continuation contract
+are reported blocked/incomplete in this sequential workflow; the runner does not
+pretend their first page completes a source. Existing bounded one-pass APIs remain
+available for compatibility. Missing pagination is not automatic authorization to
+crawl a website. Per-source caps pause the current unfinished source instead of
+hopping away. Duration, stop, Sabbath, creation, failure and network bounds remain.
+Sources with unsupported pagination are recorded as blocked, not exhausted.
+
+### Current commands and configuration
+
+`config/source_ordered.example.json` is a bounded local-DCAD example, not a launch
+authorization. It scans the staged exchange across all supported and unknown
+category hints; unknown classification remains researchable. Example preview:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m app.discovery_runner preview --scope source-first-dallas --envelope config/source_ordered.example.json
+```
+
+After owner approval and deployment, the same envelope is used by `run` with
+`--acquire-approved`; add `--resume` to continue its saved source position. Stop
+uses `python -m app.discovery_runner stop --scope source-first-dallas`. No live
+worker is installed or launched by the implementation task. Default runtime policy
+is `source_ordered`; no new environment variables or dependencies are introduced.
+For Gabriel's discovered ranked plan, replace the example's `sources` with
+`"source_plan": "<retained parent selection digest>"` and a legacy context
+`"bbox": [south, west, north, east]` (not used as a source-ordered candidate filter). They cannot be combined with `sources`/`units`.
+The old `cells`/`units` input names remain compatible. Their category labels and bounding boxes do
+not filter source-ordered collection; equivalent resource entries collapse
+to one scan. A legacy county field may still supply the approved bootstrap source
+jurisdiction, but it does not establish a property's county or control handoff.
+
+**Evidence requirement:** observed bulk/generic discovery records alone do not
+authenticate category claims. The offline admission path above can reuse eligible
+retained official account evidence; absent evidence still blocks authorization.
+The scheduling change preserves that distinction;
+it does not implement the separately proposed DCAD account-admission extension,
+resolve DCAD connectivity/crawl-policy uncertainty, or promise a positive Raphael
+decision. No synthetic property, publisher enrollment or verification bypass is
+introduced. Owner PostgreSQL regression and deployed source-first demonstration
+remain pending. No provider calls are made by local fixture tests.
+
+Local source-first validation: **2,497 passed, 149 skipped, 17 warnings**, zero
+failures. Syntax and whitespace checks passed. PostgreSQL-gated proof now includes
+ranked-child selection loading, distinct per-page claims, zero-call page replay,
+and persisted continuation JSON; it remains pending on the owner's Ubuntu gate.
+
+
 ### Turning Underutilized Commercial Real Estate into Productive Urban Agriculture
 
 **Grow Up** is an AI-powered platform designed to identify underutilized commercial properties, evaluate their potential for conversion into indoor agricultural facilities, and help property owners discover new opportunities for their buildings.
@@ -3425,7 +3638,7 @@ archive, and archived snapshots stay verifiable. Versions, receipts,
 packages, and conversion events are permanent and are never moved or
 deleted — database triggers enforce this.
 
-### Pilot ledger
+### Historical pilot ledger (retired as an operating workflow)
 
 `app/pilot.py` tracks the 12-county × 3-category pilot (four qualified
 dossiers per cell, 144 total). The ledger is wired to actual processing:
@@ -3468,7 +3681,7 @@ discovery runner (below) executes bursts and reads the ledger for
 cell ordering and stop conditions, while the Gabriel/Raphael/Onesimus
 /… hooks record what actually happened.
 
-### Bounded continuous discovery
+### Historical bounded discovery configuration (superseded by source-first contract)
 
 `app/discovery_runner.py` runs repeated bounded discovery bursts
 through the existing OSM adapter, budget controls, and Gabriel
@@ -4041,3 +4254,60 @@ pending. No provider spending, credentials or deployment configuration changed.
 
 Local Windows validation for this task: 2,483 passed, 148 skipped, 17 warnings
 (full offline run). PostgreSQL-gated tests were not executed locally.
+
+
+### Earlier first-authorization planning notes (superseded by the source-first contract)
+
+The owner has resumed discovery to obtain one genuine dossier for downstream
+pipeline testing, independently of the deferred 144-dossier quota. The runner
+accepts `--stop-on-authorized` with `--cells`, or JSON boolean
+`"stop_on_authorized": true` inside an envelope. Default false preserves existing
+runs. Use policy `timed` when quota completion must not terminate discovery.
+The same configured request, duration, creation, per-unit and failure ceilings,
+operator stop and Sabbath checks still apply. A limit or exhausted source pauses
+or finishes honestly; it is not permission to expand geography or spending.
+
+Only an `evaluated` coordinator result with decision exactly `authorized` and
+valid operational property/evaluation UUIDs satisfies this stop. Qualification,
+quota credit, needs-evidence, rejection and failed evaluations never substitute.
+The runner persists the result and remaining backlog, reports `authorization_match`
+(property_id and run_id), and ends before evaluating another candidate or making
+another discovery pass. A resumed checkpoint retaining that result stops without
+further acquisition. This historical stop marker is not a new permission grant;
+held-dossier release revalidates current authorization and custody.
+
+In this mode the standard coordinator is requested to hold at Raphael. Engineering
+and finance can then be exercised using the separately reviewed release command.
+No synthetic fallback, verification relaxation or automatic outreach is introduced.
+
+Preview example (no acquisition or database writes):
+
+```powershell
+.\.venv\Scripts\python.exe -B -m app.discovery_runner preview --scope first-authorized-dallas --policy timed --cells config/dallas_opening_units.example.json --max-passes 12 --max-duration 3600 --max-created 30 --max-evaluations 5 --evaluation-attempt-limit 1 --stop-on-authorized
+```
+
+This is a control preview, not a launch instruction or approved source envelope.
+**Launch blocker:** official/generic retained discovery admission intentionally
+creates observed claims without candidate verification. Repeating that path alone
+cannot authorize a dossier. The DCAD page collector also retains an explicit
+account allowlist. A source-bound authenticated admission path and its exact
+account/network authorization must be established before launching this campaign;
+no discovery job has been launched by adding this control. Dynamic account
+admission is not authorized by a source's filename or an AI-generated claim.
+
+Local focused runner checks cover stopping mid-backlog, checkpoint resume,
+qualification-versus-authorization separation, malformed/failed results and
+strict boolean envelope parsing. PostgreSQL/deployed validation remains pending
+for this new runner option. No migrations or new environment variables.
+
+
+Owner approval received for a proposed DCAD admission extension: at most 30
+account pages over one hour, no Brave/Meta/Census/outreach. This extension is
+**not implemented or launched** by the stop-control change. Current public
+robots-guidance retrieval failed: Windows TLS timeout and development VM
+connection timeout. The existing bulk-adapter documentation also records a
+restriction on account-page crawling. Access and permitted collection must be
+confirmed before implementing/launching automatic per-account admission; the
+approval does not silently override the publisher's restrictions. No account
+pages were requested in these checks. Focused runner/coordinator regression:
+130 passed, 6 PostgreSQL-gated skips. No deployment or schema changes.

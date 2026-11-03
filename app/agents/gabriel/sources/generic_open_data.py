@@ -295,9 +295,11 @@ class WorkflowCollectionStore:
         return get_connection()
 
     @staticmethod
-    def _key(assignment: str, fingerprint: str) -> str:
+    def _key(assignment: str, fingerprint: str, page_identity: str | None = None) -> str:
         # The assignment is stable. Changed parameters must conflict, not
         # mint another request key under the original approval.
+        if page_identity:
+            return f"generic-page:{assignment}:{page_identity}"
         return f"generic-collection:{assignment}"
 
     def claim(self, run_id: str, assignment: str, fingerprint: str,
@@ -310,14 +312,24 @@ class WorkflowCollectionStore:
             run_uuid = UUID(str(run_id))
         except (ValueError, TypeError, AttributeError) as exc:
             raise SourceError("generic collection claim needs a durable run identity") from exc
-        key = self._key(assignment, fingerprint)
+        page_identity=payload.get("page_identity")
+        key = self._key(assignment, fingerprint, page_identity)
         conn = self._open()
         try:
             with conn:
                 run = get_run_in_transaction(conn, run_uuid, for_update=True)
                 if run is None:
                     raise SourceError("generic collection finding run is missing")
-                selected = get_record_in_transaction(conn, run_uuid, KIND_RESEARCH_ARTIFACT, "selection", 1)
+                if page_identity:
+                    from app.workflow_db import get_record_by_digest_in_transaction
+                    selected = get_record_by_digest_in_transaction(conn,KIND_RESEARCH_ARTIFACT,str(payload.get("selection_digest") or ""))
+                    expected=hashlib.sha256(json.dumps({"selection":payload.get("selection_digest"),
+                        "cursor":payload.get("continuation")},sort_keys=True).encode()).hexdigest()
+                    if (page_identity != expected or selected is None or selected.run_id != run_uuid
+                            or not (selected.record_key == "selection" or selected.record_key.startswith("selection:"))):
+                        raise SourceError("generic page does not bind its retained selection/cursor")
+                else:
+                    selected = get_record_in_transaction(conn, run_uuid, KIND_RESEARCH_ARTIFACT, "selection", 1)
                 from app.agents.gabriel.sources.source_selection import WorkflowSelectionStore
                 if selected is None:
                     raise SourceError("generic collection finding selection is missing")
@@ -361,7 +373,7 @@ class WorkflowCollectionStore:
         from app.workflow import KIND_RESEARCH_ARTIFACT, digest_payload
         from app.workflow_db import put_record_in_transaction
         run_uuid = UUID(str(run_id))
-        key = self._key(assignment, fingerprint)
+        key = self._key(assignment, fingerprint, outcome.get("page_identity"))
         conn = self._open()
         try:
             with conn:
@@ -421,6 +433,67 @@ class _GenericBase:
         })
         return body
 
+    def search_page(self, bbox, categories, limit, timeout_seconds, cursor=None, *, whole_resource=False):
+        """One stable page of a retained resource; never infer EOF from creations."""
+        from app.agents.gabriel.sources.base import DiscoveryPage
+        if self.platform not in ("socrata", "arcgis"):
+            raise SourceError("source pagination unsupported; coverage unknown")
+        binding = self._require_binding()
+        resource = binding.get("resource_digest")
+        offset = 0
+        if cursor:
+            try:
+                token = json.loads(cursor)
+                offset = token["offset"]
+                if token["resource"] != resource or type(offset) is not int or offset < 0:
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError):
+                raise SourceError("resource cursor binding mismatch")
+        self._page_cursor = cursor or ""
+        self._page_mode = True
+        self._whole_resource = whole_resource
+        def fetch_rows(bound):
+            url = str(bound["resource_url"]).rstrip("/")
+            if self.platform == "socrata":
+                payload = json.loads(self._fetch_body(url, {"$limit":str(limit), "$offset":str(offset),
+                    "$order":":id"}, timeout_seconds).decode("utf-8"))
+                if not isinstance(payload,list) or not all(isinstance(r,dict) for r in payload):
+                    raise SourceError("generic_socrata_unexpected_response")
+                pairs = [(r,None) for r in payload]
+            else:
+                fields = bound.get("fields") or []
+                oid = next((f for f in fields if str(f).lower() in ("objectid","objectid_1","fid","oid")),None)
+                if not oid:
+                    raise SourceError("ArcGIS stable object-id field is not established; pagination paused")
+                if not url.endswith("/query"):
+                    url += "/query"
+                south,west,north,east = bbox.as_tuple()
+                params={"where":"1=1","outFields":"*","outSR":"4326","f":"geojson",
+                        "orderByFields":f"{oid} ASC","resultOffset":str(offset),"resultRecordCount":str(limit)}
+                if not whole_resource:
+                    params.update(geometry=f"{west},{south},{east},{north}",geometryType="esriGeometryEnvelope",inSR="4326")
+                payload=json.loads(self._fetch_body(url,params,timeout_seconds).decode("utf-8"))
+                if not isinstance(payload,dict) or "error" in payload or not isinstance(payload.get("features"),list):
+                    raise SourceError("generic_arcgis_invalid_response")
+                pairs = [(dict(f.get("properties") or {}),f.get("geometry")) for f in payload["features"]]
+            listings,_ = _to_listings(pairs,source=self.name,binding=bound)
+            return listings[:limit] if whole_resource else _inside_strict(listings,bbox,categories,limit)
+        items = self._collect(bbox,categories,limit,timeout_seconds,fetch_rows)
+        raw = json.loads(self._response_body.decode("utf-8"))
+        scanned = len(raw) if self.platform == "socrata" else len(raw["features"])
+        if scanned > limit:
+            raise SourceError("source exceeded requested page size")
+        signature=hashlib.sha256(self._response_body).hexdigest()
+        if cursor and scanned and json.loads(cursor).get("previous_page") == signature:
+            raise SourceError("pagination unsupported: provider repeated the same page")
+        more = scanned == limit
+        if isinstance(raw,dict) and raw.get("exceededTransferLimit") is True:
+            more = True
+        if more and scanned == 0:
+            raise SourceError("provider claims more data but returned no advancing rows")
+        return DiscoveryPage(items, json.dumps({"resource":resource,"offset":offset+scanned,"previous_page":signature}) if more else None,
+                             not more,"entire selected resource; mutable API is not a frozen snapshot" if whole_resource else "approved resource/window only")
+
     def _require_binding(self) -> dict:
         if not self._binding or not str(self._binding.get("resource_url") or "").strip():
             raise SourceError(f"{self.name}_not_configured")
@@ -441,10 +514,13 @@ class _GenericBase:
         south, west, north, east = bbox.as_tuple()
         if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
             raise SourceError("generic collection bounding box is invalid")
-        if any(c not in ("high_rise", "commercial_property", "warehouse_industrial") for c in categories):
+        if any(c not in (("high_rise", "commercial_property", "warehouse_industrial", "other")
+                         if getattr(self,"_page_mode",False) else
+                         ("high_rise", "commercial_property", "warehouse_industrial")) for c in categories):
             raise SourceError("generic collection category is unsupported")
         binding = self._require_binding()
-        request_cap = binding.get("max_pages", 1) if self.platform == "arcgis" else 1
+        request_cap = (1 if getattr(self, "_page_mode", False) else
+                       binding.get("max_pages", 1) if self.platform == "arcgis" else 1)
         if (isinstance(request_cap, bool) or not isinstance(request_cap, int)
                 or not 1 <= request_cap <= 4):
             raise SourceError("generic ArcGIS max_pages must be an integer in 1..4")
@@ -452,11 +528,23 @@ class _GenericBase:
         self._response_pages: list[dict[str, Any]] = []
         resource = {key: value for key, value in binding.items()
                     if key not in {"selection_digest", "resource_digest", "assignment_key", "claim_run_id"}}
-        fingerprint = hashlib.sha256(json.dumps({
+        fingerprint_input = {
             "resource_digest": binding.get("resource_digest"),
             "resource": resource, "timeout_seconds": timeout_seconds,
             "bbox": list(bbox.as_tuple()), "categories": list(categories),
-            "limit": int(limit)}, sort_keys=True).encode()).hexdigest()
+            "limit": int(limit)}
+        if getattr(self,"_page_mode",False):
+            fingerprint_input["continuation"] = getattr(self,"_page_cursor","")
+            fingerprint_input["whole_resource"] = bool(getattr(self,"_whole_resource",False))
+            if fingerprint_input["whole_resource"]:
+                fingerprint_input["bbox"]=None
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_input,sort_keys=True).encode()).hexdigest()
+        page_fields={}
+        if getattr(self,"_page_mode",False):
+            page_fields={"selection_digest":binding.get("selection_digest"),
+                         "continuation":getattr(self,"_page_cursor","")}
+            page_fields["page_identity"]=hashlib.sha256(json.dumps({"selection":page_fields["selection_digest"],
+                "cursor":page_fields["continuation"]},sort_keys=True).encode()).hexdigest()
         assignment = str(binding.get("assignment_key") or "")
         store = self._claim_store
         if store is None and assignment and binding.get("claim_run_id"):
@@ -465,7 +553,7 @@ class _GenericBase:
             if not assignment:
                 raise SourceError("generic collection claim needs an assignment_key")
             claim = store.claim(str(binding.get("claim_run_id") or ""), assignment,
-                                fingerprint, {"state": "claimed", "fingerprint": fingerprint,
+                                fingerprint, {**page_fields, "state": "claimed", "fingerprint": fingerprint,
                                               "resource_digest": binding.get("resource_digest"),
                                               "resource": resource,
                                               "requests_reserved": request_cap,
@@ -500,13 +588,15 @@ class _GenericBase:
                             raise SourceError("generic collection retained page digest mismatch")
                     if pages[-1].get("body_b64") != outcome.get("raw_response_b64"):
                         raise SourceError("generic collection final retained page mismatch")
+                self._response_body = raw
+                self._response_pages = pages or []
                 rows = [RawListing(**r) for r in raw_rows]
-                return _inside_strict(rows, bbox, categories, limit)
+                return rows[:limit] if getattr(self,"_whole_resource",False) else _inside_strict(rows, bbox, categories, limit)
             if claim.get("status") != "winner":
                 raise SourceError("generic collection attempt already claimed and uncertain; not retried")
             listings = fetch_rows(binding)
             store.complete(str(binding.get("claim_run_id") or ""), assignment, fingerprint, {
-                "state": "completed", "fingerprint": fingerprint,
+                **page_fields, "state": "completed", "fingerprint": fingerprint,
                 "resource_digest": binding.get("resource_digest"),
                 "raw_response_b64": base64.b64encode(self._response_body).decode("ascii"),
                 "raw_response_digest": hashlib.sha256(self._response_body).hexdigest(),

@@ -13,8 +13,8 @@ from app.workflow_db import WorkflowError, get_record_in_transaction, put_record
 
 
 def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, report):
-    if agent not in ("raphael", "onesimus") or not isinstance(report, dict):
-        raise CustodyAuthError("only a structured inspection/engineering report can be appended")
+    if agent not in ("raphael", "onesimus", "michael") or not isinstance(report, dict):
+        raise CustodyAuthError("only a structured inspection/engineering/financial report can be appended")
     link_record = get_record_in_transaction(conn, run_id, "custody_link", dossier_key)
     source = get_record_in_transaction(conn, run_id, "dossier_version", dossier_key)
     if link_record is None or source is None:
@@ -40,13 +40,18 @@ def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, repo
         if reports[agent] == report:
             return source, latest
         raise WorkflowError("agent report already exists; use an explicit new assessment rather than overwrite")
-    schema = "raphael-inspection-1" if agent == "raphael" else "onesimus-concept-report-1"
+    schema = {"raphael":"raphael-inspection-1","onesimus":"onesimus-concept-report-1",
+              "michael":"michael-finance-report-1"}[agent]
     if report.get("schema_version") != schema or report.get("source_dossier_digest") != source.digest:
         raise CustodyTamperError("agent report does not bind its input dossier/schema")
     if agent == "onesimus":
         inspection = (source.payload.get("dossier", {}).get("reports") or {}).get("raphael")
         if not inspection or report.get("source_inspection_digest") != inspection.get("digest"):
             raise CustodyTamperError("engineering report does not bind its inspection")
+    if agent == "michael":
+        engineering=(source.payload.get("dossier",{}).get("reports") or {}).get("onesimus")
+        if not engineering or report.get("source_engineering_digest") != engineering.get("digest"):
+            raise CustodyTamperError("financial report does not bind its engineering report")
     payload = deepcopy(source.payload)
     payload["version"] = source.version + 1
     payload["dossier"].setdefault("reports", {})[agent] = deepcopy(report)

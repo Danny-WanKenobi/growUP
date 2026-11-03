@@ -580,6 +580,8 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
     stay transactionally independent: a failure aborts the run but
     never rolls back earlier committed candidates.
     """
+    if request.source_ordered and request.max_created is not None and request.max_created < request.limit:
+        raise ValueError("source-ordered page must fit creation headroom; no row may be dropped")
     if not get_database_config().is_configured:
         # Fail fast before spending an external call.
         raise DatabaseNotConfiguredError("database_not_configured")
@@ -587,13 +589,16 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
     started = time.perf_counter()
     ctx = _RunContext(run_id=run_id, started=started)
     categories = list(request.categories) if request.categories else list(DISCOVERY_CATEGORIES)
+    if request.source_ordered:
+        categories = list(DISCOVERY_CATEGORIES) + ["other"]  # unknown class is researchable, never a quota exclusion
     bbox = BoundingBox(
         south=request.bbox.south,
         west=request.bbox.west,
         north=request.bbox.north,
         east=request.bbox.east,
     )
-    bbox_label = f"bbox({bbox.south},{bbox.west},{bbox.north},{bbox.east})"
+    bbox_label = ("entire selected resource (no geographic/category quota filter)" if request.source_ordered
+                  else f"bbox({bbox.south},{bbox.west},{bbox.north},{bbox.east})")
     retrieved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     resolved_source: str | None = None
     failed_index: int | None = None
@@ -670,7 +675,22 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
         else:
             source = resolved_source if resolved_source is not None else get_source(request.source)
         resolved_source = source.name
-        listings = source.search(bbox, categories, request.limit, request.timeout_seconds)
+        page = None
+        if request.source_ordered:
+            search_page = getattr(source, "search_page", None)
+            if search_page is None:
+                raise SourceError("source pagination unsupported; coverage unknown")
+            page = search_page(bbox, categories, request.limit, request.timeout_seconds, request.continuation, whole_resource=True)
+            from app.agents.gabriel.sources.base import DiscoveryPage
+            if (not isinstance(page, DiscoveryPage) or type(page.exhausted) is not bool
+                    or len(page.items) > request.limit
+                    or (page.next_cursor is not None and (not isinstance(page.next_cursor,str) or len(page.next_cursor)>2048))
+                    or (page.exhausted and page.next_cursor is not None)
+                    or (not page.exhausted and (not page.next_cursor or page.next_cursor == request.continuation))):
+                raise SourceError("source returned an invalid/nonadvancing continuation")
+            listings = page.items
+        else:
+            listings = source.search(bbox, categories, request.limit, request.timeout_seconds)
 
         result = DiscoveryRunResult(
             source=source.name,
@@ -678,6 +698,9 @@ def run_discovery(request: DiscoveryRunRequest) -> DiscoveryRunResult:
             categories=categories,
             limit=request.limit,
             run_id=run_id,
+            next_cursor=page.next_cursor if page else None,
+            source_exhausted=page.exhausted if page else None,
+            scope_note=page.scope_note if page else "",
         )
         ctx.result = result
         result.counts.returned = len(listings)

@@ -716,6 +716,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
     command = args[0]
+    if command in ("plan", "resume"):
+        print("error: 144-dossier batch planning is retired; use app.discovery_runner source_ordered",file=sys.stderr)
+        return 1
     try:
         if command == "status":
             report = pilot_report()

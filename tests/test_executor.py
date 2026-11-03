@@ -282,9 +282,9 @@ def test_empty_plan_rejected(monkeypatch) -> None:
     calls = _provider(monkeypatch, lambda q, i, t: [])
     intel = _intel(
         _result(
-            "Houston tower listed",
-            "Bayou Tower at 500 Smith St, Houston, TX is listed for sale. "
-            "The Harris County office tower drew bids.",
+            "Old mill demolished",
+            "The Old Mill at 9 River Rd, Dallas, TX was demolished last year. "
+            "The Dallas County site is cleared.",
             url="https://example.com/bayou",
         )
     )

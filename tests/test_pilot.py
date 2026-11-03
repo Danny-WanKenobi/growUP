@@ -588,8 +588,9 @@ def test_cli_status_plan_stop_resume(monkeypatch: pytest.MonkeyPatch, capsys: An
     assert pilot_module.main(["status"]) == 0
     assert "qualified: 0/144" in capsys.readouterr().out
     assert pilot_module.main(["plan"]) == 1  # stopped
-    assert pilot_module.main(["resume"]) == 0
-    assert pilot_module.main(["plan", "--max", "2"]) == 0
+    assert pilot_module.main(["resume"]) == 1  # retired before any DB write
+    assert pilot_module.main(["plan", "--max", "2"]) == 1
+    assert "retired" in capsys.readouterr().err
     assert pilot_module.main(["stop"]) == 0
     assert pilot_module.main(["bogus"]) == 1
     assert pilot_module.main(["plan", "--max", "nope"]) == 1

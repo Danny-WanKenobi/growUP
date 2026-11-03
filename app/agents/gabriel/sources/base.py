@@ -83,6 +83,15 @@ class DiscoverySource(Protocol):
         ...  # pragma: no cover - interface
 
 
+@dataclass
+class DiscoveryPage:
+    """Explicit provider continuation; exhaustion covers only the approved scope."""
+    items: list[RawListing]
+    next_cursor: str | None
+    exhausted: bool
+    scope_note: str = "approved resource/window only"
+
+
 SOURCES: dict[str, DiscoverySource] = {}
 
 

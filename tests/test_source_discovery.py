@@ -578,6 +578,12 @@ def test_live_source_claim_replay_and_cold_cache(monkeypatch):
         import socket
         monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: pytest.fail("replay DNS forbidden"))
         assert find(lambda *a, **k: pytest.fail("replay HTTP forbidden")) == decision
+        assert len(decision["source_plan"]) == 1
+        child=decision["source_plan"][0]
+        clear_retained()
+        assert store.load_decision(child["digest"]) == child
+        assert enforce_selection(source="travis_appraisal",jurisdiction="Travis County",
+                                 selection=child,durable_store=store) == child
         assert len(calls) == 1 and _source_gate_usage(key)["source_requests_reserved"] == 1
     finally:
         _cleanup_source_gate(key)
@@ -622,3 +628,18 @@ def test_live_source_claim_single_winner_and_uncertain_replay():
     finally:
         release.set()
         _cleanup_source_gate(key)
+
+
+def test_ranked_source_plan_survives_durable_replay_without_new_finding():
+    from app.discovery_runner import sources_from_plan
+    from app.agents.gabriel.sources.source_selection import clear_retained
+    store=_StoredFinding()
+    http,calls=_fake_catalog(_travis_payload())
+    decision=_durable_find(store,http)
+    assert decision["source_plan"]
+    clear_retained()
+    sources=sources_from_plan(decision["digest"],[30.2,-97.8,30.3,-97.7],store=store)
+    assert sources[0].selection==decision["source_plan"][0]
+    assert sources[0].source_rank==0 and sources[0].category==""
+    replay=_durable_find(store,lambda *a:pytest.fail("must not find again"))
+    assert replay["source_plan"]==decision["source_plan"] and len(calls)==1

@@ -847,6 +847,7 @@ def test_response_compatibility(monkeypatch: pytest.MonkeyPatch, disc_store: _St
     assert any("insufficient location" in reason for reason in reasons)
     assert all(skip.reason_code for skip in result.skipped)
     assert set(DiscoveryRunResult.model_fields) == {
+        "next_cursor", "source_exhausted", "scope_note",
         "source",
         "retrieved_at",
         "categories",

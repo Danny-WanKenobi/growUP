@@ -21,6 +21,7 @@ validated fields drive execution.
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from typing import Any
@@ -51,12 +52,14 @@ READ_ONLY_INTENTS = frozenset(
         "preview_dcad_collection",
         "preview_successor",
         "inspect_pipeline",
+        "preview_retained_assessment",
     }
 )
 CONSEQUENTIAL_INTENTS = frozenset(
     {
         "start_real_evaluation",
         "release_engineering",
+        "commit_retained_assessment",
         "start_demo",
         "compare_scenarios",
         "stop",
@@ -212,6 +215,10 @@ def preview_intent(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Concrete preview for ask mode (operations, effects, cost bounds)."""
+    if intent == "commit_retained_assessment":
+        return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
+                "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
+                "cost_bounds":{"brave_attempts":0,"meta_calls":0,"source_requests":0,"outreach":0}}
     if intent == "release_engineering":
         return {"operations": ["authenticate held dossier", "release authorized report to engineering and Michael"],
                 "inputs": {"run_id": args.get("run_id"), "site_inputs": args.get("site_inputs")},
@@ -305,7 +312,7 @@ def preview_intent(
             "operations": operations,
             "inputs": {
                 "scope": args.get("scope", ""),
-                "policy": args.get("policy", "pilot"),
+                "policy": args.get("policy", "source_ordered"),
                 "max_passes": bounds[0],
                 "max_duration_seconds": bounds[1],
                 "max_created": bounds[2],
@@ -564,7 +571,7 @@ def _help_text() -> str:
         "Priscilla cohort simulations, start/stop/resume/inspect "
         "bounded discovery, explain stored results and economics, "
         "analyze evidence, draft Uriel copy, inspect inference "
-        "usage, or preview/collect DCAD evidence and preview/commit "
+        "usage, preview/commit retained evidence reassessments, or preview/collect DCAD evidence and preview/commit "
         "same-dossier successors, or release an authorized inspection hold to engineering (release_engineering). Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits). "
         "Each assistance capability spends at most one provider "
@@ -594,7 +601,13 @@ def _json_list_arg(args: dict[str, Any], key: str, what: str) -> list[Any] | Non
 def _burst_cells(args: dict[str, Any]) -> list[Any]:
     from app.discovery_runner import RunnerCell
 
-    raw = _json_list_arg(args, "cells", "cells")
+    if args.get("source_plan"):
+        from app.discovery_runner import sources_from_plan
+        try:
+            return sources_from_plan(str(args["source_plan"]),json.loads(str(args.get("bbox", "null"))))
+        except (ValueError,TypeError) as exc:
+            raise WondrueError(str(exc)) from exc
+    raw = _json_list_arg(args, "sources", "sources") or _json_list_arg(args, "cells", "cells")
     if not raw:
         raise WondrueError("cells (JSON list) is required")
     cells = []
@@ -615,6 +628,8 @@ def _burst_cells(args: dict[str, Any]) -> list[Any]:
                     category=str(item.get("category", "")),
                     bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
                     source=str(item.get("source", "overpass") or "overpass"),
+                    jurisdiction=str(item.get("jurisdiction", "") or ""),
+                    selection=item.get("selection"), source_rank=item.get("rank",0),
                 )
             )
         except (ValueError, TypeError) as exc:
@@ -794,7 +809,7 @@ def _burst_report(
     )
     config = runner_module.RunnerConfig(
         scope=scope,
-        policy=str(args.get("policy", "pilot") or "pilot"),
+        policy=str(args.get("policy", "source_ordered") or "source_ordered"),
         cells=_burst_cells(args),
         max_passes=max_passes,
         max_duration_seconds=max_duration,
@@ -837,6 +852,36 @@ def _execute_real(
     from app.workflow_db import get_record_in_transaction
 
     capability_ctx = dict(ctx or _capability_context())
+
+    if intent in ("preview_retained_assessment","commit_retained_assessment"):
+        from app import retained_assessment
+        def read_object(name):
+            raw=args.get(name,"{}")
+            try:
+                obj=json.loads(raw) if isinstance(raw,str) else raw
+            except (ValueError,TypeError) as exc:
+                raise WondrueError(f"{name} must be a JSON object") from exc
+            if not isinstance(obj,dict):
+                raise WondrueError(f"{name} must be a JSON object")
+            return obj
+        inputs={"parent_run_id":str(UUID(str(args.get("parent_run_id")))),
+                "dossier_key":str(args.get("dossier_key") or "main"),
+                "collection_run_id":str(UUID(str(args.get("collection_run_id")))),
+                "site_inputs":read_object("site_inputs"),"financial_inputs":read_object("financial_inputs")}
+        if intent=="preview_retained_assessment":
+            if conn is None:
+                from app.properties_db import get_connection
+                with get_connection() as owned:
+                    result=retained_assessment.preview_in_transaction(owned,**inputs)
+            else:
+                result=retained_assessment.preview_in_transaction(conn,**inputs)
+            return {"assessment_preview":result}
+        inputs.update(principal=str(capability_ctx.get("principal") or ""),reason=str(args.get("reason") or ""),
+                      preview_digest=str(args.get("preview_digest") or ""))
+        # Always commit business changes and their permanent audit event
+        # together, including when the HTTP route owns a read connection.
+        result=retained_assessment.commit_audited(**inputs)
+        return {"summary":result}
 
     if intent == "release_engineering":
         principal = str(capability_ctx.get("principal") or "")
@@ -1212,7 +1257,7 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
-    if intent == "release_engineering":
+    if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1265,7 +1310,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent == "release_engineering" and args.get("_release_principal") != principal:
+            if intent in ("release_engineering","commit_retained_assessment") and args.get("_release_principal") != principal:
                 raise WondrueAuthError("engineering release approval belongs to a different operator")
             if intent in INFERENCE_INTENTS:
                 try:

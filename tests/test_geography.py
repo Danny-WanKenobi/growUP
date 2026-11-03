@@ -203,7 +203,7 @@ def test_cross_county_municipality_alone_stays_unknown() -> None:
 # --- 6. Confirmed out-of-area property deferred, evidence retained ---
 
 
-def test_outside_operating_area_deferred_not_discarded() -> None:
+def test_county_is_descriptive_and_never_defers_candidate() -> None:
     ranking = _rank(
         _result(
             "Houston tower listed",
@@ -215,24 +215,11 @@ def test_outside_operating_area_deferred_not_discarded() -> None:
     )
     candidate = _only_candidate(ranking)
     assert candidate.county is CountyEligibility.OUTSIDE_OPERATING_AREA
-    assert candidate.qc_status is QCStatus.DEFERRED
-    assert len(candidate.deferrals) == 1
-    deferral = candidate.deferrals[0]
-    assert deferral.rule == "outside_operating_area"
-    assert "Harris" in deferral.evidence
-    assert deferral.source_url == "https://example.com/bayou"
-    assert deferral.why_sufficient
-    assert deferral.identity
-    # Evidence retained on the candidate but out of the active queue.
-    assert candidate.value_detail is not None
+    assert candidate.qc_status is QCStatus.PASS
+    assert candidate.deferrals == []
     assert candidate.value_detail.amount == "50000000"
-    assert candidate.key not in ranking.value_order
-    assert candidate.key not in ranking.opportunity_order
-    assert candidate.key not in ranking.unpriced
-    assert candidate.key not in ranking.insufficient_data
-
-
-# --- 7. Downtown preference consistent across municipalities ---
+    assert candidate.key in ranking.value_order
+    assert candidate.key in ranking.opportunity_order or candidate.key in ranking.insufficient_data
 
 
 def test_downtown_bonus_applies_outside_dallas() -> None:

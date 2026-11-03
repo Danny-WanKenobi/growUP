@@ -144,6 +144,7 @@ def discover_us_sources(
         "selected_source": decision.get("selected_candidate"),
         "selected_resource": decision.get("selected_resource"),
         "resource_digest": decision.get("resource_digest"),
+        "source_plan": decision.get("source_plan", []),
         "selection_digest": decision.get("digest"),
         "selection": decision,
         "status": decision.get("status"),

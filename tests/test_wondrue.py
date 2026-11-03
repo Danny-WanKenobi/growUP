@@ -1,6 +1,7 @@
 """Wondrue modes, Meta adapter, and routes (no live calls, no PG)."""
 
 from __future__ import annotations
+from app.michael import FINANCIAL_UNITS
 
 from typing import Any
 
@@ -319,7 +320,7 @@ def test_unknown_mode_target_rejected() -> None:
 
 def test_compare_uses_validated_proposal_and_python_math() -> None:
     site = {
-        name: {"value": value, "unit": "m2" if name == "usable_area_m2" else "t", "provenance": "t", "classification": "assumed"}
+        name: {"value": value, "unit": "m2" if name == "usable_area_m2" else FINANCIAL_UNITS[name], "provenance": "t", "classification": "assumed"}
         for name, value in {
             "usable_area_m2": 100.0, "electricity_usd_per_kwh": 0.12,
             "water_usd_per_l": 0.002, "labor_h_per_m2_week": 0.1,
@@ -761,3 +762,47 @@ def test_route_page_serves_valid_template() -> None:
     assert "not the Baseten API key" in text
     assert "REAL-PROPERTY EVALUATION — genuine records only" in text
     assert "\\u2014" not in text
+
+
+def test_retained_assessment_ask_is_nonexecuting_and_actor_bound(monkeypatch):
+    from app import retained_assessment
+    seen = []
+    monkeypatch.setattr(retained_assessment, "commit_audited", lambda **kw: seen.append(kw) or {})
+    args = {"parent_run_id": "11111111-1111-1111-1111-111111111111",
+            "collection_run_id": "22222222-2222-2222-2222-222222222222",
+            "dossier_key": "main", "preview_digest": "a"*64, "reason": "reviewed evidence"}
+    intent = {"intent": "commit_retained_assessment", "args": args}
+    preview = handle_command(mode="ask", max_mode="full", text="", target="real",
+                             principal="owner", intent_override=intent, conn=object())
+    assert preview["outcome"] == "preview" and not seen
+    with pytest.raises(WondrueAuthError, match="different operator"):
+        handle_command(mode="ask", max_mode="full", text="", target="real", principal="other",
+                       intent_override=intent, conn=object(), approval_token=preview["approval_token"])
+    assert not seen
+    with pytest.raises(WondrueError, match="read-only"):
+        handle_command(mode="read-only", max_mode="full", text="", target="real",
+                       principal="owner", intent_override=intent, conn=object())
+    assert not seen
+
+
+def test_retained_assessment_read_preview_does_not_commit(monkeypatch):
+    from app import retained_assessment
+    monkeypatch.setattr(retained_assessment, "preview_in_transaction", lambda *a, **kw: {"provider_requests": 0})
+    result = handle_command(mode="read-only", max_mode="read-only", text="", target="real",
+        intent_override={"intent": "preview_retained_assessment", "args": {
+            "parent_run_id": "11111111-1111-1111-1111-111111111111",
+            "collection_run_id": "22222222-2222-2222-2222-222222222222"}}, conn=object())
+    assert result["data"]["assessment_preview"] == {"provider_requests": 0}
+
+
+def test_retained_commit_uses_audited_path_with_route_connection(monkeypatch):
+    from app import retained_assessment
+    calls = []
+    monkeypatch.setattr(retained_assessment, "commit_audited", lambda **kw: calls.append(kw) or {"run_id": "stored"})
+    result = handle_command(mode="full", max_mode="full", text="", target="real", principal="owner",
+        intent_override={"intent": "commit_retained_assessment", "args": {
+            "parent_run_id": "11111111-1111-1111-1111-111111111111",
+            "collection_run_id": "22222222-2222-2222-2222-222222222222",
+            "preview_digest": "a"*64, "reason": "reviewed evidence"}}, conn=object())
+    assert result["data"]["summary"]["run_id"] == "stored"
+    assert calls[0]["principal"] == "owner"

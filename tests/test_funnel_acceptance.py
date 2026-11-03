@@ -512,7 +512,7 @@ def test_full_chain_coordinator_then_wondrue(monkeypatch: pytest.MonkeyPatch) ->
         ("forward", "onesimus", "michael"),
         ("forward", "michael", "uriel"),
     ]
-    assert len(db["versions"]) == 3 and len(db["snapshots"]) == 3
+    assert len(db["versions"]) == 4 and len(db["snapshots"]) == 4
 
     # Package is genuine: never synthetic, never executed.
     package = db["packages"][0]
@@ -692,7 +692,7 @@ def test_live_full_chain_coordinator_then_wondrue(
             "WHERE dossier_id = %(d)s",
             {"d": dossier_id},
         )
-        assert (versions, receipts, packages, conversions) == (3, 4, 1, 1)
+        assert (versions, receipts, packages, conversions) == (4, 4, 1, 1)
         assert transitions == 6
 
         with conn.cursor() as cur:
@@ -878,9 +878,9 @@ def test_authorized_hold_release_preserves_limits_and_reports(monkeypatch):
     released = mvp.release_engineering_in_transaction(conn, rid, principal="owner", site_inputs=_site_inputs())
     assert released["stage"] == "done"
     assert db["runs"][0]["limits"] == {"stop_after_raphael": True}
-    assert len(db["versions"]) == 3
+    assert len(db["versions"]) == 4
     final = db["versions"][-1]["payload"]["dossier"]
-    assert set(final["reports"]) == {"raphael", "onesimus"}
+    assert set(final["reports"]) == {"raphael", "onesimus", "michael"}
     assert {k:v for k,v in final.items() if k != "reports"} == original["dossier"]
     before = deepcopy(db)
     assert mvp.release_engineering_in_transaction(conn, rid, principal="owner", site_inputs=_site_inputs()) == released

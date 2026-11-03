@@ -467,7 +467,7 @@ def test_o_ranking_endpoint_additive(monkeypatch, tmp_path) -> None:
     )
     assert ranked.status_code == 200
     assert ranked.json()["ranking"] is not None
-    assert ranked.json()["ranking"]["ranking_version"] == "004B-5.0"
+    assert ranked.json()["ranking"]["ranking_version"] == "004B-6.0"
     assert len(brave_calls) == before + 3
     # Ranking without intelligence is rejected, not silently triggered.
     conflict = client.post(

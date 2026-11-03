@@ -20,11 +20,8 @@ auditable rules. Everything uncertain stays eligible as RESEARCH_REQUIRED
 with explicit next steps for Raphael, Onesimus, and Michael -- whose
 conclusions Gabriel never fabricates.
 
-Geography (twelve-county expansion): the operating area is Dallas County
-(primary territory) plus eleven secondary counties. Properties reliably
-outside all twelve counties are DEFERRED from the active queue with
-evidence retained -- never silently discarded. Unknown county is never
-a disqualification.
+Geography is descriptive evidence only. County does not defer a candidate
+or break score ties. Collection remains bounded by approved source scopes.
 """
 
 from __future__ import annotations
@@ -49,7 +46,7 @@ from app.agents.gabriel.geography import DALLAS_COUNTY, SECONDARY_COUNTIES
 from app.agents.gabriel.source_identity import evidence_host
 from app.agents.gabriel.verification import CategoryVerification
 
-RANKING_VERSION = "004B-5.0"
+RANKING_VERSION = "004B-6.0"
 
 # Initial product heuristics (not validated investment criteria).
 WEIGHT_VALUE = 0.30
@@ -381,15 +378,6 @@ def _assess_county(evidence: _CandidateEvidence) -> tuple[CountyEligibility, str
     )
 
 
-def _geo_priority(county: CountyEligibility) -> int:
-    """Deterministic ordering tiebreak only; never a score penalty."""
-    if county is CountyEligibility.PRIMARY_AREA:
-        return 2
-    if county is CountyEligibility.SECONDARY_AREA:
-        return 1
-    return 0
-
-
 # ---------------------------------------------------------------------------
 # Quality control
 # ---------------------------------------------------------------------------
@@ -450,20 +438,6 @@ def _evaluate_qc(
     if candidate.exclusions:
         candidate.qc_status = QCStatus.EXCLUDE
         return
-    if candidate.county is CountyEligibility.OUTSIDE_OPERATING_AREA:
-        county, item = evidence.counties[0]
-        candidate.deferrals.append(
-            ExclusionRecord(
-                rule="outside_operating_area",
-                evidence=f"explicit county evidence '{county}'",
-                source_url=item.result_url,
-                why_sufficient="reliable county evidence places the property outside the twelve-county operating area",
-                identity=identity,
-                date=_item_date(item),
-            )
-        )
-        candidate.qc_status = QCStatus.DEFERRED
-        return
     candidate.unresolved.extend(evidence.unresolved)
     candidate.unresolved.extend(f"contradiction: {text}" for text in evidence.contradictions)
     if "proposed" in evidence.structure:
@@ -484,7 +458,7 @@ def _next_steps(candidate: RankedCandidate, evidence: _CandidateEvidence) -> lis
         ]
     steps: list[str] = []
     if candidate.county is CountyEligibility.COUNTY_UNKNOWN:
-        steps.append("Raphael: verify county location within the twelve-county operating area via appraisal district or parcel records")
+        steps.append("Raphael: verify county/location as descriptive property evidence via appraisal district or parcel records")
     if not evidence.asking:
         steps.append("Gabriel: seek a current advertised asking price from listing sources")
     if not evidence.occupancy:
@@ -825,14 +799,13 @@ def rank_intelligence(intel: ResearchIntelligence) -> PropertyRanking:
     ranking.unpriced = sorted(
         candidate.key for candidate in queued if candidate.value_detail is None
     )
-    # Opportunity ranking: sufficient queued candidates by score, with a
-    # geographic tiebreak only (primary > secondary > unknown).
+    # Opportunity ranking: evidence-based score, then stable identity; no geographic bonus.
     scored = [
         candidate for candidate in queued
         if candidate.opportunity.sufficient and candidate.opportunity.score is not None
     ]
     scored.sort(
-        key=lambda candidate: (candidate.opportunity.score, _geo_priority(candidate.county), candidate.key),  # type: ignore[misc]
+        key=lambda candidate: (candidate.opportunity.score, candidate.key),  # type: ignore[misc]
         reverse=True,
     )
     ranking.opportunity_order = [candidate.key for candidate in scored]

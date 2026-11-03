@@ -428,7 +428,7 @@ def test_research_verdict_excluded_preserves_rule() -> None:
     assert record["date"] == candidate.exclusions[0].date
 
 
-def test_research_verdict_deferred() -> None:
+def test_research_verdict_not_deferred_for_county() -> None:
     from app.agents.gabriel.ranking import rank_intelligence
 
     intel = _intel(_brave_result(
@@ -440,8 +440,8 @@ def test_research_verdict_deferred() -> None:
     ))
     ranking = rank_intelligence(intel)
     (verdict,) = _research_verdicts(ranking, intel)
-    assert verdict.details["decision"] == "DEFERRED"
-    assert "outside_operating_area" in verdict.details["reason_codes"]
+    assert verdict.details["decision"] == "PASS"
+    assert "outside_operating_area" not in verdict.details["reason_codes"]
 
 
 def test_research_verdict_identity_dispute() -> None:

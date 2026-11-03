@@ -1,32 +1,7 @@
-"""Bounded continuous discovery: repeated small passes, durable checkpoints.
+"""Resumable source-ordered discovery; historical batch quotas never schedule work.
 
-The runner drives existing bounded ``run_discovery`` passes (OSM
-adapter, own persistence and dedup) and stops on quota, duration,
-budget, failure, Sabbath, or operator request. It never invents
-county/city coverage: every cell carries an operator-supplied bbox.
-
-Policies within one runner:
-
-- ``pilot``: serve unmet 36-cell qualification requirements first;
-  stop when the canonical quota is satisfied or any limit hits.
-- ``timed``: keep discovering/reassessing within an approved
-  duration and budget even after the quota is satisfied.
-
-One active worker per scope is enforced by a partial unique index;
-checkpoints make stop/resume lossless. Nothing here launches
-background work: each invocation is a synchronous bounded burst, so
-Wondrue start/resume stays request-safe and long campaigns proceed
-as repeated operator-approved bursts (or CLI runs).
-
-Stop, duration, Sabbath, and request bounds apply between work
-units (passes and evaluations), never mid-write; an in-flight
-provider request cannot be cancelled and runs to its own
-timeout. Discovery advances through configured search units with
-durable exhaustion (a pass that creates nothing exhausts its
-exact query); fulfilled pilot cells are skipped under the pilot
-policy. Every pass carries an effective limit clamped to the
-remaining creation allowance, and the report states per-provider
-request bounds alongside actual spend.
+One ranked resource/window is paged to an explicit provider end before the next.
+Budgets, stop, Sabbath and durable custody/verification boundaries remain active.
 """
 
 from __future__ import annotations
@@ -49,7 +24,7 @@ except ImportError:  # pragma: no cover - dependency present via requirements
     _DRIVER_ERRORS = ()
 
 RUNNER_VERSION = "discovery-runner-1"
-POLICIES = ("pilot", "timed")
+POLICIES = ("source_ordered", "pilot", "timed")  # legacy values readable for audit
 STATUSES = ("running", "paused", "completed", "aborted")
 DEFAULT_PACING_SECONDS = 5.0
 DEFAULT_BACKOFF_CAP_SECONDS = 120.0
@@ -70,6 +45,7 @@ class RunnerCell:
     source: str = "overpass"
     jurisdiction: str = ""
     selection: dict | None = None
+    source_rank: int = 0
 
     @property
     def key(self) -> str:
@@ -84,11 +60,10 @@ class RunnerCell:
         approved geographic subdivisions (same county/category,
         different bboxes) progress and exhaust independently.
         """
-        south, west, north, east = self.bbox
-        return (
-            f"{self.county}||{self.category}||"
-            f"{south!r},{west!r},{north!r},{east!r}||{self.source}"
-        )
+        resource = ((self.selection or {}).get("resource_digest")
+                    or (self.selection or {}).get("selected_candidate") or self.source)
+        return f"{self.source}||{resource}||{self.jurisdiction or self.county}"
+
 
 
 @dataclass
@@ -118,6 +93,7 @@ class RunnerConfig:
     max_discovery_attempts_per_unit: int | None = None
     max_census_requests: int | None = None
     census_attempt_limit: int = 1
+    stop_on_authorized: bool = False
 
     @property
     def overpass_request_bound(self) -> int:
@@ -139,8 +115,11 @@ class RunnerConfig:
         return self.max_census_requests
 
     def validate(self) -> None:
-        from app.pilot import normalize_category, normalize_county
-
+        # Legacy command names are aliases only; no quota or rotation survives.
+        if self.policy in ("pilot", "timed"):
+            self.policy = "source_ordered"
+        if not isinstance(self.stop_on_authorized, bool):
+            raise RunnerError("stop_on_authorized must be boolean")
         if not str(self.scope or "").strip():
             raise RunnerError("scope is required")
         if self.policy not in POLICIES:
@@ -148,11 +127,8 @@ class RunnerConfig:
         if not self.cells:
             raise RunnerError("at least one cell is required")
         for cell in self.cells:
-            try:
-                normalize_county(cell.county)
-                normalize_category(cell.category)
-            except ValueError as exc:
-                raise RunnerError(f"unknown pilot cell: {cell.key} ({exc})") from exc
+            if type(cell.source_rank) is not int or cell.source_rank < 0:
+                raise RunnerError("source rank must be a nonnegative integer")
             for value in cell.bbox:
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise RunnerError(f"cell bbox must hold numbers: {cell.key}")
@@ -185,6 +161,13 @@ class RunnerConfig:
                 raise RunnerError(str(exc)) from exc
         if self.max_passes < 1:
             raise RunnerError("max_passes must be >= 1")
+        unique = {}
+        for cell in sorted(self.cells, key=lambda c:c.source_rank):
+            resource = ((cell.selection or {}).get("resource_digest")
+                        or (cell.selection or {}).get("selected_candidate") or cell.source)
+            identity = (cell.source, resource, cell.jurisdiction or cell.county)
+            unique.setdefault(identity, cell)
+        self.cells = list(unique.values())
         if self.max_duration_seconds <= 0:
             raise RunnerError("max_duration_seconds must be positive")
         if self.max_created_total < 0:
@@ -630,30 +613,15 @@ def _fresh_checkpoint(cells: list[RunnerCell]) -> dict[str, Any]:
                 "category": cell.category,
                 "bbox": list(cell.bbox),
                 "source": cell.source,
+                "unit_key": cell.unit_key,
+                "jurisdiction": cell.jurisdiction,
+                "source_rank": cell.source_rank,
+                "selection_digest": (cell.selection or {}).get("digest"),
+                "resource_digest": (cell.selection or {}).get("resource_digest"),
             }
             for cell in cells
         ],
     }
-
-
-def _canonical_cell_key(cell: RunnerCell) -> tuple[str, str]:
-    """Pilot-cell identity in canonical form for ledger lookups."""
-    from app.pilot import normalize_category, normalize_county
-
-    return (normalize_county(cell.county), normalize_category(cell.category))
-
-
-def _cell_order_pilot(
-    cells: list[RunnerCell], counts: dict[tuple[str, str], int]
-) -> list[RunnerCell]:
-    """Unmet cells first (lowest canonical qualified count), stable."""
-    return sorted(
-        cells,
-        key=lambda cell: (
-            counts.get(_canonical_cell_key(cell), 0),
-            cells.index(cell),
-        ),
-    )
 
 
 def burst_request_bounds(config: RunnerConfig) -> dict[str, int]:
@@ -725,22 +693,17 @@ def _unit_runnable(
     recorded attempts reached it. Exhausted units otherwise stay
     skipped unless a wider window reopens them (a larger pass
     limit sees provider results beyond the exhausted head).
-    Under the pilot policy, fulfilled cells are skipped; timed
-    reassessment continues past quota by design. Units that
+    County/category counts never influence eligibility. Sources that
     reached their per-unit creation cap are skipped under every
     policy.
     """
-    from app.pilot import TARGET_QUALIFIED_PER_CELL
-
     if max_discovery_attempts_per_unit is not None and (
         int(state.get("passes", 0)) >= int(max_discovery_attempts_per_unit)
     ):
         return False
-    if state.get("exhausted") and int(effective_limit) <= int(state.get("limit", 0)):
+    if state.get("blocked"):
         return False
-    if policy == "pilot" and (
-        counts.get(_canonical_cell_key(cell), 0) >= TARGET_QUALIFIED_PER_CELL
-    ):
+    if state.get("exhausted"):
         return False
     if max_created_per_unit is not None and (
         int(state.get("created", 0)) >= int(max_created_per_unit)
@@ -762,35 +725,18 @@ def _record_unit_progress(
     scripted doubles (created-only counts) still exhaust on zeros.
     """
     state = _unit_state(checkpoint, unit_key)
-    counts = getattr(result, "counts", None)
-    try:
-        created = int(getattr(counts, "created", 0) or 0)
-    except (TypeError, ValueError):
-        created = 0
-    state["passes"] = int(state.get("passes", 0)) + 1
-    state["created"] = int(state.get("created", 0)) + created
-    if created > 0:
-        state["exhausted"] = False
-        state["reason"] = ""
+    counts = getattr(result,"counts",None)
+    created = int(getattr(counts,"created",0) or 0)
+    state["passes"] = int(state.get("passes",0))+1
+    state["created"] = int(state.get("created",0))+created
+    exhausted = getattr(result,"source_exhausted",None)
+    following = getattr(result,"next_cursor",None)
+    if type(exhausted) is not bool or (not exhausted and not following):
+        state.update(blocked=True, exhausted=False, reason="pagination unsupported/unknown; coverage incomplete")
         return
-    raw_returned = getattr(counts, "returned", None)
-    try:
-        returned = None if raw_returned is None else int(raw_returned)
-    except (TypeError, ValueError):
-        returned = None
-    try:
-        unusable = int(getattr(counts, "skipped_unusable", 0) or 0)
-    except (TypeError, ValueError):
-        unusable = 0
-    if returned is None:
-        reason = "no created results (unreported window)"
-    elif returned == 0:
-        reason = "empty window"
-    elif unusable == 0:
-        reason = "all duplicates at this limit"
-    else:
-        reason = "no usable results at this limit"
-    _mark_unit_exhausted(state, reason=reason, limit=effective_limit)
+    state.update(continuation=following, blocked=False, exhausted=exhausted,
+                 reason="provider end reached within approved scope" if exhausted else "", limit=effective_limit)
+    state["scope_note"] = str(getattr(result,"scope_note","") or "approved resource/window only")
 
 
 def _no_runnable_reason(
@@ -805,80 +751,19 @@ def _no_runnable_reason(
     :func:`_unit_runnable` branches) so every unit lands in
     exactly one bucket.
     """
-    from app.pilot import TARGET_QUALIFIED_PER_CELL
-
-    exhausted = 0
-    fulfilled = 0
-    capped = 0
-    attempts_spent = 0
-    for cell in config.cells:
-        state = _unit_state(checkpoint, cell.unit_key)
-        clamped = int(effective_limit)
-        if config.max_created_per_unit is not None:
-            clamped = min(
-                clamped,
-                int(config.max_created_per_unit) - int(state.get("created", 0)),
-            )
-        if config.max_discovery_attempts_per_unit is not None and (
-            int(state.get("passes", 0))
-            >= int(config.max_discovery_attempts_per_unit)
-        ):
-            attempts_spent += 1
-        elif config.max_created_per_unit is not None and (
-            int(state.get("created", 0)) >= int(config.max_created_per_unit)
-        ):
-            capped += 1
-        elif state.get("exhausted") and clamped <= int(state.get("limit", 0)):
-            exhausted += 1
-        elif (
-            config.policy == "pilot"
-            and counts.get(_canonical_cell_key(cell), 0) >= TARGET_QUALIFIED_PER_CELL
-        ):
-            fulfilled += 1
-        else:  # pragma: no cover - unreachable when no unit is runnable
-            exhausted += 1
-    total = len(config.cells)
-    if exhausted == total and fulfilled == 0 and capped == 0 and attempts_spent == 0:
-        return "all configured work units exhausted"
-    if fulfilled == total and exhausted == 0 and capped == 0 and attempts_spent == 0:
-        return "all configured work units fulfilled"
-    if capped == total and exhausted == 0 and fulfilled == 0 and attempts_spent == 0:
-        return "all configured work units at creation cap"
-    if attempts_spent == total and exhausted == 0 and fulfilled == 0 and capped == 0:
-        return "all configured work units spent their discovery attempts"
-    return (
-        f"no runnable discovery units ({exhausted} exhausted, "
-        f"{fulfilled} fulfilled, {capped} at creation cap, "
-        f"{attempts_spent} attempts spent)"
-    )
-
-
-def _cell_order_timed(
-    cells: list[RunnerCell], checkpoint: dict[str, Any]
-) -> list[RunnerCell]:
-    """Round-robin by least created this campaign, stable."""
-    per_cell = checkpoint.get("per_cell") or {}
-    return sorted(
-        cells,
-        key=lambda cell: (int(per_cell.get(cell.key, 0)), cells.index(cell)),
-    )
-
-
-def _quota_met(counts: dict[tuple[str, str], int]) -> bool:
-    from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER
-    from app.pilot import PILOT_CATEGORIES, TARGET_QUALIFIED_PER_CELL
-
-    for county in COUNTY_PRIORITY_ORDER:
-        for category in PILOT_CATEGORIES:
-            if counts.get((county, category), 0) < TARGET_QUALIFIED_PER_CELL:
-                return False
-    return True
+    states = [_unit_state(checkpoint,c.unit_key) for c in config.cells]
+    if all(st.get("exhausted") for st in states):
+        return "all approved source scopes exhausted"
+    if any(st.get("blocked") for st in states):
+        return "source pagination blocked; coverage incomplete"
+    return "source work paused at an explicit per-source limit; coverage incomplete"
 
 
 def _config_bounds(config: RunnerConfig) -> dict[str, Any]:
     """Persisted snapshot of one invocation's bounds (audit + recovery)."""
     return {
         "runner_version": RUNNER_VERSION,
+        "stop_on_authorized": config.stop_on_authorized,
         "policy": config.policy,
         "max_passes": config.max_passes,
         "max_duration_seconds": config.max_duration_seconds,
@@ -922,6 +807,9 @@ def _merge_saved_checkpoint(
                 "exhausted": bool(value.get("exhausted", False)),
                 "reason": str(value.get("reason", "") or ""),
                 "limit": int(value.get("limit", 0)),
+                "continuation": value.get("continuation"),
+                "blocked": bool(value.get("blocked",False)),
+                "scope_note": str(value.get("scope_note", "")),
             }
     checkpoint["overpass_requests"] = int(saved.get("overpass_requests", 0))
     checkpoint["local_discovery_passes"] = int(saved.get("local_discovery_passes", 0))
@@ -1096,6 +984,9 @@ def _unit_key_for_cell(checkpoint: dict[str, Any], cell_key: str) -> str:
         try:
             south, west, north, east = (float(value) for value in bbox)
         except (TypeError, ValueError):
+            continue
+        if entry.get("unit_key"):
+            matches.append(str(entry["unit_key"]))
             continue
         matches.append(
             f"{entry.get('county')}||{entry.get('category')}||"
@@ -1384,6 +1275,7 @@ def evaluate_property(
     census_attempt_limit: int = 0,
     census_principal: str | None = None,
     official_ref: dict[str, Any] | None = None,
+    stop_after_raphael: bool = False,
 ) -> dict[str, Any]:
     """Drive one discovered property through the existing coordinator.
 
@@ -1471,7 +1363,7 @@ def evaluate_property(
             census_attempt_limit=census_attempt_limit,
             census_principal=census_principal,
             official_ref=resolved_official if isinstance(resolved_official, dict) else None,
-            stop_after_raphael=isinstance(resolved_official, dict),
+            stop_after_raphael=stop_after_raphael,
         )
     except WorkflowError as exc:
         spent = max(0, _brave_used_for(assignment_id, query) - brave_before)
@@ -1514,6 +1406,18 @@ def _coordinator_enabled() -> bool:
     return workflow_enabled()
 
 
+def _first_authorized(checkpoint: dict[str, Any]) -> dict[str, str] | None:
+    for pid, result in (checkpoint.get("evaluations") or {}).items():
+        if not isinstance(result, dict) or result.get("outcome") != "evaluated" or result.get("decision") != "authorized":
+            continue
+        try:
+            property_id, run_id = str(UUID(str(pid))), str(UUID(str(result.get("run_id", ""))))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        return {"property_id": property_id, "run_id": run_id}
+    return None
+
+
 def _drive_evaluations(
     evaluate_fn: Callable[[str, str], dict[str, Any]],
     config: RunnerConfig,
@@ -1549,6 +1453,9 @@ def _drive_evaluations(
     driven = 0
     evaluated = 0
     qualified = 0
+    if config.stop_on_authorized and _first_authorized(checkpoint):
+        report["authorization_match"] = _first_authorized(checkpoint)
+        return evaluated, qualified
     for pid in list(backlog):
         if driven >= config.max_evaluations_per_pass:
             break
@@ -1591,6 +1498,9 @@ def _drive_evaluations(
                 qualified += int(outcome.get("qualified", 0) or 0)
             except (TypeError, ValueError):
                 pass
+        if config.stop_on_authorized and _first_authorized(checkpoint):
+            report["authorization_match"] = _first_authorized(checkpoint)
+            break
     report["evaluations_pending"] = len(backlog)
     return evaluated, qualified
 
@@ -1638,7 +1548,7 @@ def run_worker(
     creations through the same accounting (see
     :func:`_fold_pass_events`) and consumes its sequence, so the
     next pass never reuses the failed run id. Discovery limits
-    (creation ceiling, pilot quota) stop new discovery only: a
+    (creation ceiling or request bounds) stop new discovery only: a
     pending backlog keeps draining in bounded rounds under the
     same duration/stop/evaluation limits. Reported ``created``
     counts property records; only coordinator ``qualified``
@@ -1656,6 +1566,8 @@ def run_worker(
         _pass_events_fn = events_fn
     bounds = burst_request_bounds(config)
     if discovery_fn is None:
+        if not config.acquire_approved:
+            raise RunnerError("live discovery requires explicit acquisition approval")
         from app.agents.gabriel.schemas import BoundingBoxInput, DiscoveryRunRequest
         from app.agents.gabriel.service import run_discovery
         from app.agents.gabriel.sources.base import UnknownSourceError, get_source
@@ -1673,7 +1585,7 @@ def run_worker(
                 bbox=BoundingBoxInput(
                     south=south, west=west, north=north, east=east
                 ),
-                categories=[cell.category],
+                categories=None,
                 limit=config.pass_limit,
                 timeout_seconds=config.pass_timeout_seconds,
             )
@@ -1692,9 +1604,11 @@ def run_worker(
                     bbox=BoundingBoxInput(
                         south=south, west=west, north=north, east=east
                     ),
-                    categories=[cell.category],
-                    limit=config.pass_limit,
+                    categories=None,
+                    limit=int(limit),
                     max_created=int(limit),
+                    source_ordered=True,
+                    continuation=_unit_state(checkpoint,cell.unit_key).get("continuation"),
                     timeout_seconds=config.pass_timeout_seconds,
                     run_id=run_id or None,
                 )
@@ -1702,9 +1616,7 @@ def run_worker(
 
         discovery_fn = _real
     if counts_fn is None:
-        from app.pilot import canonical_qualified_counts
-
-        counts_fn = canonical_qualified_counts
+        counts_fn = lambda: {}  # historical cell counts never control discovery
 
     if evaluate_fn is None:
         if not config.acquire_approved:
@@ -1737,12 +1649,14 @@ def run_worker(
                     census_attempt_limit=census_limit,
                     census_principal=f"runner:{scope}",
                     official_ref=official_mode,  # type: ignore[arg-type]
+                    **({"stop_after_raphael": True} if config.stop_on_authorized else {}),
                 )
 
             evaluate_fn = _default_evaluate
     else:
         evaluations_precondition = None
     report: dict[str, Any] = {
+        "stop_on_authorized": config.stop_on_authorized,
         "scope": config.scope,
         "policy": config.policy,
         "run_id": None,
@@ -1787,6 +1701,10 @@ def run_worker(
     conn = _connect()
     try:
         previous = latest_run_in_transaction(conn, config.scope)
+        if previous and previous.get("policy") != config.policy:
+            _close(conn)
+            report.update(outcome="aborted",reason=f"scope uses policy {previous.get('policy')!r}; historical batch checkpoint retained, use a new source-ordered scope")
+            return report
         checkpoint = _merge_saved_checkpoint(
             config, dict(previous["checkpoint"]) if previous else None
         )
@@ -1868,56 +1786,15 @@ def run_worker(
         }
 
     def _refresh_final_counts() -> None:
-        """Fresh canonical counts for the final report, or unavailable.
-
-        The last evaluation round may earn credit after the loop's
-        most recent quota read (notably when the pass budget fills
-        immediately after that round), so the final report always
-        re-reads from the same canonical source. A failed read
-        marks quota progress unavailable instead of presenting
-        stale counts as current; committed work and recovery are
-        unaffected.
-        """
-        nonlocal counts_before, counts_last
-        try:
-            fresh = dict(counts_fn())
-        except Exception:
-            counts_last = None
-            return
-        if counts_before is None:
-            counts_before = dict(fresh)
-        counts_last = dict(fresh)
+        pass
 
     def _tally_cells() -> None:
-        from app.agents.gabriel.geography import COUNTY_PRIORITY_ORDER
-        from app.pilot import PILOT_CATEGORIES, TARGET_QUALIFIED_PER_CELL
-
-        if counts_last is None:
-            # Quota progress unreadable: report it unavailable with
-            # no per-cell rows, never zeros or stale counts.
-            report["cells"] = []
-            report["remaining_quota"] = None
-            report["credited_new"] = None
-            return
-        rows: list[dict[str, Any]] = []
-        remaining = 0
-        credited = 0
-        for county in COUNTY_PRIORITY_ORDER:
-            for category in PILOT_CATEGORIES:
-                key = (county, category)
-                have = int(counts_last.get(key, 0))
-                deficit = max(0, TARGET_QUALIFIED_PER_CELL - have)
-                remaining += deficit
-                if counts_before is not None:
-                    credited += max(0, have - int(counts_before.get(key, 0)))
-                rows.append({
-                    "county": county, "category": category,
-                    "credited": have, "target": TARGET_QUALIFIED_PER_CELL,
-                    "deficit": deficit,
-                })
-        report["cells"] = rows
-        report["remaining_quota"] = remaining
-        report["credited_new"] = credited
+        report["sources"] = [{"source":c.source,"rank":c.source_rank,
+            "scope":c.jurisdiction or c.county,"bbox":list(c.bbox),
+            **dict(_unit_state(checkpoint,c.unit_key))} for c in config.cells]
+        report["cells"] = []  # legacy report key, no active cell targets
+        report["remaining_quota"] = None
+        report["credited_new"] = None
 
     def _tally_outcomes() -> None:
         blocked = 0
@@ -2028,7 +1905,7 @@ def run_worker(
         """One evaluation-only round; False when the burst finished.
 
         Shared by every discovery-resting path (creation ceiling,
-        quota satisfied, request budget spent, no runnable units):
+        request budget spent, no runnable units):
         drain the durable backlog within the pass budget, honoring
         preemption between evaluations, or finish completed when no
         drive is possible.
@@ -2039,7 +1916,7 @@ def run_worker(
             or evaluations_halted is not None
             or _backlog_depth(checkpoint) == 0
         ):
-            _finish("completed", reason)
+            _finish("paused" if "incomplete" in reason or "blocked" in reason else "completed", reason)
             return False
         driven = _drive_evaluations(
             evaluate_fn, config, checkpoint, report, preempt_fn=_should_preempt
@@ -2051,6 +1928,10 @@ def run_worker(
         burst_qualified += driven[1]
         burst_passes += 1
         if not _persist_checkpoint():
+            return False
+        if config.stop_on_authorized and _first_authorized(checkpoint):
+            report["authorization_match"] = _first_authorized(checkpoint)
+            _finish("completed", "authorized dossier found")
             return False
         preempted = report.get("evaluations_preempted")
         if preempted and preempted != "brave request bound reached":
@@ -2106,6 +1987,9 @@ def run_worker(
             return report
 
     while True:
+        if config.stop_on_authorized and _first_authorized(checkpoint):
+            report["authorization_match"] = _first_authorized(checkpoint)
+            return _finish("completed", "authorized dossier found")
         if _sabbath_blackout(now_fn() if now_fn else None):
             return _finish("paused", "Sabbath blackout window")
         if clock() - started >= config.max_duration_seconds:
@@ -2123,16 +2007,13 @@ def run_worker(
             return report
         if state["stop_requested"]:
             return _finish("paused", "operator stop observed")
-        try:
-            counts = counts_fn()
-        except Exception as exc:  # quota reads must not invent progress
-            return _finish("aborted", f"pilot counts unreadable: {type(exc).__name__}")
-        if counts_before is None:
-            counts_before = dict(counts)
-        counts_last = dict(counts)
+        counts = {}  # no county/category completion gate or ledger dependency
         ceiling_hit = checkpoint["created_total"] >= config.max_created_total
-        quota_done = config.policy == "pilot" and _quota_met(counts)
-        if ceiling_hit or quota_done:
+        if _backlog_depth(checkpoint) and evaluations_halted is None and evaluate_fn is not None:
+            if not _drain_or_finish("pending dossier handoffs"):
+                return report
+            continue
+        if ceiling_hit:
             # Discovery limits stop *new* discovery; the durable
             # backlog stays reachable and drains under the same
             # duration/stop/evaluation bounds. Each drain round
@@ -2140,7 +2021,7 @@ def run_worker(
             reason = (
                 "creation budget exhausted"
                 if ceiling_hit
-                else "pilot quota satisfied"
+                else "creation budget exhausted"
             )
             if not _drain_or_finish(reason):
                 return report
@@ -2150,11 +2031,7 @@ def run_worker(
             if not _drain_or_finish("overpass request budget exhausted"):
                 return report
             continue
-        ordered = (
-            _cell_order_pilot(config.cells, counts)
-            if config.policy == "pilot"
-            else _cell_order_timed(config.cells, checkpoint)
-        )
+        ordered = sorted(config.cells,key=lambda c:c.source_rank)
         # A pass can never exceed the remaining creation allowance:
         # the effective limit is clamped before discovery runs.
         remaining = config.max_created_total - int(checkpoint["created_total"])
@@ -2162,8 +2039,12 @@ def run_worker(
         cell = None
         selected_effective = effective_limit
         for step in range(len(ordered)):
-            candidate = ordered[(int(checkpoint["cursor"]) + step) % len(ordered)]
+            candidate = ordered[step]
             state = _unit_state(checkpoint, candidate.unit_key)
+            if not state.get("exhausted") and not state.get("blocked"):
+                if ((config.max_created_per_unit is not None and int(state.get("created",0)) >= config.max_created_per_unit)
+                    or (config.max_discovery_attempts_per_unit is not None and int(state.get("passes",0)) >= config.max_discovery_attempts_per_unit)):
+                    return _finish("paused", "current source limit reached; source remains unfinished")
             if config.max_created_per_unit is not None:
                 unit_remaining = int(config.max_created_per_unit) - int(
                     state.get("created", 0)
@@ -2183,7 +2064,7 @@ def run_worker(
             ):
                 cell = candidate
                 selected_effective = unit_effective
-                checkpoint["cursor"] = int(checkpoint["cursor"]) + step + 1
+                checkpoint["cursor"] = step
                 break
         if cell is None:
             reason = _no_runnable_reason(config, checkpoint, counts, effective_limit)
@@ -2226,6 +2107,13 @@ def run_worker(
             except DatabaseUnavailableError:
                 return _finish("aborted", "failed-pass event fold unavailable")
             checkpoint["pending_pass"] = None
+            if "pagination unsupported" in str(exc) or "stable object-id" in str(exc):
+                state=_unit_state(checkpoint,cell.unit_key)
+                state.update(blocked=True,exhausted=False,reason="pagination unavailable; coverage incomplete")
+                burst_passes += 1
+                if not _persist_checkpoint():
+                    return report
+                continue
             consecutive_failures += 1
             if _is_auth_error(exc) or type(exc).__name__ in (
                 "DatabaseNotConfiguredError",
@@ -2275,7 +2163,32 @@ def run_worker(
                 evaluations_halted = preempted
             if not _persist_checkpoint():
                 return report
+            if config.stop_on_authorized and _first_authorized(checkpoint):
+                report["authorization_match"] = _first_authorized(checkpoint)
+                return _finish("completed", "authorized dossier found")
         sleep(config.pacing_seconds)
+
+
+def sources_from_plan(digest: str, bbox: list, *, store=None) -> list[RunnerCell]:
+    """Load Gabriel's durable qualified source order; no finding/network calls."""
+    from app.agents.gabriel.sources.source_selection import WorkflowSelectionStore, _digest
+    parent=(store or WorkflowSelectionStore()).load_decision(str(digest))
+    if not parent or parent.get("digest") != _digest(parent):
+        raise RunnerError("retained source plan is missing or corrupt")
+    if not isinstance(bbox,list) or len(bbox)!=4:
+        raise RunnerError("source plan requires an approved bbox")
+    cells=[]
+    for index, child in enumerate(parent.get("source_plan") or [parent]):
+        if child.get("digest") != _digest(child) or child.get("status") != "selected":
+            raise RunnerError("source plan child is invalid/unqualified")
+        if any(child.get(k)!=parent.get(k) for k in ("run_id","mission_fingerprint","evidence_digest")):
+            raise RunnerError("source plan child belongs to different retained evidence")
+        cells.append(RunnerCell(county="",category="",bbox=tuple(bbox),
+            source=str(child["selected_adapter"]),jurisdiction=str(child["mission"]["jurisdiction"]),
+            selection=child,source_rank=index))
+    if not cells:
+        raise RunnerError("source plan has no executable resources")
+    return cells
 
 
 def _cells_from_json(path: str) -> list[RunnerCell]:
@@ -2300,6 +2213,9 @@ def _cells_from_json(path: str) -> list[RunnerCell]:
                 category=str(item.get("category", "")),
                 bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
                 source=str(item.get("source", "overpass") or "overpass"),
+                jurisdiction=str(item.get("jurisdiction", "") or ""),
+                selection=item.get("selection"),
+                source_rank=item.get("rank",0),
             )
         )
     return cells
@@ -2310,6 +2226,9 @@ _ENVELOPE_KEYS = frozenset({
     "description",
     "policy",
     "units",
+    "sources",
+    "source_plan",
+    "bbox",
     "max_passes",
     "max_duration_seconds",
     "max_created_total",
@@ -2329,6 +2248,7 @@ _ENVELOPE_KEYS = frozenset({
     "claim_lease_seconds",
     "meta_calls",
     "outreach",
+    "stop_on_authorized",
 })
 
 
@@ -2357,31 +2277,39 @@ def envelope_config_from_json(
     for key in raw:
         if key not in _ENVELOPE_KEYS:
             raise RunnerError(f"unknown envelope key: {key!r}")
-    units = raw.get("units")
-    if not isinstance(units, list) or not units:
-        raise RunnerError("envelope units must be a non-empty list")
-    cells = []
-    for item in units:
-        if not isinstance(item, dict):
-            raise RunnerError("each envelope unit must be an object")
-        bbox = item.get("bbox")
-        if (
-            not isinstance(bbox, list)
-            or len(bbox) != 4
-            or not all(
-                isinstance(value, (int, float)) and not isinstance(value, bool)
-                for value in bbox
+    if raw.get("source_plan"):
+        if "sources" in raw or "units" in raw:
+            raise RunnerError("source_plan cannot be combined with sources/units")
+        cells=sources_from_plan(raw["source_plan"],raw.get("bbox"))
+    else:
+        units = raw.get("sources", raw.get("units"))
+        if not isinstance(units, list) or not units:
+            raise RunnerError("envelope units must be a non-empty list")
+        cells = []
+        for item in units:
+            if not isinstance(item, dict):
+                raise RunnerError("each envelope unit must be an object")
+            bbox = item.get("bbox")
+            if (
+                not isinstance(bbox, list)
+                or len(bbox) != 4
+                or not all(
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    for value in bbox
+                )
+            ):
+                raise RunnerError("each envelope unit needs bbox [south, west, north, east]")
+            cells.append(
+                RunnerCell(
+                    county=str(item.get("county", "")),
+                    category=str(item.get("category", "")),
+                    bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+                    source=str(item.get("source", "overpass") or "overpass"),
+                    jurisdiction=str(item.get("jurisdiction", "") or ""),
+                    selection=item.get("selection"),
+                    source_rank=item.get("rank",0),
+                )
             )
-        ):
-            raise RunnerError("each envelope unit needs bbox [south, west, north, east]")
-        cells.append(
-            RunnerCell(
-                county=str(item.get("county", "")),
-                category=str(item.get("category", "")),
-                bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
-                source=str(item.get("source", "overpass") or "overpass"),
-            )
-        )
 
     def _int(name: str, default: int | None) -> int | None:
         value = raw.get(name, default)
@@ -2414,7 +2342,8 @@ def envelope_config_from_json(
 
     config = RunnerConfig(
         scope=scope,
-        policy=str(raw.get("policy", "pilot") or "pilot"),
+        stop_on_authorized=raw.get("stop_on_authorized", False),
+        policy=str(raw.get("policy", "source_ordered") or "source_ordered"),
         cells=cells,
         max_passes=_req(_int("max_passes", 1), 1),
         max_duration_seconds=_req(_float("max_duration_seconds", 600.0), 600.0
@@ -2456,15 +2385,6 @@ def envelope_config_from_json(
     return config
 
 
-def _pilot_readiness_preview() -> dict[str, Any]:
-    """Read-only pilot readiness (no DB, no provider, no launch)."""
-    try:
-        from app.pilot import pilot_readiness
-        return pilot_readiness()
-    except Exception as exc:  # preview must stay truthful, not crash
-        return {"goal_claimed_met": False, "error": type(exc).__name__}
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI: run|status|stop|preview. ``run`` executes one bounded burst only."""
     import sys
@@ -2473,9 +2393,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] not in ("run", "status", "stop", "preview"):
         print(
             "usage: python -m app.discovery_runner run|status|stop|preview "
-            "--scope SCOPE [--policy pilot|timed] [--cells FILE] "
+            "--scope SCOPE [--policy source_ordered] [--cells FILE] "
             "[--max-passes N] [--max-duration SECONDS] [--max-created N] "
-            "[--resume] [--created-by LABEL] [--acquire-approved] "
+            "[--resume] [--created-by LABEL] [--acquire-approved] [--stop-on-authorized] "
             "[--max-evaluations N] [--evaluation-attempt-limit 1..18] "
             "[--evaluation-timeout SECONDS] [--max-overpass-requests N] "
             "[--max-created-per-unit N] [--max-discovery-attempts-per-unit N] "
@@ -2534,7 +2454,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--evaluation-attempt-limit", "--evaluation-timeout",
                 "--max-overpass-requests", "--max-created-per-unit",
                 "--max-discovery-attempts-per-unit", "--max-census-requests",
-                "--census-attempt-limit",
+                "--census-attempt-limit", "--stop-on-authorized",
             ):
                 if flag in opts:
                     raise RunnerError(
@@ -2564,7 +2484,8 @@ def main(argv: list[str] | None = None) -> int:
             raw_census = _opt("--max-census-requests")
             config = RunnerConfig(
                 scope=scope,
-                policy=_opt("--policy", "pilot") or "pilot",
+                stop_on_authorized="--stop-on-authorized" in opts,
+                policy=_opt("--policy", "source_ordered") or "source_ordered",
                 cells=_cells_from_json(cells_path),
                 max_passes=int(_opt("--max-passes", "1") or "1"),
                 max_duration_seconds=float(_opt("--max-duration", "600") or "600"),
@@ -2595,6 +2516,7 @@ def main(argv: list[str] | None = None) -> int:
         if command == "preview":
             print(json.dumps({
                 "scope": config.scope,
+                "stop_on_authorized": config.stop_on_authorized,
                 "policy": config.policy,
                 "units": [
                     {
@@ -2621,7 +2543,8 @@ def main(argv: list[str] | None = None) -> int:
                 "acquire_approved": config.acquire_approved,
                 "max_passes": config.max_passes,
                 "max_duration_seconds": config.max_duration_seconds,
-                "pilot_readiness": _pilot_readiness_preview(),
+                "traversal": "ranked sources, sequential pages, no county/category quotas",
+                "coverage": "entire selected dataset; pause at explicit limits",
             }, default=str))
             return 0
         report = run_worker(_connect, config)

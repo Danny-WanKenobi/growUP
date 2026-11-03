@@ -69,11 +69,14 @@ class SourceSelectionAttestation(BaseModel):
     evidence_digest: str | None = Field(default=None, max_length=64)
     selected_resource: dict | None = None
     resource_digest: str | None = Field(default=None, max_length=64)
+    source_plan: list[dict] | None = None
 
 
 class DiscoveryRunRequest(BaseModel):
     """Request body for POST /discovery/runs."""
 
+    source_ordered: bool = False
+    continuation: str | None = Field(default=None, max_length=2048)
     source: str = Field(default="overpass", min_length=1, max_length=100)
     jurisdiction: str | None = Field(default=None, max_length=200)
     record_types: list[str] | None = Field(default=None, max_length=8)
@@ -146,6 +149,9 @@ class DiscoveryRunResult(BaseModel):
     created_ids: list[str] = []
     skipped: list[SkippedCandidate] = []
     run_id: str = ""
+    next_cursor: str | None = None
+    source_exhausted: bool | None = None
+    scope_note: str = ""
 
 
 class DiscoverySourceInfo(BaseModel):

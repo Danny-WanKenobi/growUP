@@ -19,13 +19,12 @@ and a completed calculation is not automatically favorable.
 
 from __future__ import annotations
 
-from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from pydantic import BaseModel
 
-MICHAEL_CALC_VERSION = "michael-2"
+MICHAEL_CALC_VERSION = "michael-3"
 
 CLASSIFICATIONS = ("verified", "estimated", "experimental", "assumed", "unknown")
 
@@ -97,6 +96,30 @@ class FinancialInput(BaseModel):
     classification: str = "unknown"
     scenario: str = ""
     uncertainty: str = ""
+
+
+FINANCIAL_UNITS={"price_per_kg":"USD/kg","nutrient_usd_per_l":"USD/L",
+    "electricity_usd_per_kwh":"USD/kWh","water_usd_per_l":"USD/L",
+    "labor_h_per_m2_week":"h/m2/week","labor_usd_per_h":"USD/h",
+    "hvac_usd_per_m2_year":"USD/m2/year","other_opex_usd_per_m2_year":"USD/m2/year"}
+FINANCIAL_PERIODS={"price_per_kg":{"per-kg","per-kg-saleable"},
+    "nutrient_usd_per_l":{"per-liter","per-liter-solution","per-liter-concentrate"},
+    "electricity_usd_per_kwh":{"per-kwh"},"water_usd_per_l":{"per-liter","per-liter-water"},
+    "labor_h_per_m2_week":{"per-week","weekly","per-m2-week"},"labor_usd_per_h":{"per-hour"},
+    "hvac_usd_per_m2_year":{"per-year","annual","per-m2-year"},
+    "other_opex_usd_per_m2_year":{"per-year","annual","per-m2-year"}}
+
+
+def validate_financial_input(item):
+    if item.classification not in CLASSIFICATIONS:
+        raise MichaelError("unknown financial input classification")
+    if item.currency != "USD":
+        raise MichaelError("financial currency must be USD; no implicit exchange conversion")
+    if item.name in FINANCIAL_UNITS and item.unit and item.unit != FINANCIAL_UNITS[item.name]:
+        raise MichaelError(f"{item.name} requires {FINANCIAL_UNITS[item.name]}")
+    if item.period and item.period.lower() not in FINANCIAL_PERIODS.get(item.name,set()):
+        raise MichaelError(f"{item.name} has an incompatible period")
+    return item
 
 
 def money(value: Decimal | int | float | str) -> Decimal:
@@ -196,6 +219,8 @@ def assess(
     rates = COST_RATES.get(config_name)
     if rates is None:
         raise MichaelError(f"unknown scenario config: {config_name}")
+    for item in financial.values():
+        validate_financial_input(item)
     inputs_dump = {
         name: item.model_dump(mode="json") for name, item in financial.items()
     }
@@ -210,6 +235,7 @@ def assess(
             f"reservoir {rates['reservoir_capex_usd_per_site']} USD units).",
             "No financing, debt service, taxes, or incentives modeled; "
             "operating net equals revenue minus opex.",
+            "Blank legacy units/periods use the named parameter's canonical units; no currency conversion is assumed.",
             "Projected figures are not actuals; verdicts hold only under "
             "the stated assumptions.",
         ],
@@ -442,7 +468,6 @@ def financial_inputs_from_raw(
 
     Missing names become explicit unknown inputs (never silent zeros).
     """
-    today = date.today().isoformat()
     bundle: dict[str, FinancialInput] = {}
     for name in FINANCIAL_NAMES:
         entry = (raw or {}).get(name)
@@ -460,7 +485,7 @@ def financial_inputs_from_raw(
                 currency=str(entry.get("currency", "USD")),
                 period=str(entry.get("period", "")),
                 source=str(entry.get("source", provenance)),
-                observed_date=str(entry.get("observed_date", today if value is not None else "")),
+                observed_date=str(entry.get("observed_date", "")),
                 classification=str(entry.get("classification", classification if value is None else "estimated")),
                 scenario=scenario,
                 uncertainty=str(entry.get("uncertainty", "")),
@@ -470,4 +495,6 @@ def financial_inputs_from_raw(
                 name=name, value=None, scenario=scenario,
                 source=provenance, classification="unknown",
             )
+    for item in bundle.values():
+        validate_financial_input(item)
     return bundle

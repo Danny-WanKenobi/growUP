@@ -696,13 +696,16 @@ def build_dcad_assessment(
     dossier_key: str,
     claim_scope: str,
     registry: SourceRegistry | None = None,
+    retained_only: bool = False,
 ) -> dict[str, Any]:
     """Admit one persisted DCAD collection against one property (pure).
 
     Re-validates the collection end to end: provenance minted by the
     collector, collector/revision constants, digest over the retained
     bytes, exact server-constructed URL, and current owner
-    allowlisting. Caller-supplied URLs, flags, uploads, or city/ZIP
+    allowlisting. The internal retained-only reassessment path validates
+    stored bytes without re-enabling acquisition; its caller must also
+    verify the retained workflow record and original transmission claim. Caller-supplied URLs, flags, uploads, or city/ZIP
     fills cannot reach this path -- there are no such parameters.
 
     Alignment is supported only on exact normalized street-address
@@ -720,7 +723,10 @@ def build_dcad_assessment(
     if collection.get("collector_revision") != DCAD_COLLECTOR_REVISION:
         raise DcadParseError("unsupported collector revision")
     account = str(collection.get("account", "") or "")
-    require_collection_allowed(account)
+    if retained_only:
+        dcad_account_url(account)  # validate syntax; never enable acquisition
+    else:
+        require_collection_allowed(account)
     body_text = collection.get("body_text", "")
     if not isinstance(body_text, str) or not body_text:
         raise DcadParseError("collection body is missing")

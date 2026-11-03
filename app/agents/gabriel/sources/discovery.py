@@ -281,6 +281,8 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
                             reserve=reserve, env=env, evidence_sink=evidence_sink,
                             catalog_urls=catalog_urls)
     decision = select_sources(mission, found, supported_adapters=supported_adapters)
+    from app.agents.gabriel.sources.source_selection import build_source_plan
+    source_plan = build_source_plan(mission,found,supported_adapters=supported_adapters)
     import hashlib as _hashlib
     import json as _json
     evidence = {
@@ -300,8 +302,18 @@ def select_for_mission(mission, *, http_get=None, supported_adapters=None,
     decision.update({"assignment_key": str(assignment_key), "run_id": run_identity,
                      "mission_fingerprint": fingerprint,
                      "evidence_digest": evidence_digest})
+    children=[]
+    for child in source_plan:
+        child=dict(child)
+        child.update({"assignment_key":str(assignment_key),"run_id":run_identity,
+                      "mission_fingerprint":fingerprint,"evidence_digest":evidence_digest})
+        child["digest"]=_digest(child)
+        children.append(child)
+    decision["source_plan"]=children
     decision["digest"] = _digest(decision)
     store.complete(assignment_key, decision=decision, evidence=evidence)
+    for child in children:
+        _RETAINED[child["digest"]]=__import__("copy").deepcopy(child)
     _RETAINED[decision["digest"]] = __import__("copy").deepcopy(decision)
     if persist:
         persist_selection(decision, run_id=run_id or f"source-selection:{decision['digest'][:16]}")

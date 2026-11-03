@@ -1,6 +1,7 @@
 """Michael deterministic finance tests (pure calculations, no PG)."""
 
 from __future__ import annotations
+from app.michael import FINANCIAL_UNITS
 
 from decimal import Decimal
 from typing import Any
@@ -53,8 +54,8 @@ def _finance(**overrides: Any) -> dict[str, FinancialInput]:
     values.update(overrides)
     return {
         name: FinancialInput(
-            name=name, value=Decimal(text), unit="u", currency="USD",
-            period="per-liter-solution" if name == "nutrient_usd_per_l" else "p", source="test", observed_date="2026-10-30",
+            name=name, value=Decimal(text), unit=FINANCIAL_UNITS[name], currency="USD",
+            period="per-liter-solution" if name == "nutrient_usd_per_l" else "", source="test", observed_date="2026-10-30",
             classification="estimated", scenario="bench", uncertainty="",
         )
         for name, text in values.items()
@@ -249,12 +250,11 @@ def test_prepared_solution_pricing_uses_mixed_solution_not_cleaning_water(period
     assert basis["legacy_assumption"] is (period != "per-liter-solution")
 
 
-def test_unsupported_nutrient_price_basis_is_incomplete():
+def test_unsupported_nutrient_price_basis_is_refused():
     bundle = _finance()
     bundle["nutrient_usd_per_l"].period = "per-gallon"
-    result = assess("bench", _quantified_engineering(), bundle)
-    assert result["complete"] is False
-    assert "nutrient_price_basis" in result["missing"]
+    with pytest.raises(MichaelError, match="incompatible period"):
+        assess("bench", _quantified_engineering(), bundle)
 
 
 def test_missing_required_engineering_output_does_not_become_zero():
@@ -307,3 +307,18 @@ def test_energy_sensitivity_and_scenarios() -> None:
         for name, item in scenarios["scenarios"].items()
     }
     assert nets["conservative"] < nets["base"] < nets["optimistic"]
+
+
+@pytest.mark.parametrize("field,value", [("currency", "EUR"), ("unit", "USD/gallon"),
+                                         ("classification", "invented"), ("period", "daily")])
+def test_financial_unit_currency_and_classification_refuse(field, value):
+    bundle = _finance()
+    setattr(bundle["water_usd_per_l"], field, value)
+    with pytest.raises(MichaelError):
+        assess("bench", _quantified_engineering(), bundle)
+
+
+def test_raw_financial_input_does_not_invent_observation_date():
+    from app.michael import financial_inputs_from_raw
+    raw = {"water_usd_per_l": {"value": "0.001", "unit": "USD/L", "classification": "assumed"}}
+    assert financial_inputs_from_raw(raw)["water_usd_per_l"].observed_date == ""

@@ -285,7 +285,7 @@ def test_plans_endpoint_rejects_invalid_config() -> None:
     assert response.status_code == 422
 
 
-def test_excluded_and_deferred_candidates_unplanned() -> None:
+def test_excluded_candidate_unplanned_but_county_does_not_defer() -> None:
     intel = _intel(
         _result(
             "Old mill demolished",
@@ -301,7 +301,7 @@ def test_excluded_and_deferred_candidates_unplanned() -> None:
         ),
     )
     plan = plan_investigations(intel)
-    assert plan.investigations == []
-    assert plan.total_queries == 0
-    reasons = sorted(item.reason for item in plan.unplanned)
-    assert reasons == ["deferred: outside operating area", "excluded by quality control"]
+    assert len(plan.investigations) == 1
+    assert plan.investigations[0].city == "Houston"
+    assert plan.total_queries > 0
+    assert [item.reason for item in plan.unplanned] == ["excluded by quality control"]

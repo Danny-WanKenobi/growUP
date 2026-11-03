@@ -1,0 +1,26 @@
+{
+  "envelope": "source-ordered-dallas-example",
+  "description": "Source-ordered control example, not a launch authorization. Scans the entire approved local DCAD exchange across all observed categories; no batch targets. A durable Gabriel source_plan digest may replace this sources list.",
+  "policy": "source_ordered",
+  "sources": [{
+    "source": "dcad_bulk",
+    "county": "dallas county",
+    "rank": 0,
+    "bbox": [32.77, -96.81, 32.79, -96.785]
+  }],
+  "max_passes": 12,
+  "max_duration_seconds": 3600,
+  "max_created_total": 30,
+  "pass_limit": 10,
+  "pass_timeout_seconds": 12,
+  "max_evaluations_per_pass": 5,
+  "evaluation_attempt_limit": 1,
+  "evaluation_timeout_seconds": 12,
+  "census_attempt_limit": 0,
+  "max_consecutive_failures": 3,
+  "pacing_seconds": 5,
+  "claim_lease_seconds": 900,
+  "meta_calls": 0,
+  "outreach": "disabled",
+  "stop_on_authorized": false
+}

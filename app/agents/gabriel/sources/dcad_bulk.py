@@ -126,9 +126,13 @@ def _load_rows(data_dir: Path) -> list[dict[str, str]]:
 
 def parse_exchange(data_dir: Path, retrieved_at: str) -> list[RawListing]:
     """Convert staged DCAD exchange rows to observed raw listings."""
+    return _listings_from_rows(_load_rows(data_dir),retrieved_at)
+
+
+def _listings_from_rows(rows, retrieved_at):
     listings: list[RawListing] = []
     seen: set[str] = set()
-    for row in _load_rows(data_dir):
+    for row in rows:
         account = str(row.get("account", "") or "").strip()
         address = str(row.get("situs_address", "") or "").strip()
         if not account or not address or account in seen:
@@ -191,6 +195,69 @@ class DcadBulkSource:
     )
     docs_url = DOCS_URL
     requires_credentials = False
+
+    def search_page(self, bbox, categories, limit, timeout_seconds, cursor=None, *, whole_resource=False):
+        from app.agents.gabriel.sources.base import DiscoveryPage
+        import hashlib, json
+        if type(limit) is not int or not 1 <= limit <= 25:
+            raise SourceError("DCAD page limit must be an integer in 1..25")
+        root = Path(os.environ.get(DCAD_BULK_ENV, ""))
+        if not os.environ.get(DCAD_BULK_ENV, "").strip() or not (root / ACCOUNTS_FILE).is_file():
+            raise SourceError("dcad_bulk_not_configured")
+        # Snapshot identity includes both exchange inputs. A changed snapshot
+        # requires an explicit new scan; never silently reuse its old offset.
+        identity = [(str((root / name).resolve()), (root / name).stat().st_size,
+                     (root / name).stat().st_mtime_ns)
+                    for name in (ACCOUNTS_FILE, PARCELS_FILE) if (root / name).exists()]
+        snapshot = hashlib.sha256(json.dumps([identity, None if whole_resource else bbox.as_tuple(), sorted(categories)]).encode()).hexdigest()
+        offset = 0
+        if cursor:
+            try:
+                token = json.loads(cursor)
+                offset = token["offset"]
+                if token["snapshot"] != snapshot or type(offset) is not int or offset < 0:
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError):
+                raise SourceError("DCAD cursor/snapshot changed; explicit new scan required")
+        if whole_resource:
+            if cursor and token.get("mode") != "csv-cookie":
+                raise SourceError("DCAD cursor mode changed; explicit new scan required")
+            # readline iteration preserves tell()/seek() even for quoted
+            # multiline CSV rows. Only one bounded page is held in memory.
+            with (root / ACCOUNTS_FILE).open(newline="",encoding="utf-8-sig") as handle:
+                header_reader=csv.reader(iter(handle.readline,""))
+                headers=next(header_reader,[])
+                if not _REQUIRED_COLUMNS.issubset(set(headers)):
+                    raise SourceError("dcad_bulk_unexpected_columns")
+                if cursor:
+                    handle.seek(offset)
+                reader=csv.DictReader(iter(handle.readline,""),fieldnames=headers)
+                raw=[]
+                for _ in range(limit):
+                    row=next(reader,None)
+                    if row is None:
+                        break
+                    raw.append(row)
+                following=handle.tell()
+                done=handle.read(1)==""
+            items=_listings_from_rows(raw,datetime.now(timezone.utc).isoformat(timespec="seconds"))
+            next_cursor=None if done else json.dumps({"offset":following,"snapshot":snapshot,"mode":"csv-cookie"})
+            return DiscoveryPage(items,next_cursor,done,"entire staged DCAD CSV snapshot in file order")
+        cached=getattr(self,"_scan_cache",None)
+        if cached is not None and cached[0] == snapshot:
+            rows=cached[1]
+        else:
+            rows = parse_exchange(root, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+            south, west, north, east = bbox.as_tuple()
+            rows = sorted((r for r in rows if r.category_hint in set(categories) and
+                          (whole_resource or (r.latitude is not None and r.longitude is not None
+                           and south <= r.latitude <= north and west <= r.longitude <= east))),key=lambda r:r.external_id)
+            self._scan_cache=(snapshot,rows)
+        items = rows[offset:offset+limit]
+        following = offset + len(items)
+        done = following >= len(rows)
+        return DiscoveryPage(items, None if done else json.dumps({"offset":following,"snapshot":snapshot}),
+                             done, "entire staged DCAD exchange snapshot" if whole_resource else "approved DCAD window only")
 
     def search(
         self,
