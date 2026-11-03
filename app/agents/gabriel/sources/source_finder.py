@@ -481,9 +481,12 @@ def find_candidates(mission: SourceMission, *, http_get: HttpGet | None = None,
                 catalog_query = (
                     f"{mission.jurisdiction} property buildings"
                     if kind == "socrata"
+                    else f"{mission.jurisdiction} parcels property"
+                    if kind == "arcgis"
                     else f"{mission.jurisdiction} {' '.join(mission.record_types)}"
                 ).strip()
-                params = ({"q": catalog_query, "page[size]": 5} if kind == "arcgis"
+                params = ({"q": catalog_query, "page[size]": mission.budget.max_results}
+                          if kind == "arcgis"
                           else {"q": catalog_query, "limit": mission.budget.max_results})
                 payload = _get_json(url, params, mission, http_get,
                                     evidence_sink=evidence_sink, provider=str(provider_name))
