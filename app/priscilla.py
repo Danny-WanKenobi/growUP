@@ -206,12 +206,12 @@ def metrics_in_transaction(
             if entry_uuid is None:
                 cur.execute(
                     "SELECT simulated, kind, COUNT(*) AS total "
-                    "FROM conversion_events GROUP BY simulated, kind"
+                    "FROM conversion_events WHERE (payload->'detail'->>'duplicate_of') IS NULL AND COALESCE(payload->'detail'->>'lifecycle_status','') NOT IN ('prepared','sent','bounced','unknown') GROUP BY simulated, kind"
                 )
             else:
                 cur.execute(
                     "SELECT simulated, kind, COUNT(*) AS total "
-                    "FROM conversion_events WHERE package_entry = %(entry)s "
+                    "FROM conversion_events WHERE (payload->'detail'->>'duplicate_of') IS NULL AND COALESCE(payload->'detail'->>'lifecycle_status','') NOT IN ('prepared','sent','bounced','unknown') AND package_entry = %(entry)s "
                     "GROUP BY simulated, kind",
                     {"entry": entry_uuid},
                 )
@@ -657,14 +657,14 @@ def funnel_in_transaction(
             if sim_uuid is not None:
                 cur.execute(
                     "SELECT package_entry, kind, simulated FROM conversion_events "
-                    "WHERE simulation_id = %(sim)s",
+                    "WHERE (payload->'detail'->>'duplicate_of') IS NULL AND COALESCE(payload->'detail'->>'lifecycle_status','') NOT IN ('prepared','sent','bounced','unknown') AND simulation_id = %(sim)s",
                     {"sim": sim_uuid},
                 )
                 sim_rows = [dict(row) for row in (cur.fetchall() or [])]
                 if cohort_ids:
                     cur.execute(
                         "SELECT package_entry, kind FROM conversion_events "
-                        "WHERE package_entry = ANY(%(ids)s) AND NOT simulated "
+                        "WHERE (payload->'detail'->>'duplicate_of') IS NULL AND COALESCE(payload->'detail'->>'lifecycle_status','') NOT IN ('prepared','sent','bounced','unknown') AND package_entry = ANY(%(ids)s) AND NOT simulated "
                         "AND simulation_id IS NULL",
                         {"ids": cohort_ids},
                     )
@@ -672,7 +672,7 @@ def funnel_in_transaction(
                 else:
                     actual_rows = []
             else:
-                cur.execute("SELECT package_entry, kind, simulated FROM conversion_events")
+                cur.execute("SELECT package_entry, kind, simulated FROM conversion_events WHERE (payload->'detail'->>'duplicate_of') IS NULL AND COALESCE(payload->'detail'->>'lifecycle_status','') NOT IN ('prepared','sent','bounced','unknown')")
                 sim_rows = []
                 actual_rows = []
                 for row in (cur.fetchall() or []):
@@ -712,3 +712,108 @@ def funnel_in_transaction(
         report["expected"] = run.get("counts", {})
         report["exclusions"] = run.get("exclusions", [])
     return report
+
+LIFECYCLE_KINDS = {'prepared':'delivery','sent':'delivery','delivered':'delivery','bounced':'delivery',
+                   'replied':'response','interested':'engagement','unknown':'delivery'}
+
+
+def ingest_tracking_in_transaction(conn, *, package_entry, provider, provider_event_id,
+        message_id, status, occurred_at, evidence_refs, simulated=False, label=''):
+    """Operator-reported evidence import, not an authenticated provider webhook."""
+    from datetime import datetime, timezone
+    from app.workflow import digest_payload
+    if not isinstance(simulated,bool):
+        raise PriscillaError('simulated must be boolean')
+    if status not in LIFECYCLE_KINDS:
+        raise PriscillaError('unsupported delivery/reply status')
+    for value in (provider,provider_event_id,message_id):
+        if not isinstance(value,str) or not value.strip() or len(value)>200:
+            raise PriscillaError('explicit bounded provider/event/message correlation required')
+    provider = provider.strip().casefold()
+    provider_event_id = provider_event_id.strip()
+    message_id = message_id.strip()
+    try:
+        instant = datetime.fromisoformat(occurred_at.replace('Z','+00:00'))
+        if instant.tzinfo is None: raise ValueError()
+        occurred = instant.astimezone(timezone.utc).isoformat()
+    except (ValueError,AttributeError,TypeError):
+        raise PriscillaError('event time must be an ISO timestamp with timezone') from None
+    if not isinstance(evidence_refs,list) or any(not isinstance(ref,str) for ref in evidence_refs):
+        raise PriscillaError("evidence references must be a list of strings")
+    refs = sorted(set(evidence_refs or []))
+    if not refs or len(refs)>100 or any(not isinstance(r,str) or not r.strip() or len(r)>2000 for r in refs):
+        raise PriscillaError('bounded evidence references required')
+    package = str(_uuid(package_entry,'package_entry'))
+    material = {'package_entry':package,'provider':provider,'provider_event_id':provider_event_id,
+        'message_id':message_id,'lifecycle_status':status,'occurred_at':occurred,'evidence_refs':refs,'simulated':simulated}
+    ingest_key = digest_payload({'provider':provider,'event_id':provider_event_id})
+    message_key = digest_payload({'provider':provider,'message_id':message_id,'status':status,'simulated':simulated})
+    # Lock in one global order. A provider event cannot be reassigned to another
+    # package/domain, and duplicate status callbacks cannot inflate message counts.
+    duplicate_of = None
+    with conn.cursor() as cur:
+        for key in sorted((ingest_key,message_key)):
+            cur.execute('SELECT pg_advisory_xact_lock(hashtext(%(key)s))',{'key':'priscilla:'+key})
+        cur.execute("SELECT event_id, package_entry, payload FROM conversion_events WHERE payload->'detail'->>'ingest_key' = %(key)s",{'key':ingest_key})
+        existing = cur.fetchone()
+        if existing:
+            row = dict(existing); payload = row['payload']
+            if isinstance(payload,str): payload=json.loads(payload)
+            if payload.get('detail',{}).get('material_digest') != digest_payload(material):
+                raise PriscillaError('provider event identity conflicts with retained material')
+            return {'event_id':str(row['event_id']),'replayed':True}
+        cur.execute("SELECT event_id, package_entry FROM conversion_events WHERE payload->'detail'->>'message_key' = %(key)s",{'key':message_key})
+        existing = cur.fetchone()
+        if existing:
+            if str(existing['package_entry']) != package:
+                raise PriscillaError('message correlation conflicts with retained package')
+            duplicate_of = str(existing['event_id'])
+    result = record_event_in_transaction(conn,package_entry=package,kind=LIFECYCLE_KINDS[status],
+        label=('SIMULATED ' if simulated else '')+(label or 'Operator-reported '+status), simulated=simulated,
+        evidence_refs=refs,detail={**material,'ingest_key':ingest_key,'message_key':message_key,
+            'material_digest':digest_payload(material),'duplicate_of':duplicate_of,'authentication':'operator_reported; provider authenticity not independently established'})
+    return {**result,'duplicate_message_status':duplicate_of is not None}
+
+
+def timeline_in_transaction(conn, *, package_entry):
+    """Queryable retained history; out-of-order arrivals never imply new facts."""
+    package = _uuid(package_entry,'package_entry')
+    if get_package_in_transaction(conn,package) is None:
+        raise PriscillaError('unknown campaign package')
+    with conn.cursor() as cur:
+        cur.execute('SELECT event_id, kind, simulated, label, payload, created_at FROM conversion_events WHERE package_entry = %(entry)s ORDER BY created_at, event_id',{'entry':package})
+        rows = cur.fetchall() or []
+    events=[]; domains={True:{},False:{}}
+    for raw in rows:
+        row=dict(raw); payload=row.get('payload') or {}
+        if isinstance(payload,str): payload=json.loads(payload)
+        detail=payload.get('detail') or {}
+        status=detail.get('lifecycle_status') or {'delivery':'legacy_delivery','engagement':'legacy_engagement','response':'legacy_response','conversion':'legacy_conversion'}[row['kind']]
+        domain=bool(row['simulated']); message=detail.get('message_id')
+        if message:
+            domains[domain].setdefault((detail.get('provider'),message),set()).add(status)
+        events.append({'event_id':str(row['event_id']),'status':status,'simulated':domain,
+            'message_id':message,'occurred_at':detail.get('occurred_at'),'recorded_at':str(row['created_at']),
+            'evidence_refs':payload.get('evidence_refs') or [],'authentication':detail.get('authentication','legacy evidence; independent authentication unknown')})
+    def project(messages):
+        counts={status:sum(status in states for states in messages.values()) for status in LIFECYCLE_KINDS}
+        delivered=counts['delivered']; replied=counts['replied']
+        correlated_replies=sum('replied' in states and 'delivered' in states for states in messages.values())
+        return {'message_status_counts':counts,'messages':len(messages),
+            'reply_rate_of_delivered':None if not delivered else correlated_replies/delivered,
+            'unmatched_delivery_replies':replied-correlated_replies,
+            'conflicting_delivery_messages':sum({'bounced','delivered'} <= states for states in messages.values())}
+    return {'package_entry':str(package),'events':events,'actual':project(domains[False]),
+        'simulated':project(domains[True]),'scope':'Observed statuses only; reply does not establish interest or conversion.'}
+
+
+def ingest_tracking_audited(*, principal, **inputs):
+    from app.observability.events import AgentEvent,AgentId,RetentionClass
+    from app.observability.policy import OperationClass
+    from app.observability.transactions import run_consequential_transaction
+    if not principal or not principal.strip(): raise PriscillaError('authenticated operator required')
+    event=AgentEvent(agent=AgentId.PRISCILLA,run_id=str(inputs['package_entry']),event_type='tracking.evidence_imported',
+        summary='Operator-reported campaign tracking evidence; no outbound action',
+        details={'principal':principal,'status':inputs.get('status')},retention_class=RetentionClass.PERMANENT)
+    return run_consequential_transaction(operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,event=event,
+        mutate=lambda conn:ingest_tracking_in_transaction(conn,**inputs))

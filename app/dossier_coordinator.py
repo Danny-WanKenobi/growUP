@@ -156,6 +156,16 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         else:
             try:
                 report, eligible, reasons = _build(agent, source.payload)
+                if agent == 'uriel' and eligible:
+                    from app.uriel import prepare_package_in_transaction
+                    incoming = current_custody_in_transaction(conn, did)
+                    package = prepare_package_in_transaction(conn, dossier_id=did,
+                        version=incoming['version'], receipt_id=incoming['receipt_id'], prepared_by=principal,
+                        dossier=source.payload['dossier'],
+                        engineering=source.payload['dossier']['reports']['onesimus'],
+                        economics=source.payload['dossier']['reports']['michael'],
+                        campaign=report['campaign'])
+                    report = _sealed({**{k:v for k,v in report.items() if k!='digest'},'package_entry':package['entry_id']})
             except ValueError:
                 task = {'agent': agent, 'dossier_id': str(did),
                     'property_id': str(source.payload['property_id']),
@@ -168,6 +178,11 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
                 report = None
             if report is not None:
                 stored, version = append_agent_report_in_transaction(conn, run_id, dossier_key, agent=agent, report=report)
+                for issue in report.get('owner_review_requests') or []:
+                    task = {**issue,'agent':agent,'dossier_id':str(did),'property_id':str(source.payload['property_id']),
+                        'source_dossier_digest':source.digest,'report_digest':report['digest'],'grants_permission':False}
+                    put_record_in_transaction(conn,run_id,kind='owner_review_task',
+                        record_key='owner:'+digest_payload(task),version=1,payload=task,digest=digest_payload(task))
                 target = ROUTE[ROUTE.index(agent)+1] if eligible else ('michael' if agent == 'priscilla' else ROUTE[ROUTE.index(agent)-1])
                 reason = '; '.join(str(r) for r in reasons)[:450] or 'preliminary stage requirements satisfied'
                 receipt = issue_receipt_in_transaction(conn, dossier_id=did, version=version.version,

@@ -49,6 +49,11 @@ def build_report(agent, payload):
             continue
         inputs[name] = {"value":deepcopy(entry["value"]), "evidence_refs":list(refs),
                         "evidence_status":"provided_unverified"}
+    campaign = (reports.get('uriel') or {}).get('campaign') or {}
+    if agent == 'priscilla' and not campaign.get('campaign_id'):
+        missing.append('retained_campaign_correlation')
+    if agent == 'priscilla' and (dossier.get('tracking_policy') or {}).get('require_owner_review'):
+        missing.append('tracking_owner_review')
     requests = [{"requirement":name, "reason":"Required input or report is absent/unresolved.",
                  "status":"pending", "authority":"human_owner", "grants_permission":False} for name in missing]
     result = {
@@ -66,12 +71,30 @@ def build_report(agent, payload):
                        "A complete checklist is not a permit, underwriting decision, signed contract, closed deal, tax filing, insurance coverage or asset ownership."],
     }
     if agent == "uriel":
+        from app.uriel import prepare_campaign
+        if any(name.startswith('report:') for name in missing):
+            result['campaign'] = {'status':'needs_evidence','campaign_id':None,'missing':list(missing)}
+        else:
+            result['campaign'] = prepare_campaign(payload)
+            for gap in result['campaign']['missing']:
+                if gap not in missing:
+                    missing.append(gap)
+                    result['owner_review_requests'].append({'requirement':gap,'reason':'Campaign input is unresolved.',
+                        'status':'pending','authority':'human_owner','grants_permission':False})
+            if missing:
+                result['status']='needs_evidence'
+                result['next_steps']=['Obtain or resolve '+name for name in missing]
         result["opportunity_brief"] = {
             "property":dossier.get("street_address") or "Unknown address",
             "financial_assessments":deepcopy((reports.get("michael") or {}).get("assessments") or {}),
             "claim_scope":"Conditional stored calculations only; no promised savings or profit.",
             "package_runtime":"app.uriel.prepare_package_in_transaction; no duplicate package store"}
     if agent == "priscilla":
+        result['tracking_readiness'] = {'campaign_id':campaign.get('campaign_id'),
+            'package_entry':(reports.get('uriel') or {}).get('package_entry'),
+            'status':('suppressed' if campaign.get('status')=='suppressed' else 'awaiting_observations') if campaign else 'needs_campaign',
+            'delivered':None,'replied':None,'interested':None,
+            'scope':'No engagement is inferred from campaign preparation; query the event timeline for observations.'}
         result["tracking"] = {"runtime":"app.priscilla.metrics_in_transaction",
                               "actual_engagement":"unknown; read recorded events, never infer from prepared outreach",
                               "simulated_events_created":0}

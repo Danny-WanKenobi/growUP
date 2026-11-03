@@ -56,6 +56,7 @@ READ_ONLY_INTENTS = frozenset(
         "preview_agent_report",
         "inspect_owner_queue",
         "inspect_lead_metrics",
+        "inspect_campaign_tracking",
         "inspect_handoff_demo",
         "preview_retained_assessment",
     }
@@ -65,6 +66,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "start_real_evaluation",
         "release_engineering",
         "coordinate_dossier",
+        "import_campaign_tracking",
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
@@ -231,6 +233,11 @@ def preview_intent(
         return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
                 "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
                 "cost_bounds":{"brave_attempts":0,"meta_calls":0,"source_requests":0,"outreach":0}}
+    if intent == "import_campaign_tracking":
+        return {"operations":["import one operator-reported campaign observation"],
+            "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
+            "effects":"append-only evidence event with correlation and replay checks; no outbound action",
+            "cost_bounds":{"provider_calls":0,"outreach":0}}
     if intent == "coordinate_dossier":
         return {"operations": ["one durable internal dossier step or stop/resume control"],
                 "inputs": {k: args.get(k) for k in ("run_id", "dossier_key", "expected_sequence", "action")},
@@ -880,6 +887,15 @@ def _execute_real(
 
     capability_ctx = dict(ctx or _capability_context())
 
+    if intent == "inspect_campaign_tracking":
+        if conn is None:
+            raise WondrueError("campaign tracking requires a database connection")
+        return priscilla_module.timeline_in_transaction(conn,package_entry=args.get('package_entry'))
+    if intent == "import_campaign_tracking":
+        return priscilla_module.ingest_tracking_audited(principal=str(capability_ctx.get('principal') or ''),
+            package_entry=args.get('package_entry'),provider=args.get('provider'),provider_event_id=args.get('provider_event_id'),
+            message_id=args.get('message_id'),status=args.get('status'),occurred_at=args.get('occurred_at'),
+            evidence_refs=[args.get('evidence_ref')],simulated=args.get('simulated',False))
     if intent == "coordinate_dossier":
         from app.dossier_coordinator import process
         return process(principal=str(capability_ctx.get("principal") or ""),
@@ -1307,7 +1323,7 @@ def handle_command(
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
-                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics"):
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1364,7 +1380,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent == "coordinate_dossier" and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "import_campaign_tracking") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")

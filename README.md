@@ -4743,3 +4743,58 @@ No autonomous discovery, email, market-price acquisition or inference is enabled
 Physical formula changes are identified by `mvp-onesimus-3`; historical results retain their stored version. The privacy regression uses a distinct excluded-price sentinel rather than a three-digit substring that can randomly occur in an unrelated UUID.
 
 Local acceptance for the planning/quantity changes: **2,564 passed, 150 skipped**, 16 warnings. PostgreSQL recovery acceptance above is independently proven; deployed regression of the new formulas follows the development checkpoint.
+
+## Evidence-linked campaign preparation and durable tracking
+
+Uriel's canonical stage report now carries a deterministic campaign ID, the
+source dossier digest, intact upstream report digests, retained contact references,
+and plain-text introduction/follow-up email, letter, flyer and business-card drafts.
+Financial claims are copied only from complete stored Michael assessments and
+labeled conditional estimates; no vacancy, availability, structural capacity,
+legal permission, actual income or guaranteed return is invented. No Dallas-only
+wording is injected. Missing contacts remain unknown. A retained suppression flag
+marks the campaign suppressed. The business-card contact is intentionally blank
+until supplied. These are text artifacts, not a visual design or live campaign.
+
+The coordinator prepares an append-only Uriel package against the incoming
+canonical receipt and includes its campaign in the package payload. Its new
+report links the package ID, then the enhanced dossier/snapshot passes to
+Priscilla. Campaign preparation and handoff commit together. Priscilla establishes
+`awaiting_observations` tracking from that campaign and can pass onward to Nicole;
+she does not wait for a reply or invent engagement. Future observations remain
+append-only events; they do not rewrite a signed historical report.
+
+Wondrue `import_campaign_tracking` accepts scalar package_entry, provider,
+provider_event_id, message_id, status, occurred_at (timezone required), evidence_ref,
+and optional boolean simulated. Operator authorization/ask-mode approval applies,
+approvals bind the operator, real pipeline target and inference-disabled mode
+are required. This is an **operator-reported evidence import**, not an authenticated
+webhook or proof of provider authenticity. No external sender is installed.
+The existing conversion_events store is reused; no migration or parallel event
+store is added. JSON metadata retains status, occurrence time, correlation,
+evidence and digest. Advisory locks serialize provider-event and message-status
+identities; conflicting replay/reassignment refuses, exact replay and repeated
+message-status observations do not inflate counters. The event and permanent
+audit commit together.
+
+Supported observations are prepared, sent, delivered, bounced, replied, interested
+and unknown. Prepared/sent/bounced/unknown do not enter legacy successful-delivery
+or funnel counts. A reply never implies delivery, interest or conversion.
+`inspect_campaign_tracking` reads the package timeline through Wondrue. It
+separates actual and simulated domains, counts distinct correlated messages,
+reports delivered-message reply rates (unknown when no delivery is recorded),
+unmatched replies and delivery/bounce conflicts. Out-of-order observations remain
+visible with occurrence and recording times. Interest is distinct from conversion.
+Legacy events retain their original meaning and are not given invented message IDs.
+
+Focused tests: `python -m pytest tests/test_campaign_tracking.py tests/test_dossier_coordinator.py tests/test_priscilla.py tests/test_uriel.py -q`.
+The gate-only live tracking test races identical imports and checks replay,
+bounce exclusion, reply-before-delivery and explicit conflicts in PostgreSQL.
+Committed append-only gate test packages/events remain as test collateral; no
+operational recipient or provider is contacted. Authenticated inbound webhook
+adapters, external delivery, channel-specific rate limiting/suppression enforcement
+at send time, full ad design and contact discovery remain future capabilities.
+
+Synthetic fixture contract `handoff-fixtures-3` covers the new campaign/tracking readiness boundary. Prior fixture versions remain inspectable and immutable; unfinished old contracts do not advance under a new policy. Priscilla NO-GO now exercises an explicit tracking owner-review requirement, rather than fabricating a requirement for an owner reply. Duplicate message-status aliases retain their provider event IDs and evidence but are excluded from legacy counters.
+
+Local regression for campaign/tracking: **2,571 passed, 151 skipped**, 16 warnings; final targeted permission/ingestion checks additionally exercise operator-bound approval. Deployment and live gate lifecycle acceptance are reported after the development checkpoint.

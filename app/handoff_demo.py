@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = ("gabriel", "raphael", "onesimus", "michael", *AGENT_SPECS)
-FIXTURE_VERSION = "handoff-fixtures-2"
+FIXTURE_VERSION = "handoff-fixtures-3"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -103,12 +103,13 @@ def _fixture(run_key, fail_at):
     for name,spec in AGENT_SPECS.items():
         inputs[name] = {field:{"value":"FICTIONAL DEMO INPUT: "+field,
             "evidence_refs":["https://records.fiction.example/"+name+"/"+field]} for field in spec.required_inputs}
-    if fail_at in AGENT_SPECS:
+    if fail_at in AGENT_SPECS and AGENT_SPECS[fail_at].required_inputs:
         inputs[fail_at].pop(AGENT_SPECS[fail_at].required_inputs[0])
     return sealed(marked({"version":1,"property_id":str(prop),"artifact_refs":[],
         "fixture_version":FIXTURE_VERSION,
         "candidate_verification":None if fail_at=="raphael" else _fixture_verification(),
         "dossier":marked({"name":"FICTIONAL Handoff Warehouse — not a real property",
+            "tracking_policy":{"require_owner_review":fail_at=="priscilla"},
             "street_address":"1 Fiction Plaza (invented)", "city":"Fiction City", "state":"XX",
             "sources":[] if fail_at=="gabriel" else ["https://records.fiction.example/fiction-warehouse"],
             "category_attribution":{"status":"observed","observed":"warehouse_industrial"},

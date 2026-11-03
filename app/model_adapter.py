@@ -164,6 +164,8 @@ INTENTS = frozenset(
         "coordinate_dossier",
         "inspect_owner_queue",
         "inspect_lead_metrics",
+        "inspect_campaign_tracking",
+        "import_campaign_tracking",
         "start_handoff_demo",
         "advance_handoff_demo",
         "inspect_handoff_demo",

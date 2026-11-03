@@ -88,6 +88,7 @@ def prepare_package_in_transaction(
     blockers: list[str] | None = None,
     next_actions: list[str] | None = None,
     review: dict[str, Any] | None = None,
+    campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Prepare one genuine package; state decided at insert (append-only).
 
@@ -141,6 +142,7 @@ def prepare_package_in_transaction(
         "blockers": list(blockers or []),
         "next_actions": list(next_actions or []),
         "review": review or {},
+        "campaign": campaign or {},
     }
     try:
         with conn.cursor() as cur:
@@ -466,6 +468,59 @@ def main(argv: list[str] | None = None) -> int:
     except (UrielError, DatabaseNotConfiguredError, DatabaseUnavailableError) as exc:
         print(f"uriel: {exc}", file=sys.stderr)
         return 1
+
+
+
+def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
+    """Evidence-linked plain-text campaign drafts from the inherited dossier only."""
+    from app.workflow import digest_payload
+    if payload.get('digest') != digest_payload({k:v for k,v in payload.items() if k!='digest'}):
+        raise UrielError('campaign input failed dossier digest verification')
+    dossier = payload.get('dossier') or {}
+    reports = dossier.get('reports') or {}
+    refs = {}
+    for agent in ('gabriel','raphael','onesimus','michael'):
+        report = reports.get(agent)
+        # Older canonical Gabriel dossiers carry evidence directly, not a report.
+        if agent == 'gabriel' and report is None:
+            refs[agent] = {'dossier_digest':payload['digest'],'sources':list(dossier.get('sources') or [])}
+            continue
+        if not isinstance(report,dict) or report.get('digest') != digest_payload({k:v for k,v in report.items() if k!='digest'}):
+            raise UrielError(f'campaign requires intact {agent} report')
+        refs[agent] = {'report_digest':report['digest'],'sources':list(report.get('evidence_refs') or [])}
+    if reports['raphael'].get('outcome') != 'authorized':
+        raise UrielError('campaign requires preliminary Raphael authorization')
+    assessments = reports['michael'].get('assessments') or {}
+    claims = []
+    for name, assessment in sorted(assessments.items()):
+        if not assessment.get('complete'):
+            continue
+        for quantity in ('capex_usd','revenue_usd_per_year','opex_usd_per_year','operating_net_usd_per_year','monthly_operating_cashflow_usd'):
+            value = (assessment.get('outputs') or {}).get(quantity)
+            if value is not None:
+                claims.append({'scenario':name,'quantity':quantity,'value':str(value),
+                    'evidence':refs['michael'],'scope':'Conditional deterministic estimate; not actual performance or guaranteed returns.'})
+    supplied = (dossier.get('specialist_inputs') or {}).get('uriel') or {}
+    contact = supplied.get('owner_contact') or {}
+    policy = dossier.get('outreach_policy') or {}
+    if not isinstance(policy,dict) or ('suppressed' in policy and not isinstance(policy['suppressed'],bool)):
+        raise UrielError('invalid outreach suppression policy')
+    address = str(dossier.get('street_address') or 'Address unresolved')
+    financial_text = '\n'.join(f"{c['scenario']}: {c['quantity']} = {c['value']} [Michael {refs['michael']['report_digest']}]" for c in claims)
+    limitations = 'Preliminary concept only. Availability, vacancy, structural/electrical capacity, permitted use and executable conversion are not established by this campaign. Figures depend on retained assumptions and exclude unmodeled costs.'
+    introduction = f'Grow Up: preliminary indoor-growing opportunity for {address}.\nWe would welcome a discussion of this passive Kratky concept.\n{financial_text}\n{limitations}'
+    campaign = {'version':'uriel-campaign-2','property_id':str(payload['property_id']),
+        'source_dossier_digest':payload['digest'],'status':'suppressed' if policy.get('suppressed') else 'draft_not_sent',
+        'source_reports':refs,'claims':claims,'to':contact.get('value') if contact.get('evidence_refs') else None,
+        'contact_evidence_refs':list(contact.get('evidence_refs') or []),
+        'drafts':{'introduction_email':{'subject':f'Preliminary growing concept: {address}','body':introduction},
+            'follow_up_email':{'subject':f'Possible follow-up: {address}','body':introduction+'\nDraft follow-up only; send history must be checked before any contact.'},
+            'letter':introduction,'flyer':introduction,'business_card':{'organization':'Grow Up','description':'Preliminary property-to-agriculture feasibility','contact':None}},
+        'execution':{'enabled':False,'sent':False,'provider_calls':0},
+        'missing':([] if contact.get('evidence_refs') else ['owner_contact'])+([] if claims else ['complete_financial_assessment']),
+        'limitations':[limitations,'Draft creation does not establish channel permission or recipient identity.']}
+    campaign['campaign_id'] = 'campaign:'+digest_payload(campaign)
+    return campaign
 
 
 if __name__ == "__main__":
