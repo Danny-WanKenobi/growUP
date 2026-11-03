@@ -64,6 +64,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
     {
         "start_real_evaluation",
         "release_engineering",
+        "coordinate_dossier",
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
@@ -230,6 +231,11 @@ def preview_intent(
         return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
                 "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
                 "cost_bounds":{"brave_attempts":0,"meta_calls":0,"source_requests":0,"outreach":0}}
+    if intent == "coordinate_dossier":
+        return {"operations": ["one durable internal dossier step or stop/resume control"],
+                "inputs": {k: args.get(k) for k in ("run_id", "dossier_key", "expected_sequence", "action")},
+                "effects": "append report, immutable snapshot, custody receipt and checkpoint atomically; evidence gaps return upstream",
+                "cost_bounds": {"source_requests": 0, "meta_calls": 0, "outreach": 0}}
     if intent == "release_engineering":
         return {"operations": ["authenticate held dossier", "release authorized report to engineering and Michael"],
                 "inputs": {"run_id": args.get("run_id"), "site_inputs": args.get("site_inputs")},
@@ -469,6 +475,10 @@ def _synthetic_gate() -> None:
 
 
 def _execute_demo(intent: str, args: dict[str, Any], store: DemoStore) -> dict[str, Any]:
+    if intent == "coordinate_dossier":
+        if target != "real" or use_live:
+            raise WondrueError("coordinator requires real target with live inference disabled")
+        args["_coordinator_principal"] = principal
     if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
         from app.handoff_demo import service
         action={"start_handoff_demo":"start","advance_handoff_demo":"advance","inspect_handoff_demo":"inspect"}[intent]
@@ -870,6 +880,11 @@ def _execute_real(
 
     capability_ctx = dict(ctx or _capability_context())
 
+    if intent == "coordinate_dossier":
+        from app.dossier_coordinator import process
+        return process(principal=str(capability_ctx.get("principal") or ""),
+            run_id=args.get("run_id"), dossier_key=str(args.get("dossier_key") or "main"),
+            expected_sequence=args.get("expected_sequence"), action=str(args.get("action") or "step"))
     if intent == "inspect_lead_metrics":
         if conn is None:
             raise WondrueError("lead metrics requires a database connection")
@@ -1349,6 +1364,8 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
+            if intent == "coordinate_dossier" and args.get("_coordinator_principal") != principal:
+                raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")
             if intent in ("release_engineering","commit_retained_assessment") and args.get("_release_principal") != principal:

@@ -1,5 +1,30 @@
 # 🌱 Grow Up
 
+## Agent workflow decisions — November 3, 2026
+
+The required forward business route is **Michael → Uriel → Priscilla → Nicole**.
+Uriel must prepare and preserve the campaign before releasing the dossier to
+Priscilla. Delivery and reply observations update Priscilla asynchronously;
+advancement must not wait indefinitely for an owner reply or fabricate interest.
+The existing custody policy permits downstream skips; this required sequence
+must therefore be enforced by the upcoming stage coordinator, not inferred from
+custody ordering alone. These continuous workers are not yet implemented.
+
+“Archive before release” means preserving the complete enhanced dossier in an
+immutable, digest-verified snapshot before issuing its custody receipt, within
+the caller's transaction. Existing report append and receipt services implement
+that preservation requirement. Moving older snapshots into
+`custody_snapshots_archive` remains retention housekeeping; release does not
+require immediate archive-table insertion. Historical evidence is not rewritten.
+
+Demo campaign generation creates a labeled draft and preview artifact. Sending
+that artifact to the owner's mailbox is an actual external delivery, even when
+its contents are synthetic. No sender is currently implemented, and this design
+record does not authorize transmission. A later send requires explicit owner
+authorization of the recipient, bounded number of messages and reviewed content,
+plus an authenticated configured channel. Its receipt must distinguish actual
+mail delivery from simulated property outreach and genuine owner engagement.
+
 ## Permanent synthetic canonical-handoff demonstration (November 3, 2026)
 
 The owner approved fictional test records to prove the canonical handoff system
@@ -4620,3 +4645,47 @@ confirmed before implementing/launching automatic per-account admission; the
 approval does not silently override the publisher's restrictions. No account
 pages were requested in these checks. Focused runner/coordinator regression:
 130 passed, 6 PostgreSQL-gated skips. No deployment or schema changes.
+
+## Durable per-dossier coordinator
+
+`app.dossier_coordinator` processes an existing stored dossier from its current
+Raphael/Onesimus/Michael/Uriel/Priscilla custody holder. It enforces forward
+Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole. Evidence gaps return
+to the previous stage (Priscilla returns to Michael); processing then stops.
+It uses the existing policies, deterministic calculators, report appender,
+immutable snapshots, receipt issuer and permanent audit transaction. No discovery,
+model call, email delivery, schema migration or professional approval is added.
+
+Retained `dossier.assessment_inputs.site` contains classified scenario inputs;
+`assessment_inputs.financial` contains explicit Michael inputs. No fictional
+inputs are generated for operational dossiers. Specialist inputs retain their
+existing contract. Conceptual eligibility does not establish building capacity.
+
+A per-dossier transaction lock serializes processing. The durable checkpoint is
+stored as `research_artifact` key `coordinator:<dossier_key>` with bound principal
+and sequence. Supply the last acknowledged sequence on retry; an already committed
+sequence returns its stored result without processing the next stage. Changed
+principal, damaged records or stale custody refuse. Existing stage reports require
+an owner reconciliation task rather than being silently promoted. That exception
+is durable in the existing owner queue and grants no permission.
+
+Wondrue structured intent `coordinate_dossier` takes `run_id`, `dossier_key`,
+`expected_sequence`, and `action` (`step`, `stop`, `resume`); existing server-side
+consequential-command permissions apply. Alternatively an authorized internal
+operator can run a bounded cycle (at most five short stage transactions):
+
+```powershell
+.\.venv\Scripts\python.exe -B -m app.dossier_coordinator run --run-id RUN_UUID --dossier-key main --principal OWNER_PRINCIPAL --expected-sequence 0
+```
+
+Use `stop`/`resume` with the same arguments and current sequence for persistent
+controls. `DOSSIER_COORDINATOR_EMERGENCY_STOP=1` stops the next step before report
+creation. An in-flight transaction finishes or rolls back; interruption before
+commit leaves no released dossier without its checkpoint/audit. No unattended
+scheduler is installed or enabled. Delivery/reply ingestion remains a subsequent
+capability; preparation never fabricates engagement. Returned and owner-review
+runs require explicit new assessment/reconciliation, not an automatic retry loop.
+
+Focused verification: `python -m pytest tests/test_dossier_coordinator.py -q`.
+These use disposable synthetic SQL doubles; deployed PostgreSQL and operational
+real-data acceptance must be reported separately.
