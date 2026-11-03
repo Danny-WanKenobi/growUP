@@ -363,7 +363,11 @@ def discover_sources_anywhere(
             EnrollmentError, verify_and_select,
         )
         attempts: list[dict[str, Any]] = []
-        _tokens = [t for t in jurisdiction.lower().split() if len(t) > 2]
+        # Jurisdiction-specific tokens only: generic words like
+        # "county" match half the catalog and bury the local source.
+        _tokens = [t for t in jurisdiction.lower().replace(",", " ").split()
+                   if len(t) > 2 and t not in (
+                       "county", "city", "parish", "borough", "state")]
         _ranked = sorted(
             result.get("ranked") or [],
             key=lambda e: 0 if any(
