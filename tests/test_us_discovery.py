@@ -218,6 +218,26 @@ def test_generic_arcgis_retains_geometry_and_uses_4326():
     assert (rows[0].latitude, rows[0].longitude) == (29.75, -95.36)
 
 
+def test_generic_arcgis_polygon_uses_centroid():
+    # Parcel layers are polygons: the representative point is the
+    # polygon centroid, so polygon features are no longer dropped.
+    def fetch(url, params, timeout):
+        return json.dumps({"features": [{
+            "properties": {"parcel_id": "P9", "address": "1 Square Way",
+                           "land_use": "OFFICE BUILDING"},
+            "geometry": {"type": "Polygon", "coordinates": [[
+                [-95.37, 29.74], [-95.35, 29.74], [-95.35, 29.76],
+                [-95.37, 29.76], [-95.37, 29.74]]]}}]}).encode()
+
+    binding = _binding(adapter="generic_arcgis", platform="arcgis",
+                       resource_url="https://data.travis.gov/arcgis/rest/services/Parcels/FeatureServer/0")
+    source = GenericArcGISSource(fetch=fetch, binding=binding)
+    rows = source.search(BBOX, ["commercial_property"], 5, 5.0)
+    assert len(rows) == 1
+    assert abs(rows[0].latitude - 29.75) < 1e-9
+    assert abs(rows[0].longitude - (-95.36)) < 1e-9
+
+
 class _FakeClaimStore:
     def __init__(self):
         self.state = {}

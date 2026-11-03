@@ -132,6 +132,64 @@ def _coord(row: dict, aliases: tuple[str, ...], mapping: dict, key: str) -> floa
     return value if math.isfinite(value) else None
 
 
+def _ring_centroid(ring: list) -> tuple[float, float] | None:
+    """Shoelace centroid of one GeoJSON ring; vertex mean if degenerate."""
+    points: list[tuple[float, float]] = []
+    for coord in ring or []:
+        if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+            try:
+                points.append((float(coord[0]), float(coord[1])))
+            except (TypeError, ValueError):
+                continue
+    if len(points) < 3:
+        return points[0] if points else None
+    if points[0] == points[-1]:
+        points = points[:-1]
+    area2 = 0.0
+    cx = cy = 0.0
+    for i, (x, y) in enumerate(points):
+        nx, ny = points[(i + 1) % len(points)]
+        cross = x * ny - nx * y
+        area2 += cross
+        cx += (x + nx) * cross
+        cy += (y + ny) * cross
+    if abs(area2) < 1e-18:
+        return (sum(p[0] for p in points) / len(points),
+                sum(p[1] for p in points) / len(points))
+    return (cx / (3 * area2), cy / (3 * area2))
+
+
+def _geometry_point(geometry: Any) -> tuple[float, float] | None:
+    """Representative (lon, lat) for Point/Polygon/MultiPolygon geometry.
+
+    Parcel layers are polygons by nature; a listing's coordinates are
+    the polygon centroid -- a representative point for the parcel,
+    never a fabricated address or a surveyed boundary point.
+    """
+    if not isinstance(geometry, dict):
+        return None
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates") or []
+    if gtype == "Point" and len(coords) == 2:
+        try:
+            lon, lat = float(coords[0]), float(coords[1])
+        except (TypeError, ValueError):
+            return None
+        return (lon, lat) if math.isfinite(lon) and math.isfinite(lat) else None
+    if gtype == "Polygon" and coords:
+        return _ring_centroid(coords[0])
+    if gtype == "MultiPolygon" and coords:
+        best = None
+        for polygon in coords:
+            if polygon:
+                centroid = _ring_centroid(polygon[0])
+                if centroid is not None:
+                    best = centroid
+                    break
+        return best
+    return None
+
+
 def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
                 binding: dict) -> tuple[list[RawListing], int]:
     mapping = dict(binding.get("field_mapping") or {})
@@ -148,15 +206,9 @@ def _to_listings(rows: list[tuple[dict, Any]], *, source: str,
         lat = _coord(row, _LAT, mapping, "latitude")
         lon = _coord(row, _LON, mapping, "longitude")
         if lat is None or lon is None:
-            if isinstance(geometry, dict) and geometry.get("type") == "Point":
-                coords = geometry.get("coordinates") or []
-                if len(coords) == 2:
-                    try:
-                        lon, lat = float(coords[0]), float(coords[1])
-                    except (TypeError, ValueError):
-                        lat = lon = None
-                    if lat is not None and not (math.isfinite(lat) and math.isfinite(lon)):
-                        lat = lon = None
+            point = _geometry_point(geometry)
+            if point is not None:
+                lon, lat = point
         listings.append(RawListing(
             source=source,
             external_id=f"{source}:{external}",
