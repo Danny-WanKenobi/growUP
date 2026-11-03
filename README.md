@@ -100,6 +100,10 @@ It runs all 15 bounded cases, validates the synthetic PASS response, and archive
 a sanitized mode-0600 JSON proof owned by `ubuntu` under
 `/home/ubuntu/growup-handoff-proof-*.json`. It does not disclose credentials.
 Existing partial setup state is preserved; do not reset it after an init failure.
+The development deployment client now checks for at least 1 GiB free on the VM
+root filesystem before uploading or creating a release. It never deletes older
+releases, caches or databases automatically. A full disk requires inspecting and
+approving specific cleanup targets; the currently active release stays intact.
 
 **First dedicated PostgreSQL execution and browser visual acceptance are pending**
 until the owner performs that checkpoint. Local success does not claim the demo

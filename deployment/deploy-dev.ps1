@@ -16,6 +16,18 @@ $RemoteRef = (& git -C $Repo ls-remote origin refs/heads/main | Out-String).Trim
 if ($LASTEXITCODE -ne 0 -or -not $RemoteRef -or ($RemoteRef -split '\s+')[0] -ne $Sha) {
     throw 'GitHub origin/main must contain the exact local commit.'
 }
+# Fail before upload/release creation if the VM root filesystem cannot
+# safely accommodate another isolated virtual environment and its cache.
+$DiskReport = @(& ssh -o BatchMode=yes $Remote 'df -Pk /')
+if ($LASTEXITCODE -ne 0 -or $DiskReport.Count -lt 2) { throw 'Could not check development VM free space.' }
+$DiskFields = ($DiskReport[-1].Trim() -split '\s+')
+$AvailableKiB = 0L
+if ($DiskFields.Count -lt 6 -or -not [long]::TryParse($DiskFields[3], [ref]$AvailableKiB)) {
+    throw 'Unexpected development VM disk report; no deployment started.'
+}
+if ($AvailableKiB -lt 1048576) {
+    throw "STOP: development VM has $([math]::Round($AvailableKiB / 1024)) MiB free; free at least 1 GiB before deployment. No release was created."
+}
 $Release = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '_' + $Sha.Substring(0,7)
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ("growup-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Temp -Force | Out-Null
