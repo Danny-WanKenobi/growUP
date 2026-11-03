@@ -371,7 +371,8 @@ def discover_sources_anywhere(
                 or t in str(e.get("publisher_domain") or "").lower()
                 for t in _tokens) else 1)
         for entry in _ranked[:5]:
-            if entry.get("adapter") != "generic_socrata" or not entry.get("resource_url"):
+            if entry.get("adapter") not in ("generic_socrata", "generic_arcgis") \
+                    or not entry.get("resource_url"):
                 continue
             try:
                 verified = verify_and_select(

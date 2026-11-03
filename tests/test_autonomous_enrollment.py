@@ -338,6 +338,97 @@ def test_org_domain_decision_without_directory_stays_blocked():
     assert "publisher_authority_basis" in decision["missing"]
 
 
+def _arcgis_fetch(layer=None, item=None, features=None, directory=None):
+    import time as _time
+    layer = layer if layer is not None else {
+        "name": "TCProperty", "copyrightText": "",
+        "editingInfo": {"lastEditDate": int(_time.time() * 1000) - 86400000},
+        "fields": [{"name": "ACCOUNT"}, {"name": "SITUS_ADDR"},
+                   {"name": "CITY"}, {"name": "LAND_USE"}],
+    }
+    item = item if item is not None else {
+        "id": "a" * 32, "owner": "tarrantcounty", "title": "Tarrant County Parcel Property",
+        "licenseInfo": "Public Domain", "access": "public",
+    }
+    features = features if features is not None else [
+        {"properties": {"ACCOUNT": "1", "county": "Tarrant"},
+         "geometry": {"type": "Point", "coordinates": [-97.3, 32.7]}}]
+
+    def fetch(url, params=None):
+        if url.endswith("tarrant.php"):
+            return b'<a href="https://www.tarrantcounty.com/">Tarrant County</a>'
+        if "comptroller" in url:
+            return directory or b'<a href="tarrant.php">220 Tarrant</a>'
+        if "/query" in url:
+            return json.dumps({"type": "FeatureCollection", "features": features}).encode()
+        if "sharing/rest/content/items" in url:
+            return json.dumps(item).encode()
+        return json.dumps(layer).encode()
+    return fetch
+
+
+def _arcgis_resource():
+    return {
+        "platform": "arcgis",
+        "publisher_domain": "mapit.tarrantcounty.com",
+        "publisher_name": "tarrantcounty",
+        "dataset_id": "a" * 32,
+        "resource_url": "https://mapit.tarrantcounty.com/arcgis/rest/services/Tax/TCProperty/MapServer/0",
+    }
+
+
+def test_arcgis_enrolled_with_directory_corroboration():
+    decision = run_autonomous_enrollment(
+        _arcgis_resource(), jurisdiction="Tarrant County", store=_FakeStore(),
+        fetch=_arcgis_fetch(),
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",))
+    assert decision["status"] == "enrolled"
+    assert decision["criteria"]["directory_corroborated_official_domain"] is True
+
+
+def test_arcgis_unknown_license_needs_more_evidence():
+    item = {"id": "a" * 32, "owner": "tarrantcounty",
+            "title": "Tarrant County Parcel Property", "licenseInfo": ""}
+    decision = run_autonomous_enrollment(
+        _arcgis_resource(), jurisdiction="Tarrant County", store=_FakeStore(),
+        fetch=_arcgis_fetch(item=item),
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",))
+    assert decision["status"] == "needs_more_evidence"
+    assert "license_known_clear" in decision["missing"]
+
+
+def test_arcgis_stale_layer_needs_more_evidence():
+    import time as _time
+    layer = {"name": "TCProperty",
+             "editingInfo": {"lastEditDate": int(_time.time() * 1000) - 900 * 86400000},
+             "fields": [{"name": "ACCOUNT"}, {"name": "CITY"}]}
+    decision = run_autonomous_enrollment(
+        _arcgis_resource(), jurisdiction="Tarrant County", store=_FakeStore(),
+        fetch=_arcgis_fetch(layer=layer),
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",))
+    assert decision["status"] == "needs_more_evidence"
+    assert "freshness_known_and_recent" in decision["missing"]
+
+
+def test_verify_and_select_arcgis_enrolls_and_selects():
+    from app.agents.gabriel.sources.autonomous_enrollment import verify_and_select
+    entry = {
+        "name": "Tarrant County Parcel Property",
+        "publisher_domain": "mapit.tarrantcounty.com",
+        "platform": "arcgis", "adapter": "generic_arcgis",
+        "dataset_id": "a" * 32,
+        "resource_url": "https://mapit.tarrantcounty.com/arcgis/rest/services/Tax/TCProperty/MapServer/0",
+    }
+    store = _FakeSelectionStore()
+    out = verify_and_select(
+        entry, jurisdiction="Tarrant County", selection_store=store,
+        assignment_key="test:verified:arcgis:1", fetch=_arcgis_fetch(),
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",))
+    assert out["enrollment"]["status"] == "enrolled"
+    assert out["selection"]["status"] == "selected"
+    assert out["selection"]["selected_adapter"] == "generic_arcgis"
+
+
 def test_non_socrata_platform_no_network():
     decision = run_autonomous_enrollment(
         _resource(platform="ckan"), jurisdiction="Seattle", store=_FakeStore(),

@@ -285,6 +285,135 @@ def verify_socrata_resource(
     )
 
 
+def verify_arcgis_resource(
+    resource: dict[str, Any],
+    *,
+    jurisdiction: str,
+    fetch: Callable[..., bytes] | None = None,
+    timeout: float = 15.0,
+) -> PublisherEvidence:
+    """Publisher-served evidence for one retained ArcGIS layer.
+
+    Two core requests under ``http_policy``: the layer metadata
+    (``?f=pjson``: name, fields, last-edit freshness, copyright) and
+    a bounded 5-feature sample query. When the resource carries an
+    ArcGIS item id, one further request fetches the item record
+    (owner, title, license/access information, public access) from
+    the sharing API -- the publisher-maintained record for exactly
+    this layer. License clears only on a known-clear identifier or
+    an affirmative publisher-served terms statement; silence never
+    clears. Geography checks observed feature properties only.
+    """
+    from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
+    from app.agents.gabriel.sources.source_finder import _KNOWN_CLEAR_LICENSES
+
+    layer_url = str(resource.get("resource_url") or "").strip().rstrip("/")
+    dataset_id = str(resource.get("dataset_id") or "").strip()
+    if not layer_url:
+        raise EnrollmentError("arcgis resource lacks a layer URL")
+    domain = (urlparse(layer_url).hostname or "").lower()
+    if not domain:
+        raise EnrollmentError("arcgis layer URL has no host")
+
+    def _get(url: str, params: dict | None = None) -> bytes:
+        if fetch is not None:
+            return fetch(url, params or {})
+        try:
+            return fetch_bytes(url, params=params, timeout=timeout,
+                               max_bytes=1_000_000, name="publisher evidence")
+        except HttpPolicyError as exc:
+            raise EnrollmentError(f"publisher evidence refused: {exc}") from exc
+
+    try:
+        layer = json.loads(_get(layer_url, {"f": "pjson"}) or b"{}")
+    except (ValueError, TypeError) as exc:
+        raise EnrollmentError("publisher layer metadata is not valid JSON") from exc
+    if not isinstance(layer, dict) or not (layer.get("fields") or layer.get("name")):
+        raise EnrollmentError("publisher layer metadata does not describe a layer")
+    fields = tuple(
+        str(f.get("name") or "") for f in (layer.get("fields") or [])
+        if isinstance(f, dict) and f.get("name"))
+    freshness: int | None = None
+    edited = (layer.get("editingInfo") or {}).get("lastEditDate") or layer.get("lastEditDate")
+    if isinstance(edited, (int, float)) and edited > 0:
+        age = datetime.now(timezone.utc) - datetime.fromtimestamp(
+            float(edited) / 1000.0, tz=timezone.utc)
+        freshness = max(age.days, 0)
+    license_text = str(layer.get("licenseInfo") or layer.get("copyrightText") or "").strip()
+    license_basis = ""
+    publisher_name = str(resource.get("publisher_name") or "")
+    attribution = publisher_name
+    dataset_name = str(layer.get("name") or "")
+    item_digest = ""
+    if dataset_id and re.fullmatch(r"[0-9a-fA-F]{32}", dataset_id):
+        try:
+            item = json.loads(_get(
+                f"https://www.arcgis.com/sharing/rest/content/items/{dataset_id}",
+                {"f": "pjson"}) or b"{}")
+        except Exception:
+            item = None
+        if isinstance(item, dict) and item.get("id"):
+            item_digest = hashlib.sha256(
+                json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
+            publisher_name = str(item.get("owner") or publisher_name)
+            attribution = str(item.get("title") or dataset_name or attribution)
+            dataset_name = str(item.get("title") or dataset_name)
+            item_license = str(item.get("licenseInfo") or item.get("accessInformation") or "").strip()
+            if item_license:
+                license_text = item_license
+    if license_text:
+        if license_text.lower() in _KNOWN_CLEAR_LICENSES:
+            license_basis = "dataset_metadata"
+        elif _terms_license_clear(license_text):
+            license_basis = "portal_terms"
+
+    sample_rows = 0
+    geo_values: list[str] = []
+    query_url = layer_url + "/query"
+    try:
+        payload = json.loads(_get(query_url, {
+            "where": "1=1", "outFields": "*", "resultRecordCount": 5,
+            "f": "geojson", "outSR": "4326"}) or b"{}")
+    except (ValueError, TypeError) as exc:
+        raise EnrollmentError("publisher sample is not valid JSON") from exc
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if isinstance(features, list):
+        sample_rows = len([f for f in features if isinstance(f, dict)])
+        for feature in features:
+            props = (feature or {}).get("properties") or {}
+            if not isinstance(props, dict):
+                continue
+            lowered = {str(k).lower(): v for k, v in props.items()}
+            for key in ("city", "county", "municipality", "situscity", "city_name"):
+                value = lowered.get(key)
+                if value not in (None, ""):
+                    geo_values.append(str(value))
+
+    retrieved = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    body = {
+        "domain": domain, "dataset_id": dataset_id, "resource_url": layer_url,
+        "layer_url": layer_url, "retrieved_at": retrieved,
+        "dataset_name": dataset_name, "attribution": attribution,
+        "license_id": license_text[:200], "license_basis": license_basis,
+        "terms_digest": item_digest, "freshness_days": freshness,
+        "fields": list(fields), "sample_rows": sample_rows,
+        "sample_geo_values": geo_values[:10],
+    }
+    return PublisherEvidence(
+        domain=domain, dataset_id=dataset_id, resource_url=layer_url,
+        publisher_name=publisher_name, attribution=attribution,
+        dataset_name=dataset_name,
+        license_id=license_text[:200], license_clear=bool(license_basis),
+        freshness_days=freshness, fields=fields, sample_rows=sample_rows,
+        sample_geo_values=tuple(geo_values[:10]),
+        evidence_digest=hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest(),
+        retrieved_at=retrieved,
+        license_basis=license_basis, terms_digest=item_digest,
+    )
+
+
 def verify_directory_corroboration(
     domain: str,
     *,
@@ -308,6 +437,21 @@ def verify_directory_corroboration(
         HttpPolicyError, fetch_bytes, validate_endpoint,
     )
     target = (domain or "").strip().lower()
+
+    def _same_site(host_a: str, host_b: str) -> bool:
+        if not host_a or not host_b:
+            return False
+        if host_a == host_b or host_a.endswith("." + host_b) or host_b.endswith("." + host_a):
+            return True
+        # Same registrable domain for common US suffixes lets an
+        # official www.<county>.com listing corroborate a service
+        # subdomain such as mapit.<county>.com.
+        def _reg(h: str) -> str:
+            parts = h.split(".")
+            return ".".join(parts[-2:]) if len(parts) >= 2 else h
+        return _reg(host_a) == _reg(host_b) and host_a.rsplit(".", 1)[-1] in (
+            "com", "org", "net", "us", "edu")
+
     tokens = set(_jurisdiction_tokens(jurisdiction))
     tokens.update(
         t for t in re.split(r"[^a-z]+", (publisher_name or "").lower())
@@ -336,7 +480,7 @@ def verify_directory_corroboration(
         anchors = re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', text)
         for href, label in anchors:
             link_host = (urlparse(href if "://" in href else f"https://{href}").hostname or "").lower()
-            if link_host != target:
+            if not _same_site(link_host, target):
                 continue
             label_tokens = {t for t in re.split(r"[^a-z]+", label.lower()) if t}
             if tokens & label_tokens:
@@ -374,7 +518,7 @@ def verify_directory_corroboration(
             sub_text = sub.decode("utf-8", "replace") if isinstance(sub, (bytes, bytearray)) else str(sub)
             for sub_href, sub_label in re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', sub_text):
                 sub_host = (urlparse(sub_href if "://" in sub_href else f"https://{sub_href}").hostname or "").lower()
-                if sub_host == target:
+                if _same_site(sub_host, target):
                     return {
                         "matched": True, "directory_url": parsed.geturl(),
                         "directory_host": host, "matched_domain": target,
@@ -644,12 +788,22 @@ def run_autonomous_enrollment(
     platform = str(resource.get("platform") or "").strip().lower()
     domain = str(resource.get("publisher_domain") or "").strip().lower()
     dataset_id = str(resource.get("dataset_id") or "").strip()
-    if platform != "socrata" or not domain or not dataset_id:
+    if platform == "arcgis" and not domain and resource.get("resource_url"):
+        domain = (urlparse(str(resource["resource_url"])).hostname or "").lower()
+    if platform not in ("socrata", "arcgis") or not domain:
         return {"policy_version": ENROLLMENT_POLICY_VERSION,
                 "status": "needs_more_evidence",
                 "missing": ["publisher-served evidence path not implemented "
                             "for this platform"],
                 "domain": domain, "dataset_id": dataset_id}
+    if platform == "socrata" and not dataset_id:
+        return {"policy_version": ENROLLMENT_POLICY_VERSION,
+                "status": "needs_more_evidence",
+                "missing": ["publisher-served evidence path not implemented "
+                            "for this platform"],
+                "domain": domain, "dataset_id": dataset_id}
+    resource_key = dataset_id or hashlib.sha256(
+        str(resource.get("resource_url") or "").encode()).hexdigest()[:16]
     fingerprint = _digest({
         "domain": domain, "dataset_id": dataset_id,
         "resource_url": str(resource.get("resource_url") or ""),
@@ -657,14 +811,17 @@ def run_autonomous_enrollment(
         "policy_version": ENROLLMENT_POLICY_VERSION,
     })
     store = store if store is not None else EnrollmentStore()
-    claim = store.claim(domain, dataset_id, fingerprint)
+    claim = store.claim(domain, resource_key, fingerprint)
     if claim.get("status") == "completed":
         return claim["decision"]
     if claim.get("status") != "winner":
         raise EnrollmentError(
             "enrollment for this resource was already claimed and its "
             "outcome is uncertain; it will not be auto-retransmitted")
-    evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
+    if platform == "arcgis":
+        evidence = verify_arcgis_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
+    else:
+        evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
     decision = decide_enrollment(
         evidence, jurisdiction=jurisdiction,
         evidence_directory=_directory_evidence_for(
@@ -672,7 +829,7 @@ def run_autonomous_enrollment(
             directory_urls=directory_urls, fetch=fetch))
     decision["run_id"] = claim.get("run_id", "")
     decision["digest"] = _digest(decision)
-    store.complete(domain, dataset_id, decision=decision, evidence_payload={
+    store.complete(domain, resource_key, decision=decision, evidence_payload={
         "domain": evidence.domain, "dataset_id": evidence.dataset_id,
         "resource_url": evidence.resource_url,
         "publisher_name": evidence.publisher_name,
@@ -724,15 +881,22 @@ def verify_and_select(
 
     resource_url = str(ranked_entry.get("resource_url") or "").strip()
     domain = str(ranked_entry.get("publisher_domain") or "").strip().lower()
-    dataset_id = ""
-    if "/resource/" in resource_url:
+    platform = str(ranked_entry.get("platform") or "socrata").strip().lower()
+    is_arcgis = platform == "arcgis" or ranked_entry.get("adapter") == "generic_arcgis"
+    if is_arcgis:
+        platform = "arcgis"
+    dataset_id = str(ranked_entry.get("dataset_id") or "")
+    if not dataset_id and "/resource/" in resource_url:
         dataset_id = resource_url.rsplit("/resource/", 1)[-1].split(".")[0]
     resource = {
-        "platform": "socrata", "publisher_domain": domain,
+        "platform": platform, "publisher_domain": domain,
         "publisher_name": str(ranked_entry.get("publisher_name") or ""),
         "dataset_id": dataset_id, "resource_url": resource_url,
     }
-    evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
+    if is_arcgis:
+        evidence = verify_arcgis_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
+    else:
+        evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
     enrollment = decide_enrollment(
         evidence, jurisdiction=jurisdiction,
         evidence_directory=_directory_evidence_for(
@@ -779,19 +943,24 @@ def verify_and_select(
     candidate = SourceCandidate(
         name=evidence.dataset_name or str(ranked_entry.get("name") or domain),
         publisher_name=evidence.attribution or evidence.publisher_name or domain,
-        publisher_domain=domain, claimed_official=True,
+        # Official-by-domain only for .gov; a directory-corroborated
+        # non-.gov publisher's identity rests on the enrollment
+        # evidence, not on a domain claim qualify_source would flag.
+        publisher_domain=domain, claimed_official=domain.endswith(".gov"),
         jurisdiction=jurisdiction, country="US",
         record_types=observed_record_types or tuple(record_types),
         access_method="api", free=True, requires_auth=False,
         robots_restricted=False, license_clear=True,
-        formats=("json", "csv"), property_level=True,
+        formats=("geojson", "json") if is_arcgis else ("json", "csv"),
+        property_level=True,
         update_age_days=evidence.freshness_days,
         provenance_url=resource_url,
     )
+    adapter_name = "generic_arcgis" if is_arcgis else "generic_socrata"
     found = FoundCandidate(
         candidate=candidate, tier=1, provider="publisher_direct",
-        adapter="generic_socrata", evidence_ref=evidence.evidence_digest,
-        resource={"resource_url": resource_url, "platform": "socrata",
+        adapter=adapter_name, evidence_ref=evidence.evidence_digest,
+        resource={"resource_url": resource_url, "platform": platform,
                   "dataset_id": dataset_id, "license_id": evidence.license_id,
                   "field_mapping": {}, "fields": list(evidence.fields)},
     )
@@ -799,7 +968,7 @@ def verify_and_select(
                             record_types=tuple(record_types), country="US",
                             approved=True, budget=DiscoveryBudget(max_requests=0))
     decision = select_sources(mission, [found],
-                              supported_adapters={"generic_socrata"})
+                              supported_adapters={adapter_name})
     if decision.get("status") != "selected":
         raise EnrollmentError(
             "publisher-verified candidate still not selectable: "

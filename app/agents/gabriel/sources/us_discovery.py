@@ -124,6 +124,7 @@ def discover_us_sources(
             "reasons": list(r.get("reasons") or []) + list(r.get("executable_blockers") or []),
             "adapter": r.get("adapter"),
             "resource_url": (r.get("resource") or {}).get("resource_url"),
+            "dataset_id": (r.get("resource") or {}).get("dataset_id"),
         }
         for r in decision.get("ranked") or []
     ]
