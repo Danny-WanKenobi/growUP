@@ -62,8 +62,10 @@ _ZIP = ("zip_code", "zip", "zipcode", "postal_code")
 _LAT = ("latitude", "lat", "y")
 _LON = ("longitude", "lon", "lng", "x")
 _USE = ("land_use", "landuse", "use_code", "property_class", "classification",
-        "building_class", "bldg_class_desc", "description", "use")
-_BUILDING = ("building", "building_type", "structure_type")
+        "building_class", "bldg_class_desc", "description", "use",
+        "primaryspaceuse", "primary_space_use", "space_use", "spaceuse",
+        "predominantspaceuse", "largestpropertyusetype", "epapropertytype")
+_BUILDING = ("building", "building_type", "structure_type", "buildingtype")
 _STORIES = ("num_stories", "stories", "building_levels", "levels", "floors")
 _HEIGHT = ("height_m",)  # Generic unitless height has no safe default unit.
 _NAME = ("name", "property_name", "building_name")
@@ -104,6 +106,7 @@ def category_from_observed(row: dict, mapping: dict | None = None) -> str:
     for token, tag in (("warehouse", "warehouse"), ("storage", "warehouse"),
                        ("industrial", "industrial"), ("skyscraper", "skyscraper"),
                        ("office", "office"), ("retail", "retail"),
+                       ("hotel", "commercial"), ("nonresidential", "commercial"),
                        ("commercial", "commercial")):
         if token in text:
             building = tag
