@@ -368,13 +368,19 @@ def discover_sources_anywhere(
         _tokens = [t for t in jurisdiction.lower().replace(",", " ").split()
                    if len(t) > 2 and t not in (
                        "county", "city", "parish", "borough", "state")]
-        _ranked = sorted(
-            result.get("ranked") or [],
-            key=lambda e: 0 if any(
-                t in str(e.get("name") or "").lower()
-                or t in str(e.get("publisher_domain") or "").lower()
-                for t in _tokens) else 1)
-        for entry in _ranked[:5]:
+        def _attempt_key(indexed):
+            index, entry = indexed
+            name = str(entry.get("name") or "").lower()
+            domain = str(entry.get("publisher_domain") or "").lower()
+            local = any(t in name or t in domain for t in _tokens)
+            prop = any(t in name for t in (
+                "parcel", "property", "properties", "appraisal",
+                "building", "assessment", "land"))
+            return (0 if local else 1, 0 if prop else 1, index)
+
+        _ranked = [entry for _i, entry in sorted(
+            enumerate(result.get("ranked") or []), key=_attempt_key)]
+        for entry in _ranked[:8]:
             if entry.get("adapter") not in ("generic_socrata", "generic_arcgis") \
                     or not entry.get("resource_url"):
                 continue
