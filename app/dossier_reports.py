@@ -8,12 +8,13 @@ from app.custody_db import (
     latest_version_in_transaction, lock_dossier_in_transaction,
     snapshot_in_transaction, verify_chain_in_transaction,
 )
+from app.agents.registry import AGENT_SPECS
 from app.workflow import digest_payload
 from app.workflow_db import WorkflowError, get_record_in_transaction, put_record_in_transaction
 
 
 def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, report):
-    if agent not in ("raphael", "onesimus", "michael") or not isinstance(report, dict):
+    if agent not in ("raphael", "onesimus", "michael", *AGENT_SPECS) or not isinstance(report, dict):
         raise CustodyAuthError("only a structured inspection/engineering/financial report can be appended")
     link_record = get_record_in_transaction(conn, run_id, "custody_link", dossier_key)
     source = get_record_in_transaction(conn, run_id, "dossier_version", dossier_key)
@@ -41,7 +42,9 @@ def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, repo
             return source, latest
         raise WorkflowError("agent report already exists; use an explicit new assessment rather than overwrite")
     schema = {"raphael":"raphael-inspection-1","onesimus":"onesimus-concept-report-1",
-              "michael":"michael-finance-report-1"}[agent]
+              "michael":"michael-finance-report-1"}.get(agent, "agent-intake-report-1")
+    if agent in AGENT_SPECS and report.get("agent") != agent:
+        raise CustodyTamperError("specialist report names a different author")
     if report.get("schema_version") != schema or report.get("source_dossier_digest") != source.digest:
         raise CustodyTamperError("agent report does not bind its input dossier/schema")
     if agent == "onesimus":

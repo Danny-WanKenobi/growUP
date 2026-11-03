@@ -1,7 +1,7 @@
 """Shared agent observability: structured events, JSONL trace, PG index.
 
-All seven agents (Gabriel, Raphael, Onesimus, Wondrue, Michael, Uriel,
-Priscilla) emit through this package. Agents never choose sinks: the
+Foundational and registered downstream agents emit through this package.
+Agents never choose sinks: the
 event's retention class routes it. See ``emitter`` for the durability
 contract and ``store`` for Wondrue's future query surface.
 """

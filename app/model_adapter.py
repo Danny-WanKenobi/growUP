@@ -159,6 +159,10 @@ INTENTS = frozenset(
         "preview_successor",
         "commit_successor",
         "inspect_pipeline",
+        "inspect_agents",
+        "preview_agent_report",
+        "inspect_owner_queue",
+        "inspect_lead_metrics",
     }
 )
 

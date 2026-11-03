@@ -1,5 +1,120 @@
 # 🌱 Grow Up
 
+## Downstream agent foundations, version one (November 3, 2026)
+
+Grow Up is a **single-owner autonomous system**, not a multi-user product. Normal
+internal work is intended to proceed under configured backend permissions without
+repeated human prompts. Unresolved blockers, edge cases, emergencies and sensitive
+decisions belong in the human owner's review queue. Wondrue remains the sole
+operational interface. Dan is a software owner-representative/asset role; he is
+not the human owner and cannot grant signing, spending or execution authority.
+A future power of attorney needs a separate authenticated authority integration;
+its planned existence is not present permission to sign documents.
+
+These are **version-one deterministic preparation capabilities**, with explicit
+runtime instructions and input/output contracts, not newly trained models or
+claims of professional domain competence. Definitions live in
+`app/agents/registry.py`; the shared preparation implementation is
+`app/agents/stages.py`. No additional discovery/verification engine or database
+has been created. Existing Uriel (`app/uriel.py`) and Priscilla (`app/priscilla.py`)
+implementations remain the package/event authorities.
+
+| Agent / stable ID | Useful first-version output | Work That Can Wait / deferred |
+| --- | --- | --- |
+| Uriel / `uriel` | Opportunity intake, inherited Michael assessments, evidence-linked factual draft brief; existing package preparation retained | Automated contact research/ranking, campaign design and authenticated delivery with suppression, consent and rate-limit enforcement |
+| Priscilla / `priscilla` | Tracking intake; existing append-only events and separately labeled actual/simulated metrics, readable by Wondrue | Inbound webhooks, reply correlation, richer bounced/replied/interested states and full property timeline UI |
+| Nicole / `nicole` | Jurisdiction, proposed-use and official-requirement intake checklist | Current permit/code/license research, authenticated jurisdiction adapters, applications and submissions |
+| Theresia Keys / `theresia_keys` | Ownership/lien, finance-term and contract-preparation checklist | Title/lien verification, underwriting rules, final instruments and signing |
+| Simeon / `simeon` | Consent, terms, signing-authority and closing-conditions checklist | Negotiations, closing channels, verified power of attorney and execution |
+| Solomon / `solomon` | Preconstruction design, permit, workforce/safety and budget prerequisites | Contractor/robot procurement, scheduling, site work, supervision and maintenance |
+| Elmer / `elmer` | Period, transaction, entity/jurisdiction and reconciliation intake | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
+| Yoseph / `yoseph` | Risk, policy and coverage-requirement intake | Carrier quotes, policy interpretation, coverage validation, binding and claims |
+| Deborah / `deborah` | Legal-question, jurisdiction and governing-document issue register | Current-law research, supported legal opinions, filings and representation |
+| Dan / `dan` | Ownership, operating-mandate and asset-obligation intake | Verified asset register, performance/maintenance automation and delegated transactions |
+
+### Canonical handoff contract from the outset
+
+Every role definition includes the same operational instructions: keep the
+existing property UUID/dossier identity; load the latest inherited full dossier;
+verify its digest, custody chain and current holder; append only the role's report
+to a new full version; create the normal immutable snapshot; use the existing
+signed `forward`, `return` or `review` receipt service. No agent creates its own
+research dossier, pipeline, log or independent custody mechanism.
+
+The existing custody registry, role interpretation and shared event AgentId enum
+now recognize all eight additional roles. Existing `mvp-1`/`canonical-1` receipt
+meanings, MAC format and historical records are unchanged. Review routing extends
+after Priscilla in the listed order. This is an **internal review route**, not a
+construction/closing execution schedule: Nicole, Deborah, Yoseph and other
+relevant reviews must be resolved before any future consequential operation.
+Returns and human-review escalation reuse the existing service. No handoff has
+been performed for a new role and no real dossier has yet demonstrated this
+expanded route.
+
+`app.agents.stages.prepare_audited` is the common, currently uninvoked worker
+entrypoint. With workflow enabled and an authenticated worker/operator principal,
+it requires the latest shared dossier and the **actual agent as current custody
+holder**, then appends `agent-intake-report-1` through `app/dossier_reports.py`.
+A repeat returns the existing report; conflicting or corrupt reports refuse.
+It never automatically forwards custody, creates a property, generates demo data,
+starts a worker, fetches a source or invokes a model. Future workers must call the
+existing custody service when a permissible internal transfer is appropriate.
+
+Inputs come only from stored inherited reports and
+`dossier.specialist_inputs[agent_id][input_name]`, where each entry carries
+`value` and `evidence_refs`. Version one records them as **provided_unverified**;
+a source reference alone is not authentication or an agent approval. Missing or
+invalid input yields `needs_evidence`; a complete intake is
+`prepared_not_approved`. Neither status establishes legal compliance, permitted
+use, financing, contract enforceability, a closed deal, tax liability, coverage or
+ownership. Uriel's brief copies Michael's stored conditional assessments and
+never invents a profit claim. Priscilla never infers engagement from preparation.
+
+When that worker entrypoint is eventually invoked, unresolved intake items become
+idempotent `owner_review_task` workflow records, bound to the property, source
+dossier and report digests, in the same audited transaction as the report.
+These are durable pending requests, not permission grants. Resolution automation
+and a mutation/approval UI are deferred. No pending review tasks were created by
+this implementation. Existing schemaless stores suffice; no migration or new
+secret/dependency is required.
+
+### Wondrue inspection commands and activation boundary
+
+Use structured commands on the existing authenticated `/wondrue/command` route
+with `mode: "read-only"`, `target: "real"`, `use_live: false`:
+
+- `inspect_agents`, empty args: lists all ten roles, handoff instructions,
+  required inputs/reports, current capabilities and deferred work. No database is
+  required for this roster.
+- `preview_agent_report`, args `run_id`, `dossier_key`, `agent`: reads the current
+  stored dossier and previews a role's intake report without creating reports,
+  tasks, receipts or sample data. This command has not been run on a real dossier.
+- `inspect_owner_queue`, arg `run_id`: reads digest-checked pending owner tasks.
+- `inspect_lead_metrics`, optional arg `package_entry`: reuses Priscilla's existing
+  actual/simulated event counts. Empty history stays empty; no engagement is
+  invented and no new simulation is run.
+
+There is **no new public mutation command or background dispatcher** for these
+agents in version one. Domain experts, external-action adapters and autonomous
+execution workers are deferred; the callable preparation/queue primitives are
+ready for a later bounded activation. Live-mode outreach autonomy remains the
+product goal under standing channel permissions, authenticated delivery,
+compliance/suppression checks and limits; no sender is enabled merely by setting
+Live Mode. Demo-mode sends/conversions remain explicitly simulated by the existing
+separate mechanism, and that mechanism has not been invoked here.
+
+**Current boundary:** discovery remains paused. Database health/skip investigation
+and real stored-dossier preview remain owner-deferred. No new genuine or synthetic
+business dossier, conversion, custody receipt or demonstration data was created.
+Only contract/pure routing checks and the existing offline regression are run for
+this task; no new-agent handoff proof is claimed. Owner Git/deployment and Ubuntu
+validation remain separate checkpoints. No GUADE changes are included.
+
+Version-one validation: **2,532 passed, 149 skipped, 16 warnings**, zero
+failures in the Windows offline suite; focused role/custody/Wondrue/Uriel/Priscilla
+checks: **115 passed, 4 skipped**. Syntax and whitespace checks passed. The new
+role checks are contract-only and create no sample property or custody receipt.
+
 ## Stored-evidence assessment through Michael (November 3, 2026)
 
 This local implementation adds an **offline reassessment** of an existing genuine

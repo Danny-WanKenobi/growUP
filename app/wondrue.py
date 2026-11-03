@@ -52,6 +52,10 @@ READ_ONLY_INTENTS = frozenset(
         "preview_dcad_collection",
         "preview_successor",
         "inspect_pipeline",
+        "inspect_agents",
+        "preview_agent_report",
+        "inspect_owner_queue",
+        "inspect_lead_metrics",
         "preview_retained_assessment",
     }
 )
@@ -571,7 +575,8 @@ def _help_text() -> str:
         "Priscilla cohort simulations, start/stop/resume/inspect "
         "bounded discovery, explain stored results and economics, "
         "analyze evidence, draft Uriel copy, inspect inference "
-        "usage, preview/commit retained evidence reassessments, or preview/collect DCAD evidence and preview/commit "
+        "usage, inspect the agent roster, preview specialist intake, read the owner queue and lead metrics, "
+        "preview/commit retained evidence reassessments, or preview/collect DCAD evidence and preview/commit "
         "same-dossier successors, or release an authorized inspection hold to engineering (release_engineering). Modes: read-only (inspect only), ask "
         "(approve before acting), full (act within limits). "
         "Each assistance capability spends at most one provider "
@@ -852,6 +857,23 @@ def _execute_real(
     from app.workflow_db import get_record_in_transaction
 
     capability_ctx = dict(ctx or _capability_context())
+
+    if intent == "inspect_lead_metrics":
+        if conn is None:
+            raise WondrueError("lead metrics requires a database connection")
+        return priscilla_module.metrics_in_transaction(conn, package_entry=args.get("package_entry"))
+    if intent == "inspect_agents":
+        from app.agents.registry import describe_agents
+        return describe_agents()
+    if intent in ("preview_agent_report", "inspect_owner_queue"):
+        from app.agents import stages
+        if conn is None:
+            raise WondrueError("specialist preview requires a database connection")
+        run_id = UUID(str(args.get("run_id")))
+        if intent == "inspect_owner_queue":
+            return stages.owner_queue_in_transaction(conn, run_id=run_id)
+        return stages.preview_in_transaction(conn, run_id=run_id,
+            dossier_key=str(args.get("dossier_key") or "main"), agent=str(args.get("agent") or ""))
 
     if intent in ("preview_retained_assessment","commit_retained_assessment"):
         from app import retained_assessment
@@ -1257,7 +1279,8 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
-    if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment"):
+    if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal

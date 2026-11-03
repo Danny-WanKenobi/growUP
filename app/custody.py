@@ -27,6 +27,7 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 from pydantic import BaseModel, Field
 
 from app.workflow import is_demo_id
+from app.agents.registry import NEW_AGENT_ROLES
 
 HMAC_KEY_ENV = "CUSTODY_HMAC_KEY"
 AMENDERS_ENV = "CUSTODY_AMENDERS"
@@ -36,7 +37,7 @@ MAX_REASON_CHARS = 500
 
 DOSSIER_NAMESPACE_SEED = "growup:operational-dossier:v1:"
 
-AGENTS = ("gabriel", "raphael", "onesimus", "michael", "uriel", "priscilla", "human_review")
+AGENTS = ("gabriel", "raphael", "onesimus", "michael", "uriel", "priscilla", *NEW_AGENT_ROLES, "human_review")
 RECEIPT_KINDS = ("forward", "return", "review")
 
 # Canonical forward pipeline order. Returns move against it; human
@@ -49,6 +50,7 @@ _PIPELINE_ORDER = {
     "michael": 3,
     "uriel": 4,
     "priscilla": 5,
+    **{agent: index for index, agent in enumerate(NEW_AGENT_ROLES, start=6)},
 }
 
 # Receipt pipeline versions. Stored rows keep the version they were
@@ -72,6 +74,7 @@ _CANONICAL_MEANINGS = {
     "michael": "Michael financial feasibility",
     "uriel": "Uriel opportunity and outreach packages",
     "priscilla": "Priscilla delivery and conversion tracking",
+    **NEW_AGENT_ROLES,
     "human_review": "Human review",
 }
 
@@ -289,7 +292,7 @@ def check_handoff_routing(kind: str, from_agent: str, to_agent: str) -> None:
     """Validate one receipt's routing under the shared contract.
 
     - forward: downstream along gabriel -> raphael -> onesimus ->
-      michael -> uriel -> priscilla.
+      michael -> uriel -> priscilla, followed by downstream review roles.
     - return: upstream against that order (rework, more evidence), or a
       human-review disposition routing back to a pipeline agent.
     - review: any pipeline agent escalates to human_review.

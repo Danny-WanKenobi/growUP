@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 WORKFLOW_SCHEMA_VERSION = 1
 
 # Record kinds persisted in workflow_records.
+KIND_OWNER_REVIEW_TASK = "owner_review_task"
 KIND_RESEARCH_ARTIFACT = "research_artifact"
 KIND_DOSSIER_VERSION = "dossier_version"
 KIND_QUALIFICATION = "qualification"
@@ -41,6 +42,7 @@ KIND_CENSUS_REFUSAL = "census_refusal"
 
 RECORD_KINDS = frozenset(
     {
+        KIND_OWNER_REVIEW_TASK,
         KIND_RESEARCH_ARTIFACT,
         KIND_DOSSIER_VERSION,
         KIND_QUALIFICATION,

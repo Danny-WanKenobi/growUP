@@ -1,6 +1,6 @@
 """Shared agent event model (MVP-004C-A, Phase 1).
 
-One typed schema for all seven agents. Events carry identity (agent,
+One typed schema for all registered agents. Events carry identity (agent,
 run, correlation, optional property), a stable machine-readable type,
 severity, a concise summary, bounded structured details, evidence
 references, and a retention class that decides durability.
@@ -33,7 +33,7 @@ _EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_.]{1,63}$")
 
 
 class AgentId(str, Enum):
-    """Canonical agent identifiers (all seven agents share this)."""
+    """Canonical agent identifiers (all registered agents share this)."""
 
     GABRIEL = "gabriel"
     RAPHAEL = "raphael"
@@ -42,6 +42,14 @@ class AgentId(str, Enum):
     MICHAEL = "michael"
     URIEL = "uriel"
     PRISCILLA = "priscilla"
+    NICOLE = "nicole"
+    THERESIA_KEYS = "theresia_keys"
+    SIMEON = "simeon"
+    SOLOMON = "solomon"
+    ELMER = "elmer"
+    YOSEPH = "yoseph"
+    DEBORAH = "deborah"
+    DAN = "dan"
 
 
 class Severity(str, Enum):
