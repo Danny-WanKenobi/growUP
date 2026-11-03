@@ -334,6 +334,10 @@ def discover_sources_anywhere(
         jurisdiction, http_get=http_get, assignment_key=assignment_key,
         durable_store=durable_store, approved=approved, budget=budget, env=env)
     result["category"] = category
+    _env = env if env is not None else __import__("os").environ
+    _directory_urls = tuple(
+        u.strip() for u in str(_env.get("GABRIEL_DIRECTORY_URLS", "") or "").split(",")
+        if u.strip())
     if auto_enroll and result.get("status") == "selected":
         selection = result.get("selection") or {}
         resource = selection.get("selected_resource") or result.get("selected_resource")
@@ -343,7 +347,8 @@ def discover_sources_anywhere(
             )
             try:
                 result["enrollment"] = run_autonomous_enrollment(
-                    resource, jurisdiction=jurisdiction, store=enrollment_store)
+                    resource, jurisdiction=jurisdiction, store=enrollment_store,
+                    directory_urls=_directory_urls)
             except EnrollmentError as exc:
                 result["enrollment"] = {
                     "status": "needs_more_evidence",
@@ -374,6 +379,7 @@ def discover_sources_anywhere(
                     assignment_key=f"{assignment_key or jurisdiction}:verified:"
                                    f"{entry.get('publisher_domain')}:"
                                    f"{str(entry.get('resource_url')).rsplit('/', 1)[-1]}",
+                    directory_urls=_directory_urls,
                 )
             except EnrollmentError as exc:
                 attempts.append({"candidate": entry.get("name"),

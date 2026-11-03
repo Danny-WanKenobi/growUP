@@ -66,6 +66,8 @@ class PublisherEvidence:
     sample_geo_values: tuple[str, ...] = ()
     evidence_digest: str = ""
     retrieved_at: str = ""
+    license_basis: str = ""  # dataset_metadata | data_json | portal_terms | ""
+    terms_digest: str = ""
 
 
 def _digest(payload: dict[str, Any]) -> str:
@@ -92,6 +94,29 @@ def _field_tokens(fields: tuple[str, ...]) -> tuple[bool, bool]:
     return identity, location
 
 
+_TERMS_AFFIRMATIVE = (
+    "public domain", "free to use", "may be used", "may use, copy",
+    "reuse", "re-use", "redistribute", "open government licence",
+    "open government license", "creative commons",
+    "no restrictions on use", "free for any use",
+)
+_TERMS_PROHIBITED = (
+    "may not reproduce", "must not reproduce", "shall not reproduce",
+    "no part may be reproduced", "prior written permission is required",
+    "written permission is required", "permission must be obtained",
+    "for personal use only", "non-commercial use only",
+    "noncommercial use only",
+)
+
+
+def _terms_license_clear(text: str) -> bool:
+    """Deterministic terms evaluation: affirmative grant, no prohibition."""
+    lowered = re.sub(r"\s+", " ", (text or "").lower())
+    if any(phrase in lowered for phrase in _TERMS_PROHIBITED):
+        return False
+    return any(phrase in lowered for phrase in _TERMS_AFFIRMATIVE)
+
+
 def verify_socrata_resource(
     resource: dict[str, Any],
     *,
@@ -101,13 +126,19 @@ def verify_socrata_resource(
 ) -> PublisherEvidence:
     """Retrieve publisher-served metadata + a bounded sample.
 
-    Exactly two requests, both to the publisher's own domain under
+    Two core requests, both to the publisher's own domain under
     ``http_policy``: the Socrata view metadata (publisher identity,
     license, freshness, columns) and a 5-row sample (geography is
     checked against observed values when geographic fields exist).
-    Any transport/policy failure raises ``EnrollmentError`` -- the
-    attempt is recorded by the caller's durable claim, not retried
-    here.
+    Only when the dataset metadata itself carries no known-clear
+    license, up to three further publisher-domain requests seek the
+    license where the portal actually publishes it: the portal's
+    machine-readable ``data.json`` catalog entry for this dataset,
+    then a same-host terms page linked from the portal root (owner-
+    approved portal-terms rule, 2026-11-03). Silence, a JS-only page,
+    or prohibitive terms never clear a license. Any transport/policy
+    failure raises ``EnrollmentError`` -- the attempt is recorded by
+    the caller's durable claim, not retried here.
     """
     from app.agents.gabriel.sources.http_policy import HttpPolicyError, fetch_bytes
     from app.agents.gabriel.sources.source_finder import _KNOWN_CLEAR_LICENSES
@@ -173,13 +204,62 @@ def verify_socrata_resource(
                 if value not in (None, ""):
                     geo_values.append(str(value))
 
+    license_basis = "dataset_metadata" if (
+        license_id.strip().lower() in _KNOWN_CLEAR_LICENSES) else ""
+    terms_digest = ""
+    if not license_basis:
+        # Portal-terms avenue 1: the portal's own data.json catalog.
+        try:
+            catalog = json.loads(_get(f"https://{domain}/data.json") or b"{}")
+        except Exception:
+            catalog = None
+        if isinstance(catalog, dict):
+            for entry in catalog.get("dataset") or []:
+                if not isinstance(entry, dict):
+                    continue
+                blob = json.dumps(entry)
+                if dataset_id not in blob:
+                    continue
+                cat_license = str(entry.get("license") or "").strip()
+                if cat_license:
+                    license_id = cat_license
+                    normalized = cat_license.lower()
+                    if normalized in _KNOWN_CLEAR_LICENSES or any(
+                            tok in normalized for tok in
+                            ("cc0", "publicdomain", "public domain", "cc-by", "odc-by")):
+                        license_basis = "data_json"
+                    terms_digest = hashlib.sha256(blob.encode()).hexdigest()
+                break
+    if not license_basis:
+        # Portal-terms avenue 2: a terms page linked from the portal
+        # root, on the publisher's own host only.
+        try:
+            root = _get(f"https://{domain}/").decode("utf-8", "replace")
+            hrefs = re.findall(r'href="([^"]+)"', root)
+            terms_path = next(
+                (h for h in hrefs
+                 if re.search(r"terms", h, re.I)
+                 and (urlparse(h if "://" in h else f"https://{domain}{h}").hostname or "") == domain),
+                None)
+            if terms_path:
+                terms_url = terms_path if "://" in terms_path else f"https://{domain}{terms_path}"
+                raw = _get(terms_url)
+                terms_digest = hashlib.sha256(raw).hexdigest()
+                text = re.sub(r"<[^>]+>", " ", raw.decode("utf-8", "replace"))
+                if _terms_license_clear(text):
+                    license_basis = "portal_terms"
+                    license_id = license_id or "portal terms of use"
+        except Exception:
+            pass
+
     retrieved = datetime.now(timezone.utc).isoformat(timespec="seconds")
     body = {
         "domain": domain, "dataset_id": dataset_id, "resource_url": resource_url,
         "view_url": view_url, "retrieved_at": retrieved,
         "view_name": str(view.get("name") or ""),
         "attribution": str(view.get("attribution") or ""),
-        "license_id": license_id, "freshness_days": freshness,
+        "license_id": license_id, "license_basis": license_basis,
+        "terms_digest": terms_digest, "freshness_days": freshness,
         "fields": list(fields), "sample_rows": sample_rows,
         "sample_geo_values": geo_values[:10],
     }
@@ -191,7 +271,7 @@ def verify_socrata_resource(
         attribution=str(view.get("attribution") or ""),
         dataset_name=str(view.get("name") or ""),
         license_id=license_id,
-        license_clear=license_id.strip().lower() in _KNOWN_CLEAR_LICENSES,
+        license_clear=bool(license_basis),
         freshness_days=freshness,
         fields=fields,
         sample_rows=sample_rows,
@@ -200,10 +280,77 @@ def verify_socrata_resource(
             json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()
         ).hexdigest(),
         retrieved_at=retrieved,
+        license_basis=license_basis,
+        terms_digest=terms_digest,
     )
 
 
-def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str) -> dict[str, Any]:
+def verify_directory_corroboration(
+    domain: str,
+    *,
+    publisher_name: str,
+    jurisdiction: str,
+    directory_urls: tuple[str, ...] | list[str],
+    fetch: Callable[..., bytes] | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Corroborate a non-``.gov`` publisher domain against directories.
+
+    A directory is authoritative only if it is itself served from a
+    ``.gov`` host (owner-approved rule, 2026-11-03). Corroboration
+    requires a directory page that links to the candidate domain with
+    anchor text naming the publisher or jurisdiction. Directory URLs
+    are configuration (``GABRIEL_DIRECTORY_URLS``), never a hard-coded
+    county list. Returns digest-bound evidence; absence of a match is
+    an empty ``matched`` flag, never an error or an inference.
+    """
+    from app.agents.gabriel.sources.http_policy import (
+        HttpPolicyError, fetch_bytes, validate_endpoint,
+    )
+    target = (domain or "").strip().lower()
+    tokens = set(_jurisdiction_tokens(jurisdiction))
+    tokens.update(
+        t for t in re.split(r"[^a-z]+", (publisher_name or "").lower())
+        if len(t) > 2 and t not in _STOPWORDS)
+    for url in directory_urls or []:
+        raw_url = str(url or "").strip()
+        if not raw_url:
+            continue
+        try:
+            validate_endpoint(raw_url, name="publisher directory")
+        except HttpPolicyError:
+            continue
+        host = (urlparse(raw_url).hostname or "").lower()
+        if not host.endswith(".gov"):
+            continue
+        try:
+            if fetch is not None:
+                body = fetch(raw_url, {})
+            else:
+                body = fetch_bytes(raw_url, timeout=timeout,
+                                   max_bytes=1_000_000,
+                                   name="publisher directory")
+        except Exception:
+            continue
+        text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body)
+        for href, label in re.findall(r'href="([^"]+)"[^>]*>([^<]{0,120})<', text):
+            link_host = (urlparse(href if "://" in href else f"https://{href}").hostname or "").lower()
+            if link_host != target:
+                continue
+            label_tokens = {t for t in re.split(r"[^a-z]+", label.lower()) if t}
+            if tokens & label_tokens:
+                return {
+                    "matched": True, "directory_url": raw_url,
+                    "directory_host": host, "matched_domain": target,
+                    "matched_text": label.strip()[:120],
+                    "digest": hashlib.sha256(bytes(body)).hexdigest(),
+                }
+    return {"matched": False, "directory_url": "", "directory_host": "",
+            "matched_domain": target, "matched_text": "", "digest": ""}
+
+
+def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str,
+                      evidence_directory: dict[str, Any] | None = None) -> dict[str, Any]:
     """Deterministic enrollment decision over observed evidence only.
 
     Every criterion must pass for ``enrolled``. A host mismatch is
@@ -226,8 +373,12 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str) -> dict
             tok in value.lower()
             for value in evidence.sample_geo_values for tok in tokens
         )
+    corroborated = bool(
+        (evidence_directory or {}).get("matched")
+        and (evidence_directory or {}).get("matched_domain") == evidence.domain)
     criteria = {
         "government_domain": evidence.domain.endswith(".gov"),
+        "directory_corroborated_official_domain": corroborated,
         "publisher_identity_matches_jurisdiction": bool(
             domain_jurisdiction or named_jurisdiction),
         "license_known_clear": bool(evidence.license_clear),
@@ -239,7 +390,12 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str) -> dict
         "sample_rows_observed": evidence.sample_rows > 0,
         "sample_geography_consistent": geo_match,
     }
-    missing = [name for name, ok in criteria.items() if not ok]
+    missing = [name for name, ok in criteria.items() if not ok
+               and name not in ("government_domain",
+                                "directory_corroborated_official_domain")]
+    if not (criteria["government_domain"]
+            or criteria["directory_corroborated_official_domain"]):
+        missing.append("publisher_authority_basis")
     now = datetime.now(timezone.utc)
     decision: dict[str, Any] = {
         "policy_version": ENROLLMENT_POLICY_VERSION,
@@ -251,6 +407,8 @@ def decide_enrollment(evidence: PublisherEvidence, *, jurisdiction: str) -> dict
         "publisher_name": evidence.publisher_name or evidence.attribution,
         "criteria": criteria,
         "missing": missing,
+        "license_basis": evidence.license_basis,
+        "directory_evidence": dict(evidence_directory or {}),
         "evidence_digest": evidence.evidence_digest,
         "retrieved_at": evidence.retrieved_at,
         "decided_at": now.isoformat(timespec="seconds"),
@@ -327,7 +485,7 @@ class EnrollmentStore:
                     digest=digest_payload(payload))
                 if inserted is not None:
                     add_usage_in_transaction(
-                        conn, run.run_id, "source_requests_reserved", 2)
+                        conn, run.run_id, "source_requests_reserved", 6)
                 conn.commit()
                 if inserted is None:
                     return {"status": "uncertain", "run_id": str(run.run_id)}
@@ -421,12 +579,24 @@ class EnrollmentStore:
                 pass
 
 
+def _directory_evidence_for(evidence: PublisherEvidence, *, jurisdiction: str,
+                            directory_urls, fetch) -> dict[str, Any]:
+    if evidence.domain.endswith(".gov") or not directory_urls:
+        return {}
+    return verify_directory_corroboration(
+        evidence.domain,
+        publisher_name=evidence.publisher_name or evidence.attribution,
+        jurisdiction=jurisdiction, directory_urls=tuple(directory_urls),
+        fetch=fetch)
+
+
 def run_autonomous_enrollment(
     resource: dict[str, Any],
     *,
     jurisdiction: str,
     store: EnrollmentStore | None = None,
     fetch: Callable[..., bytes] | None = None,
+    directory_urls: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     """Verify one retained generic resource and decide enrollment.
 
@@ -459,7 +629,11 @@ def run_autonomous_enrollment(
             "enrollment for this resource was already claimed and its "
             "outcome is uncertain; it will not be auto-retransmitted")
     evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
-    decision = decide_enrollment(evidence, jurisdiction=jurisdiction)
+    decision = decide_enrollment(
+        evidence, jurisdiction=jurisdiction,
+        evidence_directory=_directory_evidence_for(
+            evidence, jurisdiction=jurisdiction,
+            directory_urls=directory_urls, fetch=fetch))
     decision["run_id"] = claim.get("run_id", "")
     decision["digest"] = _digest(decision)
     store.complete(domain, dataset_id, decision=decision, evidence_payload={
@@ -470,6 +644,9 @@ def run_autonomous_enrollment(
         "dataset_name": evidence.dataset_name,
         "license_id": evidence.license_id,
         "license_clear": evidence.license_clear,
+        "license_basis": evidence.license_basis,
+        "terms_digest": evidence.terms_digest,
+        "directory_evidence": decision.get("directory_evidence"),
         "freshness_days": evidence.freshness_days,
         "fields": list(evidence.fields),
         "sample_rows": evidence.sample_rows,
@@ -489,6 +666,7 @@ def verify_and_select(
     selection_store: Any = None,
     assignment_key: str,
     fetch: Callable[..., bytes] | None = None,
+    directory_urls: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     """Publisher-direct requalification of one catalog candidate.
 
@@ -519,7 +697,11 @@ def verify_and_select(
         "dataset_id": dataset_id, "resource_url": resource_url,
     }
     evidence = verify_socrata_resource(resource, jurisdiction=jurisdiction, fetch=fetch)
-    enrollment = decide_enrollment(evidence, jurisdiction=jurisdiction)
+    enrollment = decide_enrollment(
+        evidence, jurisdiction=jurisdiction,
+        evidence_directory=_directory_evidence_for(
+            evidence, jurisdiction=jurisdiction,
+            directory_urls=directory_urls, fetch=fetch))
     out: dict[str, Any] = {"enrollment": enrollment, "selection": None}
     if enrollment["status"] != "enrolled":
         return out

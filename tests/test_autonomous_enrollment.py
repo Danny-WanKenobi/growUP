@@ -95,7 +95,7 @@ def test_non_government_domain_needs_more_evidence():
                   resource_url="https://www.tad.org/resource/teqw-tu6e.json"),
         jurisdiction="Tarrant County", store=_FakeStore(), fetch=_fetch())
     assert decision["status"] == "needs_more_evidence"
-    assert "government_domain" in decision["missing"]
+    assert "publisher_authority_basis" in decision["missing"]
 
 
 def test_stale_freshness_needs_more_evidence():
@@ -201,6 +201,122 @@ def test_verify_and_select_needs_evidence_selects_nothing():
                             assignment_key="test:verified:2", fetch=fetch)
     assert out["enrollment"]["status"] == "needs_more_evidence"
     assert out["selection"] is None
+
+
+def test_portal_terms_data_json_license_clears():
+    view = _view(license=None)
+
+    def fetch(url, params=None):
+        if "/api/views/" in url:
+            return json.dumps(view).encode()
+        if url.endswith("/data.json"):
+            return json.dumps({"dataset": [{
+                "title": "Building Energy Benchmarking Data",
+                "accessURL": "https://cos-data.seattle.gov/resource/teqw-tu6e.json",
+                "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "identifier": "teqw-tu6e"}]}).encode()
+        return json.dumps([{"city": "Seattle"}]).encode()
+
+    decision = run_autonomous_enrollment(
+        _resource(), jurisdiction="Seattle", store=_FakeStore(), fetch=fetch)
+    assert decision["status"] == "enrolled"
+    assert decision["license_basis"] == "data_json"
+
+
+def test_portal_terms_page_affirmative_grant_clears():
+    view = _view(license=None)
+
+    def fetch(url, params=None):
+        if "/api/views/" in url:
+            return json.dumps(view).encode()
+        if url.endswith("/data.json"):
+            return json.dumps({"dataset": []}).encode()
+        if url.rstrip("/").endswith("seattle.gov"):
+            return b'<a href="/about/terms">Terms of Use</a>'
+        if "/about/terms" in url:
+            return (b"<html><body>All datasets on this portal are in the "
+                    b"public domain and free to use for any purpose.</body></html>")
+        return json.dumps([{"city": "Seattle"}]).encode()
+
+    decision = run_autonomous_enrollment(
+        _resource(), jurisdiction="Seattle", store=_FakeStore(), fetch=fetch)
+    assert decision["status"] == "enrolled"
+    assert decision["license_basis"] == "portal_terms"
+
+
+def test_portal_terms_prohibition_blocks():
+    view = _view(license=None)
+
+    def fetch(url, params=None):
+        if "/api/views/" in url:
+            return json.dumps(view).encode()
+        if url.endswith("/data.json"):
+            return json.dumps({"dataset": []}).encode()
+        if url.rstrip("/").endswith("seattle.gov"):
+            return b'<a href="/about/terms">Terms of Use</a>'
+        if "/about/terms" in url:
+            return (b"<html><body>Data is public domain but you may not "
+                    b"reproduce it without written permission.</body></html>")
+        return json.dumps([{"city": "Seattle"}]).encode()
+
+    decision = run_autonomous_enrollment(
+        _resource(), jurisdiction="Seattle", store=_FakeStore(), fetch=fetch)
+    assert decision["status"] == "needs_more_evidence"
+    assert "license_known_clear" in decision["missing"]
+
+
+def test_directory_corroboration_enrolls_org_domain():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        verify_directory_corroboration,
+    )
+    page = (b'<a href="https://www.tad.org/">Tarrant Appraisal District</a>'
+            b'<a href="https://www.collincad.org/">Collin Appraisal</a>')
+
+    def fetch(url, params=None):
+        return page
+
+    ev = verify_directory_corroboration(
+        "www.tad.org", publisher_name="Tarrant Appraisal District",
+        jurisdiction="Tarrant County",
+        directory_urls=("https://comptroller.texas.gov/taxes/property-tax/county-directory/",),
+        fetch=fetch)
+    assert ev["matched"] is True
+    assert ev["directory_host"] == "comptroller.texas.gov"
+
+
+def test_directory_must_be_government_hosted():
+    from app.agents.gabriel.sources.autonomous_enrollment import (
+        verify_directory_corroboration,
+    )
+    ev = verify_directory_corroboration(
+        "www.tad.org", publisher_name="Tarrant Appraisal District",
+        jurisdiction="Tarrant County",
+        directory_urls=("https://example.org/directory",),
+        fetch=lambda url, params=None: b'<a href="https://www.tad.org/">Tarrant</a>')
+    assert ev["matched"] is False
+
+
+def test_org_domain_decision_with_directory_evidence():
+    decision = decide_enrollment(
+        _evidence(domain="www.tad.org", publisher_name="Tarrant Appraisal District",
+                  attribution="Tarrant Appraisal District",
+                  dataset_name="Tarrant Parcels", sample_geo_values=("Tarrant",)),
+        jurisdiction="Tarrant County",
+        evidence_directory={"matched": True, "matched_domain": "www.tad.org",
+                            "directory_host": "comptroller.texas.gov",
+                            "directory_url": "https://comptroller.texas.gov/x",
+                            "matched_text": "Tarrant Appraisal District",
+                            "digest": "d"})
+    assert decision["status"] == "enrolled"
+    assert decision["criteria"]["directory_corroborated_official_domain"] is True
+
+
+def test_org_domain_decision_without_directory_stays_blocked():
+    decision = decide_enrollment(
+        _evidence(domain="www.tad.org", sample_geo_values=("Tarrant",)),
+        jurisdiction="Tarrant County")
+    assert decision["status"] == "needs_more_evidence"
+    assert "publisher_authority_basis" in decision["missing"]
 
 
 def test_non_socrata_platform_no_network():
