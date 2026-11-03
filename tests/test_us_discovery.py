@@ -59,6 +59,7 @@ def _qualified_socrata_payload():
 def _find(payloads, **kwargs):
     kwargs.setdefault("approved", True)
     kwargs.setdefault("budget", DiscoveryBudget(max_requests=3))
+    kwargs.setdefault("env", {})  # Catalog fixtures must not inherit service policy.
     return discover_us_sources("Travis County", http_get=_catalog(payloads), **kwargs)
 
 
@@ -108,6 +109,24 @@ def test_searxng_primary_skips_government_catalogs():
     assert result["selected_adapter"] is None
     assert any("search.example.org" in u for u in calls)
     assert not any("socrata.com" in u or "arcgis.com" in u for u in calls)
+
+
+def test_finder_honors_service_environment_when_not_overridden(monkeypatch):
+    monkeypatch.setenv("GABRIEL_FINDING_POLICY", "searxng_primary")
+    monkeypatch.setenv("GABRIEL_SEARXNG_URL", "http://127.0.0.1:8888")
+    calls = []
+    def http_get(url, params, timeout):
+        calls.append(url)
+        assert url == "http://127.0.0.1:8888/search"
+        return {"results": [{"title": "Tarrant County Parcels",
+                             "url": "https://example.org/tarrant-parcels"}]}
+    result = discover_us_sources(
+        "Tarrant County", http_get=http_get, approved=True,
+        budget=DiscoveryBudget(max_requests=1))
+    assert result["finding_policy"] == "searxng_primary"
+    assert calls == ["http://127.0.0.1:8888/search"]
+    assert result["status"] in ("needs_review", "no_supported_adapter")
+    assert result["selected_adapter"] is None
 
 
 def test_searxng_primary_accepts_loopback_self_hosted_endpoint():
@@ -457,11 +476,11 @@ def test_discovery_module_nationwide_entry_point():
     payloads = {"socrata.com": _qualified_socrata_payload(), "arcgis.com": {"data": []}}
     result = discover_sources_anywhere(
         "Travis County", "high_rise", http_get=_catalog(payloads),
-        approved=True, budget=DiscoveryBudget(max_requests=3))
+        approved=True, budget=DiscoveryBudget(max_requests=3), env={})
     assert result["selected_adapter"] == "generic_socrata"
     assert result["category"] == "high_rise"
     # A Travis-observed candidate must not be miscredited to Cook County.
     other = discover_us_sources(
         "Cook County", http_get=_catalog(payloads), approved=True,
-        budget=DiscoveryBudget(max_requests=3))
+        budget=DiscoveryBudget(max_requests=3), env={})
     assert other["selected_adapter"] is None

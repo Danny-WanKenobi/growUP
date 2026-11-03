@@ -221,25 +221,16 @@ def test_non_dallas_finder_ranks_and_selects_strongest():
     http, calls = _fake_catalog(_travis_payload())
     mission = SourceMission(jurisdiction="Travis County", approved=True,
                             budget=DiscoveryBudget(max_requests=1, max_results=10))
-    import os
-    old = os.environ.get("GABRIEL_CATALOG_API_URL")
-    os.environ["GABRIEL_CATALOG_API_URL"] = "https://catalog.example.org/api"
-    try:
-        decision = select_for_mission(mission, http_get=http, supported_adapters={"travis_appraisal"})
-    finally:
-        if old is None: os.environ.pop("GABRIEL_CATALOG_API_URL", None)
-        else: os.environ["GABRIEL_CATALOG_API_URL"] = old
+    env = {"GABRIEL_CATALOG_API_URL": "https://catalog.example.org/api"}
+    decision = select_for_mission(mission, http_get=http,
+                                  supported_adapters={"travis_appraisal"}, env=env)
     assert calls and decision["status"] == "selected"
     assert decision["selected_candidate"] == "Travis Appraisal API"
     assert decision["selected_adapter"] == "travis_appraisal" and decision["digest"]
     # Deterministic replay
     http2, _ = _fake_catalog(_travis_payload())
-    os.environ["GABRIEL_CATALOG_API_URL"] = "https://catalog.example.org/api"
-    try:
-        again = select_for_mission(mission, http_get=http2, supported_adapters={"travis_appraisal"})
-    finally:
-        if old is None: os.environ.pop("GABRIEL_CATALOG_API_URL", None)
-        else: os.environ["GABRIEL_CATALOG_API_URL"] = old
+    again = select_for_mission(mission, http_get=http2,
+                               supported_adapters={"travis_appraisal"}, env=env)
     assert again["digest"] == decision["digest"]
 
 
