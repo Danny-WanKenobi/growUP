@@ -6239,3 +6239,26 @@ sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-downstream-upgrad
 ```
 
 No new dependencies, migrations or shared credential changes are introduced.
+
+
+#### Stored-run room and owner summaries
+
+The synthetic handoff viewer now shows selected room layouts, growing area and
+estimated crop output alongside per-room and combined setup cost, annual revenue,
+operating costs and operating surplus. It displays retained calculation outputs;
+it does not recompute totals, add competing alternatives or authorize work. Missing
+values remain Unknown, zero remains zero, and incomplete portfolios have no combined
+totals presented as complete. Scope and unverified shared-cost allocation remain
+visible.
+
+A dated owner-lifecycle table reads retained owner briefs and obligation states:
+open/due-today, overdue, reported satisfaction, review counts and later dispute.
+Dates are fictional scenario as-of dates, not live monitoring timestamps. Protected
+snapshot references and the stored preservation proof are shown separately; no
+filing date is inferred when the manifest does not retain one. Full labeled JSON
+remains available below. Switching stored runs clears prior summary rows.
+
+These are read-only presentation changes. Existing records, fixture contracts,
+agent policies and custody history are unchanged. Validate with the two focused
+viewer render/credential-shell tests in tests/test_handoff_demo.py; no database
+repopulation or full regression is required.

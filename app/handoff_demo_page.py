@@ -34,11 +34,41 @@ Separate demo database and signing key. Shared custody services. No discovery, p
 <p>Your access key is held only in this page's memory and is never placed in the run data, URL or browser storage.</p>
 <div id="status" role="status" aria-live="polite">Choose a scenario and create a synthetic run.</div></section>
 <section><h2>Observable custody timeline</h2><p id="identity">No run loaded.</p><p id="story"></p><p id="owner-status"></p><div class="scroll"><table><thead><tr><th>Step</th><th>Agent</th><th>Checkpoint</th><th>Handoff</th><th>Version</th><th>Reason</th></tr></thead><tbody id="events"></tbody></table></div></section>
+<section aria-labelledby="rooms-title"><h2 id="rooms-title">Room and finance comparison</h2>
+<p id="room-status">Load a stored run to inspect its room plan.</p>
+<div class="scroll"><table><caption>Selected layout per distinct room — alternatives are not added together</caption><thead><tr><th>Room</th><th>Selected layout</th><th>Growing area (m²)</th><th>Estimated crop (kg/year)</th></tr></thead><tbody id="room-rows"></tbody></table></div>
+<div class="scroll"><table><caption>Conditional planning estimates in USD</caption><thead><tr><th>Room / scope</th><th>Setup cost</th><th>Annual revenue</th><th>Annual operating costs</th><th>Annual operating surplus</th></tr></thead><tbody id="finance-rows"></tbody></table></div>
+<p>These are supplied assumptions and calculated estimates, not verified building capacity or guaranteed returns. Shared-cost allocation is unverified. The combined room plan is separate from single-room alternatives.</p></section>
+<section aria-labelledby="lifecycle-title"><h2 id="lifecycle-title">Dated owner lifecycle</h2>
+<p>Fictional scenario as-of dates, not a live monitoring log. Reported satisfaction is not verified payment or completion.</p>
+<p id="lifecycle-status">No retained dated owner checks loaded.</p>
+<div class="scroll"><table><thead><tr><th>Scenario as of</th><th>Obligation / due date</th><th>Recorded state</th><th>Unresolved review tasks</th></tr></thead><tbody id="lifecycle-rows"></tbody></table></div>
+<p id="vault-status"></p></section>
 <section><details><summary>Full labeled dossier and proof details</summary><pre id="details">No records loaded.</pre></details></section>
 </main><script>
 'use strict';
 const el=id=>document.getElementById(id); let state=null,busy=false,stopped=false;
 function controls(value){busy=value;for(const id of ['new','step','play','inspect','owner'])el(id).disabled=value;el('owner').disabled=value||!state||state.phase!=='complete_go'||!state.scenario_id;}
+function rowInto(id,values){const row=document.createElement('tr');for(const value of values){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);}el(id).appendChild(row);}
+function numberText(value,money=false){if(value===null||value===undefined||typeof value==='boolean'||!['string','number'].includes(typeof value)||String(value).trim()===''||!Number.isFinite(Number(value)))return 'Unknown';return (money?'$':'')+new Intl.NumberFormat('en-US',{minimumFractionDigits:money?2:0,maximumFractionDigits:money?2:3}).format(Number(value));}
+function renderSummaries(data,property){
+for(const id of ['room-rows','finance-rows','lifecycle-rows'])el(id).replaceChildren();
+const reports=property.reports||{},portfolio=reports.onesimus?.room_portfolio,finance=reports.michael?.room_finance;
+const rooms=Array.isArray(portfolio?.rooms)?portfolio.rooms:[];
+el('room-status').textContent=!rooms.length?'No retained multi-room plan for this run.':portfolio.complete===true?'One selected layout per supplied distinct room. Capacity and room boundaries remain unverified.':'Room plan incomplete; missing inputs or impossible layouts remain unresolved.';
+for(const room of rooms){const outputs=room.selected_scenario?.outputs||{};rowInto('room-rows',[room.room_id||'Unknown room',room.selected_config||'No plausible selection',numberText(outputs.growing_m2),numberText(outputs.kg_per_year)]);
+const base=finance?.rooms?.[room.room_id]?.cases?.base;const costs=base?.complete===true?base.outputs||{}:{};
+rowInto('finance-rows',[room.room_id||'Unknown room',...['capex_usd','revenue_usd_per_year','opex_usd_per_year','operating_net_usd_per_year'].map(k=>numberText(costs[k],true))]);}
+if(rooms.length){const totals=portfolio.complete===true?portfolio.selected_room_totals||{}:{};rowInto('room-rows',['Combined selected rooms','One layout per room',numberText(totals.growing_m2),numberText(totals.kg_per_year)]);
+const costs=portfolio.complete===true&&finance?.complete===true?finance.totals||{}:{};rowInto('finance-rows',['Combined selected rooms',...['capex_usd','revenue_usd_per_year','opex_usd_per_year','operating_net_usd_per_year'].map(k=>numberText(costs[k],true))]);}
+const briefs=Array.isArray(property.owner_briefs)?property.owner_briefs:[];let checks=0;
+for(const brief of briefs){const tracking=brief.asset_tracking;if(!tracking?.as_of||!Array.isArray(tracking.obligations))continue;
+for(const item of tracking.obligations){const event=item.event||{};let status=event.status==='reported_satisfied'?'Reported satisfied — unverified':event.status==='disputed'?'Disputed — review reopened':event.status==='open'?(item.overdue===true?'Overdue':event.due_on===tracking.as_of?'Due today':'Open'):event.status||'Unknown';
+rowInto('lifecycle-rows',[tracking.as_of,`${event.entity_id||'Unknown obligation'} | due ${event.due_on||'Unknown'}`,status,Array.isArray(brief.unresolved_task_keys)?String(brief.unresolved_task_keys.length):'Unknown']);checks++;}}
+el('lifecycle-status').textContent=checks?`${checks} retained obligation checks, in recorded order.`:'No retained dated owner checks for this run.';
+const vault=Array.isArray(property.owner_vault_entries)?property.owner_vault_entries:[];
+el('vault-status').textContent=vault.length?`Protected filing: ${vault.length} immutable snapshot reference(s). Filing date not retained; no date is inferred. Latest snapshot: ${vault[vault.length-1].snapshot_id||'Unknown'}. Later evidence preserves the archived copy: ${data.owner_story?.vault_preserved_after_new_evidence===true?'confirmed by stored synthetic proof':'not established by this run'}.`:'No retained protected filing for this run.';
+}
 function render(data){state=data;
 el('property').value=data.scenario_id||'';el('scenario').disabled=!!data.scenario_id;
 const scenario=data.scenario==='all_go'?'':data.scenario;
@@ -47,6 +77,7 @@ if(!option){option=document.createElement('option');option.value=scenario;option
 el('scenario').value=scenario;el('status').textContent=`${data.phase} | current holder: ${data.current_holder} | verified receipts: ${data.verified_receipts}`;
 el('identity').textContent=`SYNTHETIC dossier ${data.dossier_id} | property ${data.property_id}`;el('events').replaceChildren();
 const property=data.dossier?.dossier||{};el('story').textContent=property.demo_scenario?`${property.name} | ${property.city}, ${property.state} | ${property.demo_scenario.property_type}. ${property.demo_scenario.story}`:'Generic synthetic checkpoint matrix.';
+renderSummaries(data,property);
 if(property.food_forest_preview)el('story').textContent+=` Outdoor concept: ${property.food_forest_preview.status}; missing ${property.food_forest_preview.missing.join(', ')}. No outdoor authorization or yield is claimed.`;
 el('owner-status').textContent=data.owner_story?`SYNTHETIC owner lifecycle: ${data.owner_story.result}; overdue tasks ${data.owner_story.overdue_task_count}; reopened tasks ${data.owner_story.reopened_task_count}; archived copy preserved ${data.owner_story.vault_preserved_after_new_evidence}.`:data.owner_obligation_seed?'A fictional dated obligation is retained.':'Owner lifecycle becomes available after a GO run reaches Manny.';
 for(const event of data.events){const row=document.createElement('tr');for(const value of [event.sequence,event.agent,event.checkpoint||'RETURN',event.to_agent?`${event.agent} → ${event.to_agent}`:'—',event.version||'—',event.reason||'']){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);}row.className=event.checkpoint==='NO-GO'?'nogo':'go';el('events').appendChild(row);}

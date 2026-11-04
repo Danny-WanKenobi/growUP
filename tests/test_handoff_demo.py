@@ -337,7 +337,7 @@ def test_viewer_render_synchronizes_current_and_historical_scenarios():
 const assert=require('node:assert/strict');
 function element(){return {value:'',options:[],children:[],appendChild(child){this.children.push(child);this.options.push(child);},replaceChildren(){this.children=[];}};}
 const elements={};
-for(const id of ['property','owner','story','owner-status','scenario','status','identity','events','details','key','run','new','step','play','inspect','stop'])elements[id]=element();
+for(const id of ['property','owner','story','owner-status','scenario','status','identity','events','details','key','run','new','step','play','inspect','stop','room-status','room-rows','finance-rows','lifecycle-status','lifecycle-rows','vault-status'])elements[id]=element();
 elements.scenario.options=[{value:''},{value:'manny'}];
 const document={getElementById:id=>elements[id],createElement:()=>element()};
 """
@@ -350,6 +350,23 @@ assert.equal(elements.scenario.options.at(-1).textContent,'Historical NO-GO at d
 assert.equal(elements.scenario.options.at(-1).disabled,true);
 render({...data,scenario:'dan'});assert.equal(elements.scenario.options.length,3);
 render({...data,scenario:'all_go'});assert.equal(elements.scenario.value,'');
+const outputs={capex_usd:'0',revenue_usd_per_year:'100',opex_usd_per_year:'75',operating_net_usd_per_year:'25'};
+const property={reports:{onesimus:{room_portfolio:{complete:true,rooms:[{room_id:'north',selected_config:'rack3',selected_scenario:{outputs:{growing_m2:90,kg_per_year:3375}}}],selected_room_totals:{growing_m2:90,kg_per_year:3375}}},michael:{room_finance:{complete:true,rooms:{north:{cases:{base:{complete:true,outputs}}}},totals:outputs}}},
+owner_briefs:[{asset_tracking:{as_of:'2026-11-10',obligations:[{event:{entity_id:'fictional-review',due_on:'2026-11-10',status:'open'},overdue:false}]},unresolved_task_keys:[]},
+{asset_tracking:{as_of:'2026-11-11',obligations:[{event:{entity_id:'fictional-review',due_on:'2026-11-10',status:'open'},overdue:true}]},unresolved_task_keys:['one']},
+{asset_tracking:{as_of:'2026-11-12',obligations:[{event:{entity_id:'fictional-review',status:'reported_satisfied'}}]},unresolved_task_keys:[]}],owner_vault_entries:[{snapshot_id:'fixture-snapshot'}]};
+render({...data,scenario:'all_go',dossier:{dossier:property},owner_story:{vault_preserved_after_new_evidence:true}});
+const cells=(id,row)=>elements[id].children[row].children.map(c=>c.textContent);
+assert.deepEqual(cells('room-rows',0),['north','rack3','90','3,375']);
+assert.equal(cells('finance-rows',0)[1],'$0.00');assert.equal(cells('finance-rows',1)[4],'$25.00');
+assert.equal(cells('lifecycle-rows',0)[2],'Due today');assert.equal(cells('lifecycle-rows',1)[2],'Overdue');
+assert.equal(cells('lifecycle-rows',2)[2],'Reported satisfied — unverified');
+assert.match(elements['vault-status'].textContent,/Filing date not retained/);
+property.reports.onesimus.room_portfolio.complete=false;
+render({...data,scenario:'all_go',dossier:{dossier:property}});
+assert.equal(cells('room-rows',1)[2],'Unknown');assert.equal(cells('finance-rows',1)[1],'Unknown');
+render({...data,scenario:'all_go'});assert.equal(elements['room-rows'].children.length,0);assert.equal(elements['lifecycle-rows'].children.length,0);
+assert.match(elements['vault-status'].textContent,/No retained protected filing/);
 """
     result = subprocess.run([node, "-"], input=harness+script+assertions, text=True, encoding="utf-8", capture_output=True)
     assert result.returncode == 0, result.stderr
