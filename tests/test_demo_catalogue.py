@@ -18,6 +18,12 @@ def test_catalogue_routes_and_distinct_geography(monkeypatch,profile):
         assert result['phase']==('returned_to_gabriel' if profile['expected_failure'] else 'complete_go')
         assert [e['agent'] for e in result['events'] if e.get('checkpoint')=='NO-GO']==([profile['expected_failure']] if profile['expected_failure'] else [])
         assert result['dossier']['dossier']['city']==profile['city']
+        if profile['id']=='hudson-sky':
+            reports=result['dossier']['dossier']['reports']
+            assert len(reports['onesimus']['room_portfolio']['rooms'])==2
+            assert reports['michael']['room_finance']['complete']
+            assert 'room_portfolio' in reports['theresia_keys']['underwriting_assessment']['scenarios']
+            assert any(c['scenario']=='room_portfolio' for c in reports['uriel']['campaign']['claims'])
         if profile['id']=='elm-fork':
             from app.demo_owner_story import exercise
             run=demo._get(conn,result['run_key'])

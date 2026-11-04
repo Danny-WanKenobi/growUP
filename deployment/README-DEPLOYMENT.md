@@ -309,3 +309,18 @@ providers or deliveries are changed. Failure preserves partial demo progress;
 retry with the same printed `--run-key` to resume. See the root README for the
 16-property catalogue, 12-agent GO/NO-GO matrix, synthetic owner-obligation/vault
 story and the deliberately unsupported outdoor-admission boundary.
+
+## Targeted downstream acceptance (no full regression)
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-downstream-upgrades.py
+```
+
+This owner-run development-only wrapper executes one focused canonical recovery
+PostgreSQL case plus the adviser, room-portfolio and planning-summary checks in
+`growup_mvp_gate`, with provider keys removed and non-loopback networking denied.
+It then invokes the existing isolated demo catalogue proof using the separate demo
+credentials. It does not run `tests/` or modify application environment files,
+service units, operational records or production. The command is deferred when
+local sudo authentication is unavailable; Windows targeted results and development
+health checks do not stand in for that PostgreSQL proof.

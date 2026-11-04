@@ -106,6 +106,8 @@ def assess(property_id, supplied):
         "proposed_use":deepcopy(use), "records":records, "checklist":checklist,
         "missing":missing, "owner_review_requests":issues,
         "ready_for_preliminary_underwriting":not missing,
+        "evidence_workplan":[{"topic":row["topic"],"record_ids":row["record_ids"],"priority":"resolve_before_underwriting" if row["status"] in ("conflicting","denied","needs_evidence") else "authenticate_before_execution",
+            "next_action":"Obtain source-bound jurisdiction evidence and resolve contradictions" if row["status"] in ("conflicting","denied","needs_evidence") else "Authenticate the supplied record; screening is not clearance"} for row in checklist],
         "regulatory_clearance":False, "permit_approval_authenticated":False,
         "external_actions":0, "provider_calls":0,
         "limitations":["Screening categories are not jurisdiction-specific legal requirements.",

@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = PIPELINE_IDS
-FIXTURE_VERSION = "handoff-fixtures-12"
+FIXTURE_VERSION = "handoff-fixtures-13"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", "handoff-fixtures-10", "handoff-fixtures-11", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", "handoff-fixtures-10", "handoff-fixtures-11", "handoff-fixtures-12", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -148,6 +148,15 @@ def _fixture(run_key, fail_at):
     inputs['manny']['asset_ownership']['value']={'property_id':str(prop),'status':'claimed','note':'FICTIONAL claim, not verified ownership'}
     inputs['manny']['operating_mandate']['value']={'property_id':str(prop),'scope':'review_only'}
     inputs['manny']['asset_obligations']['value']={'property_id':str(prop),'coverage':'none_reported','entries':[]}
+    def supplied(value): return {'value':{'property_id':str(prop),**value},'evidence_refs':['https://records.fiction.example/advisory']}
+    inputs['yoseph']={
+        'risk_inventory':supplied({'as_of':'2026-11-03','entries':[{'id':'water-escape','description':'FICTIONAL water escape concern','severity':4,'likelihood':3,'evidence_refs':['https://records.fiction.example/risk']}]}),
+        'existing_policies':supplied({'entries':[{'id':'fiction-policy','coverage':'liability','effective_on':'2026-01-01','expires_on':'2026-12-31','currency':'USD','limit_usd':'1000000.00','deductible_usd':'5000.00','exclusions':[],'evidence_refs':['https://records.fiction.example/policy']}]}),
+        'coverage_requirements':supplied({'entries':[{'coverage':'liability','minimum_limit_usd':'1000000.00','evidence_refs':['https://records.fiction.example/requirement']}]})}
+    inputs['deborah']={
+        'jurisdiction':supplied({'name':'FICTIONAL jurisdiction only'}),
+        'legal_question':supplied({'text':'FICTIONAL preliminary scope review, not a legal opinion'}),
+        'governing_documents':supplied({'entries':[{'id':'fiction-concept','version':'1','status':'signed_claimed','issues':[],'evidence_refs':['https://records.fiction.example/document']}]})}
     if fail_at in AGENT_SPECS and AGENT_SPECS[fail_at].required_inputs:
         inputs[fail_at].pop(AGENT_SPECS[fail_at].required_inputs[0])
     return sealed(marked({"version":1,"property_id":str(prop),"artifact_refs":[],
@@ -245,6 +254,11 @@ def _report(agent, payload, fail_at):
         scenario = evaluate_scenario("bench",crop,_site(fail_at==agent,profile))
         scenario["dossier_digest"] = payload["digest"]
         report = build_engineering_report({"bench":scenario},inspection=reports["raphael"])
+        if payload['dossier'].get('demo_room_plan'):
+            from app.agents.onesimus.portfolio import plan_rooms
+            rooms=[dict(room_id=r['room_id'],property_id=payload['property_id'],inspection_digest=reports['raphael']['digest'],distinct_room_claim=True,evidence_refs=['https://records.fiction.example/room'],site={k:v.model_dump(mode='json') for k,v in _site(profile={'site_overrides':r['site_overrides']}).items()}) for r in payload['dossier']['demo_room_plan']]
+            report['room_portfolio']=plan_rooms(payload,rooms,crop=crop)
+            report=sealed(report)
         ok = bool(scenario["complete"]) and report["status"]=="concept_ready"
     elif agent=="michael":
         scenario = reports["onesimus"]["alternatives"]["bench"]["scenario"]
@@ -256,6 +270,13 @@ def _report(agent, payload, fail_at):
         report = {"schema_version":"michael-finance-report-1","source_dossier_digest":payload["digest"],
             "source_engineering_digest":reports["onesimus"]["digest"],"assessments":{"bench":assessment},
             "missing":assessment["missing"]}
+        if reports['onesimus'].get('room_portfolio'):
+            from app.agents.onesimus.portfolio import assess_room_finance
+            from app.michael import FinancialInput
+            bundle={key:value.model_dump(mode='json') for key,value in _demo_financial_inputs('bench').items()}
+            for key,unit in [('occupancy_usd_per_m2_year','USD/m2/year'),('maintenance_usd_per_year','USD/year')]:
+                bundle[key]=FinancialInput(name=key,value=0,unit=unit,source='FICTIONAL explicitly allocated zero room allowance',classification='assumed',scenario='fiction').model_dump(mode='json')
+            report['room_finance']=assess_room_finance(reports['onesimus']['room_portfolio'],{r['room_id']:deepcopy(bundle) for r in reports['onesimus']['room_portfolio']['rooms']})
     else:
         report = build_report(agent,payload)
         ok = not report["missing"]

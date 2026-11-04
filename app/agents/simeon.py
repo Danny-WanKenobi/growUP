@@ -115,6 +115,8 @@ def assess(property_id, supplied, reports):
         'source_theresia_report_digest':parent_digest,'terms_digest':terms_digest,
         'status':'needs_evidence' if missing else 'prepared_for_coordination_review',
         'missing':missing,'ready_for_coordination_review':not missing,'ready_to_close':False,
+        'closing_checklist':[{'item':'Authenticate party consent and identity','status':'not_authenticated'}, {'item':'Bind final terms to the retained terms digest','status':'retained_claim_only'}, {'item':'Resolve inherited conditions before external execution','status':'unresolved'}, {'item':'Obtain verified legal signing and closing authority','status':'not_authorized'}],
+        'specialist_review_routes':['deborah','yoseph','theresia_keys'],
         'consent_observations':observations,'terms_review':deepcopy(approval),'authority_record':deepcopy(authority),
         'conditions_precedent':[{'condition':v,'status':'unresolved','resolution_authenticated':False} for v in conditions],
         'exception_routes':exceptions,'owner_review_requests':deepcopy(exceptions),

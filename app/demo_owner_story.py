@@ -47,10 +47,18 @@ def exercise(conn,run,*,full=False):
     from app.agents.elmer import read_vault_in_transaction
     preserved=read_vault_in_transaction(conn,run_id=run.run_id,dossier_key='main')['entries'][-1]
     if protected['payload']!=preserved['payload']: raise WorkflowError('synthetic vault preservation failed')
+    from app.agent_consultations import exchange_in_transaction
+    adviser_screens={}
+    for adviser in ('yoseph','deborah'):
+        discussion=exchange_in_transaction(conn,principal='synthetic-demo-controller',run_id=run.run_id,dossier_key='main',thread_id='fictional-'+adviser,
+            requester='manny',adviser=adviser,expected_sequence=0,message=dict(speaker='manny',text='Screen the retained fictional evidence without granting authority.',
+                recommendation='proceed_conditionally',evidence_refs=['https://records.fiction.example/advisory'],assessment_requested=True))
+        if discussion['sequence']!=2 or discussion['custody_transferred'] or discussion['grants_permission']: raise WorkflowError('synthetic adviser exchange assertion failed')
+        adviser_screens[adviser]=discussion['latest_assessment']
     result=dict(synthetic=True,domain='synthetic_handoff_demo',result='PASS',due_today_overdue=due['asset_tracking']['obligations'][0]['overdue'],
         overdue_task_count=len(overdue['created_task_keys']),reported_correction_only=not corrected['asset_tracking']['payments_verified'],
         vault_snapshot_id=filed['vault_entry']['snapshot_id'],vault_preserved_after_new_evidence=True,
-        reopened_task_count=len(reopened['created_task_keys']),actual_payments=0,provider_calls=0,external_actions=0,
+        adviser_screens=adviser_screens,reopened_task_count=len(reopened['created_task_keys']),actual_payments=0,provider_calls=0,external_actions=0,
         automatic_monitor_scope='Synthetic story uses fixed dates and shared register services; operational timer excludes these records.')
     if result['due_today_overdue'] or not result['overdue_task_count'] or not result['reopened_task_count']: raise WorkflowError('synthetic owner lifecycle assertion failed')
     put_record_in_transaction(conn,run.run_id,kind='research_artifact',record_key=marker,version=1,payload=result,digest=digest_payload(result))

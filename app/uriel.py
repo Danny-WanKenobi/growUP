@@ -500,6 +500,11 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
             if value is not None:
                 claims.append({'scenario':name,'quantity':quantity,'value':str(value),
                     'evidence':refs['michael'],'scope':'Conditional deterministic estimate; not actual performance or guaranteed returns.'})
+    room_finance=reports['michael'].get('room_finance') or {}
+    if room_finance.get('complete'):
+        for quantity,value in sorted((room_finance.get('totals') or {}).items()):
+            claims.append({'scenario':'room_portfolio','quantity':quantity,'value':str(value),'evidence':refs['michael'],
+                'scope':'Conditional sum of separately allocated room plans; an alternative to single-room scenarios, never added to them.'})
     supplied = (dossier.get('specialist_inputs') or {}).get('uriel') or {}
     contact = supplied.get('owner_contact') or {}
     from app.contact_evidence import assess_contact
@@ -509,7 +514,7 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         raise UrielError('invalid outreach suppression policy')
     address = str(dossier.get('street_address') or 'Address unresolved')
     financial_text = '\n'.join(f"{c['scenario']}: {c['quantity']} = {c['value']} [Michael {refs['michael']['report_digest']}]" for c in claims)
-    limitations = 'Preliminary concept only. Availability, vacancy, structural/electrical capacity, permitted use and executable conversion are not established by this campaign. Figures depend on retained assumptions and exclude unmodeled costs.'
+    limitations = 'Preliminary concept only. Availability, vacancy, structural/electrical capacity, permitted use and executable conversion are not established by this campaign. Figures depend on retained assumptions and exclude unmodeled costs. Alternative plans are not additive.'
     introduction = f'Grow Up: preliminary indoor-growing opportunity for {address}.\nWe would welcome a discussion of this passive Kratky concept.\n{financial_text}\n{limitations}'
     campaign = {'version':'uriel-campaign-2','property_id':str(payload['property_id']),
         'source_dossier_digest':payload['digest'],'status':'suppressed' if policy.get('suppressed') else 'draft_not_sent',
@@ -522,6 +527,11 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         'execution':{'enabled':False,'sent':False,'provider_calls':0},
         'missing':([] if contact_assessment['eligible_for_draft'] else ['owner_contact_evidence'])+([] if claims else ['complete_financial_assessment']),
         'limitations':[limitations,'Draft creation does not establish channel permission or recipient identity.']}
+    campaign['claim_review']={'financial_claim_count':len(claims),'factual_source_authentication':'not established by draft creation',
+        'conditional_scenario_names':sorted({c['scenario'] for c in claims}),
+        'must_not_claim':['Guaranteed returns or savings','Verified vacancy, ownership, structural safety or permitted agricultural use','A draft was sent, delivered or accepted'],
+        'evidence_gaps':list(dict.fromkeys(gap for assessment in assessments.values() if isinstance(assessment,dict) for gap in assessment.get('evidence_requests',[]))),
+        'suppression_preserved':bool(policy.get('suppressed')),'outbound_delivery_authorized':False}
     campaign['campaign_id'] = 'campaign:'+digest_payload(campaign)
     return campaign
 

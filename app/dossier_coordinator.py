@@ -68,7 +68,14 @@ def _build(agent, payload):
             scenarios[config] = scenario
         report = build_engineering_report(scenarios, inspection=inspection,
                                          options=inspection.get('engineering_options') or {})
+        if inputs.get('rooms') is not None:
+            from app.agents.onesimus.portfolio import plan_rooms
+            report['room_portfolio']=plan_rooms(payload,inputs['rooms'],crop=crop)
+            if not report['room_portfolio']['complete']:
+                report['missing']=list(dict.fromkeys(report['missing']+report['room_portfolio']['missing']));report['status']='needs_inputs'
+            report.pop('digest',None);report=_sealed(report)
         eligible = report['status'] == 'concept_ready'
+        if report.get('room_portfolio') and not report['room_portfolio']['complete']: eligible=False
         reasons = [] if eligible else report.get('missing') or ['no plausible preliminary layout']
     elif agent == 'michael':
         engineering = reports.get('onesimus') or {}
@@ -84,6 +91,11 @@ def _build(agent, payload):
         reasons = [] if eligible else ['no complete financially favorable scenario under stated assumptions']
         report = {'schema_version': 'michael-finance-report-1', 'assessments': assessments,
                   'source_engineering_digest': engineering.get('digest'), 'missing': reasons, 'planning_cases':cases}
+        if engineering.get('room_portfolio'):
+            from app.agents.onesimus.portfolio import assess_room_finance
+            report['room_finance']=assess_room_finance(engineering['room_portfolio'],inputs.get('room_financial'))
+            if not report['room_finance'].get('favorable_under_assumptions'):
+                eligible=False;reasons.extend(report['room_finance']['missing'] or ['room portfolio is not favorable under supplied assumptions'])
     else:
         report = build_report(agent, payload)
         eligible = not report['missing']

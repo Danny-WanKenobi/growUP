@@ -306,11 +306,12 @@ def build_engineering_report(scenarios: dict[str, dict[str, Any]], *,
                                    "unit": supplied_units.get(quantity) or QUANTITY_UNITS[quantity],
                                    "classification": "unknown" if value is None else "estimated",
                                    "provenance": f"deterministic Onesimus calculation {scenario.get('calculation_version', 'unspecified')}"})
+        from app.planning_summaries import engineering_budget
         alternatives[str(name)] = {"scenario": copy.deepcopy(scenario),
                                    "calculation_complete": calculation_complete,
                                    "layout_plausible": plausible, "layout_status": layout_status,
                                    "concept_ready": concept_ready,
-                                   "bill_of_quantities": quantities}
+                                   "bill_of_quantities": quantities, "resource_budget":engineering_budget(scenario)}
         missing.extend(f"{name}:{item}" for item in scenario.get("missing", []))
         missing.extend(f"{name}:{item}" for item in scenario.get("not_quantified", []))
         if plausible is not True:

@@ -400,6 +400,7 @@ def assess(
     if maintenance is None:
         evidence_requests.append("maintenance cost not provided; excluded from legacy totals; planning cases require it explicitly")
     base['assumptions'].append('Separately supplied maintenance is additional to other opex; the other-cost allowance must exclude maintenance to avoid double counting.')
+    from app.planning_summaries import financial_resilience
     verdict = VERDICT_FAVORABLE if net > 0 else VERDICT_UNFAVORABLE
     return {
         **base,
@@ -416,6 +417,7 @@ def assess(
         "outputs": {
             "capex_usd": money_str(capex),
             "monthly_operating_cashflow_usd": money_str(net / Decimal(12)),
+            "operating_resilience":financial_resilience(capex=capex,revenue=revenue,opex=opex),
             "monthly_cashflow_basis": "Uniform monthly accrual/cash timing planning assumption; no seasonality, working capital, financing or tax model.",
             "maintenance_quantified": maintenance is not None,
             "opex_usd_per_year": money_str(opex),

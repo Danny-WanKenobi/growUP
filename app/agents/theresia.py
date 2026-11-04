@@ -90,6 +90,9 @@ def assess(property_id, supplied, reports):
         assessments=reports["michael"].get("assessments") or {}
         if not isinstance(assessments,dict):
             assessments={}
+        assessments=deepcopy(assessments)
+        room_finance=reports['michael'].get('room_finance') or {}
+        if room_finance.get('complete'): assessments['room_portfolio']={'complete':True,'outputs':deepcopy(room_finance.get('totals') or {})}
         for name,item in assessments.items():
             if not isinstance(item,dict) or item.get("complete") is not True:
                 continue
@@ -110,6 +113,9 @@ def assess(property_id, supplied, reports):
                 "annual_after_debt_proxy_usd":money_str(net-debt),"operating_surplus_debt_coverage_proxy":str(coverage) if coverage is not None else None,
                 "coverage_basis":"Michael operating surplus / supplied annual debt service; not lender-defined DSCR. No ratio for zero debt service.",
                 "meets_supplied_planning_limits":eligible,
+                "downside_operating_surplus_80pct_after_debt_usd":money_str(net*Decimal('.8')-debt),
+                "downside_stress_scope":"Illustrative 20% operating-surplus haircut, not a revenue/expense forecast or lender underwriting rule.",
+                "break_even_debt_service_usd_per_year":money_str(max(Decimal(0),net)),
                 "inputs":{"michael_capex_usd":money_str(capex),"michael_operating_net_usd_per_year":money_str(net),
                     **{key:str(value) for key,value in values.items()}},
                 "formulas":{"capital_needed":"Michael capex + additional_project_costs + contingency",

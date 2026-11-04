@@ -52,12 +52,12 @@ SPECS = (
         ("Double-entry ledger, bank feeds and reconciliations", "Current tax-rule adapters, filings and payments"), "app.agents.elmer"),
     AgentSpec("yoseph", "Yoseph", "Insurance and Liability Expert", ("raphael", "onesimus"),
         ("risk_inventory", "existing_policies", "coverage_requirements"),
-        "Coverage/risk evidence checklist; policy existence is not proof that a loss is covered.",
-        ("Policy-wording analysis, carrier quotes and coverage validation", "Binding coverage and claims submission")),
+        "Risk triage, dated policy screening and reported coverage-gap comparison; no coverage opinion or binding.",
+        ("Policy-wording analysis, carrier quotes and coverage validation", "Binding coverage and claims submission"), "app.agents.advisers.assess_insurance"),
     AgentSpec("deborah", "Deborah", "Legal Expert", (),
         ("jurisdiction", "legal_question", "governing_documents"),
-        "Legal issue register and document-review intake; no assertion of legal compliance or enforceability.",
-        ("Current-law research and legal reasoning with authoritative citations", "Legal opinions, filings and representation")),
+        "Property-bound legal-question and document/version issue screening; no legal clearance or enforceability claim.",
+        ("Current-law research and legal reasoning with authoritative citations", "Legal opinions, filings and representation"), "app.agents.advisers.assess_legal"),
     AgentSpec("manny", "Manny", "Owner Agent and Asset Manager", ("michael","elmer"),
         ("asset_ownership", "operating_mandate", "asset_obligations"),
         "Consolidated source-linked owner overview and durable exception decisions; no signing, payment or external-action authority.",
@@ -83,12 +83,12 @@ HANDOFF_CONTRACT = (
 
 def describe_agents():
     return {
-        "version": "downstream-agents-1", "single_owner": True,
+        "version": "downstream-agents-2", "single_owner": True,
         "normal_operation": "Autonomous internal preparation within configured backend permissions; owner queue for unresolved exceptions and sensitive actions.",
         "workers_started": False, "external_execution_enabled": False,
         "handoff_contract": list(HANDOFF_CONTRACT),
         "pipeline": list(PIPELINE_IDS), "shared_advisers": list(ADVISER_IDS),
-        "agents": [dict(asdict(spec), participation="shared_adviser" if spec.id in ADVISER_IDS else "pipeline", version=1, capability="preliminary_intake_and_report",
+        "agents": [dict(asdict(spec), participation="shared_adviser" if spec.id in ADVISER_IDS else "pipeline", version=1, capability="deterministic_evidence_screen" if spec.id in ADVISER_IDS else "preliminary_assessment_and_report",
                         live_property_handoff_proven=False, entrypoint="app.agent_consultations.exchange_audited" if spec.id in ADVISER_IDS else "app.agents.stages.prepare_audited",
                         input_source="current canonical stored dossier only") for spec in SPECS],
     }

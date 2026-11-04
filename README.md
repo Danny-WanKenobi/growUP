@@ -6014,7 +6014,7 @@ unchanged routine check. These tests do not activate a timer or enroll productio
 
 #### Nationwide synthetic property showcase (isolated demo only)
 
-The current fixture contract is `handoff-fixtures-12`. Previous contracts 1–11
+The current fixture contract is `handoff-fixtures-13`. Previous contracts 1–12
 remain inspectable; unfinished historical runs are read-only. New records never
 rewrite the earlier proof or substitute synthetic data into `growup_dev`.
 `app.demo_catalogue` supplies **16 invented properties**, four per display type:
@@ -6116,3 +6116,100 @@ Tests cover every catalogue outcome, geographic/type diversity, correct gate and
 return path, profile binding, owner lifecycle replay and vault preservation;
 existing matrix, isolation, JavaScript rendering and history tests remain in use.
 No provider calls or real-world business actions are part of these scenarios.
+
+#### Downstream capability quick wins (fixture contract 13)
+
+The downstream roles now include these deterministic, retained-evidence additions:
+
+| Agent | Added capability | Boundary |
+| --- | --- | --- |
+| Onesimus | Daily resource budget, footprint-mass estimate, independent-room bench/rack comparison | No structural/electrical capacity or construction approval |
+| Michael | Operating margin/headroom, downside cashflow, illustrative reserves, five-year milestones and room-specific finance | No guaranteed returns, shared-cost allocation verification, debt/tax or actual-performance claims |
+| Uriel | Financial-claim review and explicit prohibited claims/evidence gaps | Draft only; no new sending capability |
+| Priscilla | Interest rates tied to delivered message identities and additional data-quality counters | Tracking only; no conversation ownership, contact or sending |
+| Nicole | Topic-specific evidence workplan and priority | No current-law research, permit application or clearance |
+| Theresia Keys | Illustrative operating-surplus haircut after debt and debt-service break-even proxy | Not lender underwriting or committed financing |
+| Simeon | Explicit closing checklist and specialist-review routes | No signing, closing, negotiation or disbursement |
+| Solomon | Optional complete serial phase schedule with explicit dates/durations | Assumed calendar plan only; no construction order |
+| Elmer | Reported expenses plus remaining linked commitments and baseline variance | Not cash paid, double-entry accounting, complete liabilities or tax |
+| Manny | Prioritized stale/missing report actions | Linked rework only; no owner authority granted |
+| Yoseph | Ordinal risk triage, dated policy screen and reported limit gaps | No coverage opinion, binding or claim submission |
+| Deborah | Property-bound document/version conflicts and legal-question workplan | No legal opinion, enforceability determination or representation |
+
+Gabriel, Gabriella, Raphael and Wondrue development remain deferred. Their source
+modules and interfaces are not expanded in this milestone. Existing shared policy,
+canonical records, custody and backend permissions remain in use. Advisers remain
+outside the custody route. No live provider calls, discovery, communications,
+contracts, payments or construction are activated.
+
+**Immediate adviser access:** `app.agent_consultations.assess_in_transaction`
+(and audited wrapper) reads retained structured specialist inputs, creates a
+source-context-bound assessment, queues gaps/issues, and does not transfer
+custody or append a pipeline-agent report. Existing `consult_adviser` messages
+may include `assessment_requested=true` when the speaker is the requesting agent.
+The backend performs a bounded deterministic screen and appends one adviser
+reply in the same transaction. A disagreement remains an owner-review issue,
+not an approval. Repeated assessments with the same principal/requester/adviser
+and evidence context replay without duplicate tasks. Administrative owner-brief
+refreshes do not stale an otherwise unchanged advisory context; substantive
+changes do. Historical threads without context fingerprints remain conservative.
+
+Yoseph's input wrappers contain property_id, entries and evidence_refs:
+`risk_inventory` also requires explicit as_of; risks have unique IDs, descriptions,
+severity/likelihood integers 1–5 and evidence references. The product is an ordinal
+planning score, not actuarial probability. `existing_policies` entries carry
+coverage, effective/expiry dates, USD limit/deductible, exclusions and references.
+`coverage_requirements` entries name coverage and a minimum USD limit. Policies
+are not added together as though coverage aggregation were assured. Date-current
+status does not authenticate insured entity, location, wording or a covered loss.
+
+Deborah's wrappers contain property-bound jurisdiction name, legal question text,
+and governing_documents entries with ID/version, draft/signed_claimed/withdrawn/
+unknown status, issue list and references. Conflicting versions, duplicate entries,
+missing context and unresolved issues remain visible. Supplied signatures never
+become authenticated signatures or legal clearance.
+
+**Multi-room planning:** `app.agents.onesimus.portfolio.plan_rooms` accepts 1–12
+unique room IDs, bound property and inspection digests, evidence references,
+classified site quantities and an explicit distinct_room_claim. Caller-supplied
+verified quantities are downgraded to assumptions in this override path. It uses
+the existing bench/rack calculators; selects one plausible alternative per room
+by estimated kg/year, then lighting kW, then configuration ID; and never adds
+competing alternatives. Impossible/missing rooms prevent aggregate totals.
+Spatial distinctness remains a supplied assumption, not a survey or safety proof.
+
+The coordinator accepts `assessment_inputs.rooms` for Onesimus. Michael requires
+`assessment_inputs.room_financial` keyed to every selected room, including explicit
+occupancy and maintenance allocations. No shared property cost is silently
+repeated or allocated: users must allocate it once in supplied inputs. Linked
+rework accepts these narrowly scoped inputs for the corresponding agent. The
+Hudson Lantern synthetic scenario now demonstrates two independent pilot rooms.
+Room totals do not replace or double-count the separately shown single-room
+alternatives. All figures remain conditional estimates.
+
+Resource-budget averages divide annual requirements by 365 and mass by rack
+footprint; they are not peak capacity, staffing rosters or structural ratings.
+Michael's resilience calculations use unrounded internal amounts, display rounded
+money, assume uniform operating cashflow, and show a three-month operating-cost
+reserve separately; the reserve is not silently added to existing totals.
+Construction scheduling requires every phase duration and an explicit planning
+start date; missing inputs remain unquantified. Negative proposed total duration
+is refused; change orders remain proposals.
+
+Fixture contract 13 preserves contracts 1–12 for inspection. New typed fictional
+adviser records, multi-room calculations and a dated Solomon schedule extend the
+existing catalogue. Elm Fork's owner story also demonstrates two-way structured
+Yoseph and Deborah screening without custody/authority transfer. Old runs are
+not rewritten, and the operational monitor still excludes synthetic records.
+
+Only critical targeted tests are run for this work. No expensive full regression
+is required or claimed. The prepared Ubuntu command runs one focused PostgreSQL
+recovery case plus the new calculation/adviser tests, then proves the isolated
+catalogue; it needs the owner's local sudo authentication and is deferred until
+that is available:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-downstream-upgrades.py
+```
+
+No new dependencies, migrations or shared credential changes are introduced.

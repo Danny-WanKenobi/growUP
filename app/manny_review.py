@@ -37,7 +37,7 @@ def _context(conn,run_id,dossier_key,source):
             advisory.append({'record_key':key,'record_digest':row.digest,'requester':row.payload.get('requester'),
                 'adviser':row.payload.get('adviser'),'joint_status':row.payload.get('joint_status'),
                 'source_dossier_digest':row.payload.get('source_dossier_digest'),
-                'source_is_current':row.payload.get('source_dossier_digest')==source.digest,'grants_permission':False})
+                'source_is_current':row.payload['source_context_digest']==evidence_context(source.payload) if row.payload.get('source_context_digest') else row.payload.get('source_dossier_digest')==source.digest,'grants_permission':False})
     advisory.sort(key=lambda r:r['record_key'])
     context=digest_payload({'evidence_digest':evidence_context(source.payload),
         'advisory_digests':[r['record_digest'] for r in advisory]})

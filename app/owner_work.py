@@ -72,8 +72,8 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
             if 'correction' in inputs: raise WorkflowError('accounting correction only applies to Elmer')
             updates=inputs.get('assessment_inputs')
             if updates is not None:
-                allowed={'raphael':'site','onesimus':'crop','michael':'financial'}
-                if target not in allowed or not isinstance(updates,dict) or set(updates)!={allowed[target]}: raise WorkflowError('assessment changes must belong to target agent')
+                allowed={'raphael':{'site'},'onesimus':{'crop','rooms'},'michael':{'financial','room_financial'}}
+                if target not in allowed or not isinstance(updates,dict) or not updates or set(updates)-allowed[target]: raise WorkflowError('assessment changes must belong to target agent')
                 dossier.setdefault('assessment_inputs',{}).update(deepcopy(updates))
             if 'specialist_inputs' in inputs:
                 if target in ('gabriel','raphael','onesimus','michael') or not isinstance(inputs['specialist_inputs'],dict): raise WorkflowError('target does not accept specialist inputs')

@@ -75,6 +75,14 @@ def build_report(agent, payload):
         "limitations":["Intake preparation only; provided references have not been independently authenticated by this agent.",
                        "A complete checklist is not a permit, underwriting decision, signed contract, closed deal, tax filing, insurance coverage or asset ownership."],
     }
+    if agent in ('yoseph','deborah'):
+        from app.agents.advisers import assess_insurance,assess_legal
+        assessment=(assess_insurance if agent=='yoseph' else assess_legal)(payload['property_id'],supplied)
+        result['advisory_assessment']=assessment
+        missing.extend(gap for gap in assessment['missing'] if gap not in missing)
+        result['status']='needs_evidence' if missing else assessment['status']
+        result['owner_review_requests'].extend({'requirement':gap,'reason':gap,'status':'pending','authority':'human_owner','grants_permission':False} for gap in assessment['missing']+assessment['review_issues'])
+        result['next_steps']=['Obtain or review '+gap for gap in missing+assessment['review_issues']]
     if agent == "uriel":
         from app.uriel import prepare_campaign
         if any(name.startswith('report:') for name in missing):

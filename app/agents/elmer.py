@@ -115,6 +115,7 @@ def assess(property_id, dossier):
     total_e=sum((Decimal(c['amount_usd']) for c in expenses),Decimal(0)) if totals_known else None
     if proposed is not None and ceiling is not None and proposed>ceiling: exception_reasons.append('Pending proposals exceed supplied planning limit')
     if total_e is not None and baseline is not None and total_e>baseline: exception_reasons.append('Reported expenses exceed baseline estimate')
+    exposure=total_e+remaining if total_e is not None and remaining is not None else None
     return {'version':'elmer-project-cost-intake-1','property_id':str(property_id),
         'source_solomon_report_digest':source_digest,'source_project_digest':digest_payload(project) if isinstance(project,dict) else None,
         'status':'needs_evidence' if missing else 'preliminary_accounting_intake',
@@ -126,6 +127,9 @@ def assess(property_id, dossier):
             'unexpensed_linked_balance_usd':format(remaining,'.2f') if remaining is not None else None},
         'reported_actual_expenses':{'entries':expenses,'total_usd':format(total_e,'.2f') if total_e is not None else None,'payments_verified':False},
         'exceptions':exception_reasons,'classification':'reported_unverified',
+        'budget_variance':{'reported_expenses_plus_unexpensed_commitments_usd':format(exposure,'.2f') if exposure is not None else None,
+            'baseline_less_reported_exposure_usd':format(baseline-exposure,'.2f') if baseline is not None and exposure is not None else None,
+            'scope':'Reported expense plus remaining linked commitments; not cash paid or a complete liability inventory. Proposals are separate.'},
         'reconciliation_scope':'Only supplied period records; commitments and expenses overlap and must not be added as distinct spend.',
         'external_actions':0,'payments_authorized':False,'tax_liability_calculated':False,
         'limitations':['No bank reconciliation, cash-payment proof, completeness certification, tax calculation or filing.',

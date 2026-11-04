@@ -76,7 +76,8 @@ def assess(property_id,supplied,reports):
     return {'version':'solomon-preconstruction-1','property_id':str(property_id),'source_report_digests':refs,
         'status':'needs_evidence' if missing else 'preconstruction_planning_only','missing':missing,
         'engineering_report_digest':refs.get('onesimus'),'design_reference':deepcopy(design),
-        'planning_ready':not missing,'construction_authorized':False,'site_safety_verified':False,
+        'planning_ready':not missing,'construction_authorized':False,
+        'schedule_plan':schedule_plan(budget),'site_safety_verified':False,
         'permits_authenticated':False,'deal_closed':False,'scope':'preconstruction_planning_only',
         'work_breakdown':[{'phase':key,'description':description,'depends_on':[] if i==0 else [PHASES[i-1][0]],
             'execution_status':'not_authorized','duration_days':None} for i,(key,description) in enumerate(PHASES)],
@@ -90,3 +91,22 @@ def assess(property_id,supplied,reports):
             'Supplied permits/review claims are unverified; no source research, engineering certification or physical supervision.',
             'Human communication channels are deferred and not installed or enabled.'],
         'provider_calls':0,'external_actions':0,'signing_authorized':False}
+
+
+def schedule_plan(budget):
+    """Optional explicit calendar-day planning; no invented durations or start date."""
+    from datetime import date,timedelta
+    from app.workflow_db import WorkflowError
+    durations=budget.get('phase_duration_days');start=budget.get('planning_start')
+    if durations is None and start is None: return dict(status='unquantified',total_days=None,phases=[],scope='Durations and start date not supplied; no schedule invented.')
+    if not isinstance(durations,dict) or set(durations)!={p[0] for p in PHASES}: raise WorkflowError('explicit duration required for every planning phase')
+    if any(isinstance(v,bool) or not isinstance(v,int) or not 1<=v<=3650 for v in durations.values()): raise WorkflowError('bounded positive calendar-day durations required')
+    try:
+        if not isinstance(start,str) or len(start)!=10: raise ValueError()
+        cursor=date.fromisoformat(start)
+    except (ValueError,TypeError): raise WorkflowError('explicit ISO planning_start date required') from None
+    result=[]
+    for name,_ in PHASES:
+        end=cursor+timedelta(days=durations[name]);result.append(dict(phase=name,planned_start=cursor.isoformat(),planned_end_exclusive=end.isoformat(),duration_days=durations[name],execution_authorized=False));cursor=end
+    return dict(status='assumed_serial_plan',total_days=sum(durations.values()),phases=result,
+        scope='Illustrative serial calendar-day schedule, not mobilization or a committed completion date. Weather, permits, work calendars and delays are unmodeled.')

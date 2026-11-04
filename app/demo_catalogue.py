@@ -48,6 +48,11 @@ def apply(payload,profile,verification):
     inputs=dossier['specialist_inputs']
     inputs['nicole']['jurisdiction']['value'].update(city=profile['city'],state=profile['state'])
     inputs['elmer']['entity_and_tax_jurisdiction']['value']['jurisdiction']='FICTIONAL '+profile['state']+' example; not a tax determination'
+    if profile['id']=='hudson-sky':
+        dossier['demo_room_plan']=[{'room_id':'north-pilot','site_overrides':{'usable_area_m2':100,'room_length_m':10,'room_width_m':10}}, {'room_id':'south-pilot','site_overrides':{'usable_area_m2':72,'room_length_m':18,'room_width_m':4}}]
+    if profile['id']=='elm-fork':
+        from app.agents.solomon import PHASES
+        inputs['solomon']['construction_budget']['value'].update(planning_start='2026-11-03',phase_duration_days={name:days for (name,_),days in zip(PHASES,(2,3,5,4,3,2))})
     fault=profile['fault']
     if fault=='identity': dossier['identity_disputes']={'annex':'FICTIONAL main tower and annex identity conflict'}
     if fault=='jurisdiction': inputs['nicole'].pop('jurisdiction')

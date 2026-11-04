@@ -814,10 +814,17 @@ def timeline_in_transaction(conn, *, package_entry):
         counts={status:sum(status in states for states in messages.values()) for status in LIFECYCLE_KINDS}
         delivered=counts['delivered']; replied=counts['replied']
         correlated_replies=sum('replied' in states and 'delivered' in states for states in messages.values())
+        interested=sum('interested' in states and 'delivered' in states for states in messages.values())
+        interest_without_reply=sum('interested' in states and 'replied' not in states for states in messages.values())
         return {'message_status_counts':counts,'messages':len(messages),
             'reply_rate_of_delivered':None if not delivered else correlated_replies/delivered,
+            'interest_rate_of_delivered':None if not delivered else interested/delivered,
+            'interested_without_recorded_reply':interest_without_reply,
             'unmatched_delivery_replies':replied-correlated_replies,
-            'conflicting_delivery_messages':sum({'bounced','delivered'} <= states for states in messages.values())}
+            'conflicting_delivery_messages':sum({'bounced','delivered'} <= states for states in messages.values()),
+            'data_quality':{'unknown_status_messages':sum('unknown' in states for states in messages.values()),
+                'interest_is_not_a_closed_deal':True,'event_counts_are_not_unique_people':True},
+            'rate_basis':'Unique provider/message identities with recorded delivered status; conflicting delivered/bounced records remain flagged, not silently resolved.'}
     return {'package_entry':str(package),'events':events,'actual':project(domains[False]),
         'simulated':project(domains[True]),'scope':'Observed statuses only; reply does not establish interest or conversion.'}
 

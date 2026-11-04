@@ -98,10 +98,14 @@ def record_in_transaction(conn, *, principal, run_id, dossier_key, event_id, exp
     base=Decimal(str(report['preconstruction_assessment']['budget']['estimated_total_usd']))
     delta=sum((Decimal(c['cost_delta_usd']) for c in current['proposed_changes']),Decimal(0))
     if base+delta<0: raise WorkflowError('proposed total cannot be negative')
+    baseline_days=(report['preconstruction_assessment'].get('schedule_plan') or {}).get('total_days')
+    proposed_days=baseline_days+sum(c['schedule_delta_days'] for c in current['proposed_changes']) if baseline_days is not None else None
+    if proposed_days is not None and proposed_days<0: raise WorkflowError('proposed schedule cannot be negative')
     current.update(sequence=expected_sequence+1,property_id=source.payload['property_id'],
         source_report_digest=report['digest'],last_event_id=event_id,
         proposed_total_usd=format(base+delta,'.2f'),baseline_estimate_usd=format(base,'.2f'),
         proposed_schedule_delta_days=sum(c['schedule_delta_days'] for c in current['proposed_changes']),
+        baseline_schedule_days=baseline_days,proposed_schedule_days=proposed_days,
         schedule_scope='sum of proposed deltas only; no baseline duration or completion date verified',
         classification='synthetic' if source.payload.get('synthetic') is True else 'operator_reported_unverified',
         construction_authorized=False,procurement_authorized=False,external_actions=0,

@@ -521,6 +521,17 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 status=get_record_in_transaction(conn,rid,'research_artifact','asset-monitor-status:'+key)
                 assert status.payload['as_of']=='2026-11-06'
                 assert manny_review.inspect_in_transaction(conn,run_id=rid,dossier_key=key)['brief']['automatic_monitoring']['source_is_current']
+            with get_connection() as conn:
+                advisory_source=get_record_in_transaction(conn,rid,'dossier_version',key)
+                before_version=latest_version_in_transaction(conn,did).version
+            screening=dict(principal='pg-test',run_id=rid,dossier_key=key,requester='manny',adviser='yoseph',expected_digest=advisory_source.digest)
+            screened=agent_consultations.assess_audited(**screening)
+            assert screened['report']['advisory_assessment']['missing'] and not screened['grants_permission']
+            assert agent_consultations.assess_audited(**screening)['replayed']
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==before_version
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+6
+
 
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
