@@ -33,7 +33,13 @@ def callback_configured(value):
 
 def inspect(environ=None):
     env = os.environ if environ is None else environ
-    url = env.get("RESEND_PUBLIC_CALLBACK_URL", PLACEHOLDER_URL)
+    from app.server_target import get_server_target,inspect as inspect_server
+    try:
+        target=get_server_target(env); server=inspect_server(env)
+    except ValueError:
+        return {'configuration_complete':False,'webhook_configuration_complete':False,'polling_configuration_complete':False,
+            'blockers':['Invalid SERVER_MODE or DEMO_MODE'],'provider_calls':0,'database_writes':0}
+    url = env.get("RESEND_PUBLIC_CALLBACK_URL") or (target.url(CALLBACK_PATH) if target.callback_available else PLACEHOLDER_URL)
     valid_url = callback_configured(url)
     secret = env.get("RESEND_WEBHOOK_SECRET", "")
     try:
@@ -51,13 +57,16 @@ def inspect(environ=None):
         inbox_ready = False
     enabled = env.get("RESEND_TRACKING_ENABLED", "0") == "1"
     blockers = []
+    blockers.extend(server['blockers'])
+    if not target.callback_available: blockers.append('DEV_SERVER has no public callback; use offline verification or separately bounded polling')
+    elif url!=target.url(CALLBACK_PATH): blockers.append('Callback must match the selected LIVE_SERVER endpoint')
     if not valid_url: blockers.append("Replace RESEND_PUBLIC_CALLBACK_URL after selecting a public HTTPS host")
     if not secret_ready: blockers.append("Install the private Resend webhook signing secret")
     if not receiving_ready: blockers.append("Set the actual Resend receiving domain for unique reply aliases")
     if not sender_ready: blockers.append("Set RESEND_SENDER to the verified sending address")
     if inbox and not inbox_ready: blockers.append("Correct the optional RESEND_INBOX_ID UUID")
     if not enabled: blockers.append("Tracking remains disabled")
-    poll_blockers=[]
+    poll_blockers=list(server['blockers'])
     for variable in ('COMMUNICATIONS_ROUTER_ENABLED','RESEND_POLL_ENABLED','RESEND_POLL_ACCESS_APPROVED'):
         if env.get(variable,'0')!='1': poll_blockers.append(variable+' remains disabled')
     if not env.get('RESEND_API_KEY','').startswith('re_'): poll_blockers.append('Install the private Resend API credential')
@@ -77,7 +86,8 @@ def inspect(environ=None):
         try: configuration(env)
         except (WorkflowError,ValueError,TypeError): poll_blockers.append('Polling configuration fails runtime validation')
 
-    return {"mode":"configuration preview only", "callback_url_configured":valid_url,
+    return {"mode":"configuration preview only", "server_target":server,
+        "effective_callback_url":server['resend_callback_url'], "callback_url_configured":valid_url,
         "callback_path":CALLBACK_PATH, "signing_secret_configured":secret_ready,
         "receiving_domain_configured":receiving_ready, "sender_configured":sender_ready, "inbox_id_configured":inbox_ready,
         "tracking_enabled":enabled, "configuration_complete":not blockers, "blockers":blockers,

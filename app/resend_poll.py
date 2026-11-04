@@ -19,6 +19,10 @@ HTTP_CLIENT=httpx.Client
 
 def configuration(environ=None):
     env=os.environ if environ is None else environ
+    from app.server_target import inspect as inspect_server
+    try: server=inspect_server(env)
+    except ValueError: raise WorkflowError('invalid server/action mode configuration') from None
+    if server['blockers']: raise WorkflowError('server/database target mismatch; polling refused')
     if env.get('RESEND_POLL_ENABLED','0')!='1' or env.get('RESEND_POLL_ACCESS_APPROVED','0')!='1':
         raise WorkflowError('Resend polling/provider access is disabled')
     if env.get('COMMUNICATIONS_ROUTER_ENABLED','0')!='1':

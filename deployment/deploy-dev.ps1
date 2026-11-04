@@ -3,6 +3,9 @@
 param([string]$RemoteHostName = 'securecode-dev', [string]$RemoteUser = 'ubuntu')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($RemoteHostName -ne 'securecode-dev' -or $RemoteUser -ne 'ubuntu') {
+    throw 'Development deployment is pinned to ubuntu@securecode-dev. LIVE_SERVER requires the separate reviewed VPS deployment checkpoint.'
+}
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Remote = "${RemoteUser}@${RemoteHostName}"
 $dirty = @(& git -C $Repo status --porcelain)

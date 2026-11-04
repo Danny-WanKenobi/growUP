@@ -22,6 +22,12 @@ def get_readiness() -> JSONResponse:
     Returns 503 with a generic category otherwise. Responses and logs
     never include credentials or driver error details.
     """
+    from app.server_target import inspect as inspect_server
+    try: server=inspect_server()
+    except ValueError:
+        return JSONResponse(status_code=503,content={'status':'unavailable','server_target':'invalid_configuration'})
+    if not server['configuration_matches_server']:
+        return JSONResponse(status_code=503,content={'status':'unavailable','server_target':'database_mismatch'})
     cfg = get_database_config()
     if not cfg.is_configured:
         return JSONResponse(

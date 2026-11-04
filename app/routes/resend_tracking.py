@@ -50,6 +50,11 @@ async def enroll(body: Enrollment, request: Request):
 @router.post("/integrations/resend/webhook")
 async def webhook(request: Request):
     enabled()
+    from app.server_target import get_server_target
+    try: target=get_server_target()
+    except ValueError: raise HTTPException(503,'invalid_server_target') from None
+    if not target.callback_available:
+        raise HTTPException(503,'resend_callback_unavailable_on_dev_server')
     secret = os.getenv("RESEND_WEBHOOK_SECRET", "")
     if not secret.startswith("whsec_"):
         raise HTTPException(503, "resend_signing_not_configured")

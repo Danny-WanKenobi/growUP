@@ -6268,3 +6268,36 @@ These are read-only presentation changes. Existing records, fixture contracts,
 agent policies and custody history are unchanged. Validate with the two focused
 viewer render/credential-shell tests in tests/test_handoff_demo.py; no database
 repopulation or full regression is required.
+
+
+## Independent development / live server target
+
+Set `SERVER_MODE=DEV_SERVER` (default) or `SERVER_MODE=LIVE_SERVER` in the private
+service environment. The central `app/server_target.py` maps Grow Up health,
+readiness, command, cockpit, demo-viewer and enrollment URLs to
+`https://securecodeusa.local:8443` or `https://growup.securecodeusa.com`. Browser
+relative calls stay on their current host; this setting does not redirect a
+credential-bearing request between servers or rewrite external provider URLs.
+Inspect the nonsecret selection with `python -B -m app.server_target`.
+
+The server target is independent of `DEMO_MODE=yes/no`. Existing DEMO_MODE controls
+external-action simulation, not database provenance: synthetic dossiers are served
+through the isolated demo connector, while operational data uses growup_dev or
+growup_prod. Selecting a server never moves data, enables providers, deploys code
+or grants execution authority. All four server/action combinations are supported.
+A global synthetic-only data switch is not claimed as implemented.
+
+DEV_SERVER reports public Resend callbacks unavailable without failing the rest
+of the application; even an enabled callback refuses dispatch with a clear 503.
+Offline signature tests and separately bounded polling remain available. In
+LIVE_SERVER the Resend readiness preview requires the exact VPS callback and all
+existing credentials/enablement gates. Public routing remains unverified until
+tested. `/ready` refuses invalid server/action configuration and cross-server
+operational database mismatches; it never automatically chooses production
+credentials. Development deployment is pinned to ubuntu@securecode-dev.
+
+The separate proposed VPS upgrade, exact-path Nginx exception, verification and
+rollback checkpoint are in
+[deployment/RESEND-LIVE-ROUTING-PLAN.md](deployment/RESEND-LIVE-ROUTING-PLAN.md).
+That plan has not been applied. No callback has been registered and no VPS
+deployment, production migration or provider activation occurred in this task.

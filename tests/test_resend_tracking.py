@@ -29,6 +29,7 @@ def event():
 
 
 def setup(monkeypatch):
+    monkeypatch.setenv("SERVER_MODE", "LIVE_SERVER")
     monkeypatch.setenv("RESEND_TRACKING_ENABLED", "1")
     monkeypatch.setenv("RESEND_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("RESEND_SENDER", "uriel@securecodeusa.com")
