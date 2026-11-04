@@ -90,6 +90,7 @@ class ReviewNoStoreMiddleware:
             _is_review_path(path)
             or _is_review_queue_path(path)
             or _is_identity_review_path(path)
+            or path.startswith('/wondrue/api/')
         ):
             await self.app(scope, receive, send)
             return

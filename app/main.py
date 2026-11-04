@@ -21,6 +21,7 @@ from app.routes.wondrue import router as wondrue_router
 from app.routes.tracking_ingress import router as tracking_ingress_router
 from app.routes.resend_tracking import router as resend_tracking_router
 from app.routes.public import router as public_router
+from app.routes.wondrue_cockpit import router as cockpit_router
 
 
 def create_app() -> FastAPI:
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     application.include_router(identity_reviews_router)
     application.include_router(readiness_router)
     application.include_router(properties_router)
+    application.include_router(cockpit_router)
     application.include_router(wondrue_router)
     application.include_router(tracking_ingress_router)
     application.include_router(resend_tracking_router)

@@ -1,5 +1,88 @@
 # 🌱 Grow Up
 
+## Current Wondrue browser contract — November 4, 2026
+
+This section supersedes historical direct-execution examples below. `/wondrue`
+is the owner cockpit; `/wondrue/legacy` preserves the original interface and
+`/wondrue/handoff-demo` preserves the isolated synthetic viewer. The public FAQ
+landing and CSR are unchanged. Wondrue remains behind the existing owner gateway.
+
+The responsive shell includes a collapsible navigation rail, New Chat, server-side
+conversation persistence/search, retained-record Library, Hold for Human Review,
+and an account/safeguards menu. Ctrl+K searches; Ctrl+Shift+S toggles the sidebar.
+Mobile navigation overlays the page. Chat uses deterministic retained-record
+inspection, not a new language model or invented findings. It makes no provider
+calls. Library records are the latest dossier/qualification/Raphael/custody rows
+in the selected server database; the synthetic catalogue uses its separate viewer.
+Retained agent tasks are explicitly marked as retained tasks: their original
+status alone does not establish the current owner-resolution state.
+
+Operational changes from the browser must pass the durable review queue.
+Direct full-mode execution, approval-token redemption and live inference on the
+legacy command/extraction routes are refused. The underlying agent/inference
+services and their tests remain available to separately authorized callers.
+Existing internal agent automation is not rerouted through chat.
+
+Only four internal actions are enabled in the cockpit executor: prepare an owner
+brief, prepare/complete Elmer intake, and record an administrative owner exception
+decision. Each proposal binds an exact retained dossier version/digest, explicit
+arguments, operation ID, reason and later owner choice (approve/reject/defer).
+Changed evidence or a stale review digest refuses execution. A durable dispatch
+claim precedes the separately audited agent call. An interruption or failure stays
+`dispatch_claimed`/`needs_reconciliation`; no automatic retry is offered. Inspect
+the recorded operation ID in the existing agent audit before reconciliation.
+Approval never authenticates a claim, overrides Raphael or permits external actions.
+Acquisition, model calls, emails, contracts and general dispatch are not enabled by
+this screen. The legacy synthetic in-memory reset remains explicitly isolated.
+
+Cockpit endpoints under `/wondrue/api/` require a valid existing owner session or
+Wondrue reader/operator credential. Saving and decisions require operator access
+and a matching Origin. Responses, including authentication errors, are no-store.
+No API keys are stored in browser storage. Chat saves create workspace artifacts
+and audit events, not dossier versions. Append-only history is preserved; no chat
+hard-delete feature is offered. Searches/pages and conversations are bounded.
+
+### Isolated Wondrue hypotheticals
+
+Sandbox execution defaults disabled. After deploying reviewed code on an approved
+host, `sudo /usr/bin/python3 /var/www/growup/current/deployment/setup-wondrue-sandbox.py --apply`
+provisions only `growup_wondrue_sandbox` / `growup_sandbox`. It preserves existing
+credentials in root-only `wondrue-sandbox.env`, tests effective role restrictions,
+checks zero operational-table privileges and callable elevated business functions,
+and runs an offline storage/evaluator proof before enabling the separate connector.
+No operational schema, data or grants are changed. Failed proof leaves execution
+disabled. The application has no operational-database fallback for sandbox storage.
+
+From a Library dossier, “Explore a hypothetical” copies **only its source
+run/key/version/digest reference**. Full dossiers, owner/contact information and
+verified classifications are not copied. User-entered quantities are explicitly
+assumed and evaluated by the existing pure Onesimus passive-Kratky calculator.
+Missing inputs remain incomplete. Results and assumptions are append-only in the
+separate database, with idempotent IDs and no update/delete privilege. This is not
+a verified engineering stage, production database clone or path to promotion.
+No models, acquisition, messages, construction or financial promises are involved.
+Saved scenarios are available in the account safeguards view. Disable execution
+by setting `WONDRUE_SANDBOX_ENABLED=0` in the private sandbox environment and
+restarting only Grow Up. Never put the sandbox password in Git or chat.
+
+### Focused validation and rollback
+
+`python -B -m pytest tests/test_wondrue_workspace.py tests/test_wondrue.py tests/test_wondrue_ops.py tests/test_inference_assist.py -q -p no:cacheprovider`
+checks persistence/replay, review binding, stale evidence, interrupted dispatch,
+permissions, legacy execution refusal, sandbox sanitization and retained capability
+services. No provider calls. The PostgreSQL proof is restricted to `growup_mvp_gate`:
+`sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-wondrue-workspace.py`.
+It additionally exercises real search/Library SQL and concurrent approval claims
+with external network blocked. No full regression suite is required for this UI task.
+
+Preserve the previous release for rollback, and preserve all workspace/audit rows.
+Disabling the sandbox does not delete hypothetical history. Reverting to a release
+before this change also restores its older browser execution permissions, so do
+not treat that as a security-equivalent rollback. No SQL migrations are required
+for the cockpit's existing workflow store; sandbox DDL affects only its new database.
+Native mobile/store applications remain deferred; this milestone is browser-based.
+
+
 ## Agent workflow decisions — November 3, 2026
 
 The required forward business route is **Michael → Uriel → Priscilla → Nicole**.
@@ -4376,7 +4459,7 @@ property stopped), `analyze_evidence` (citation-checked conflicts, gaps,
 research questions), and `explain_economics` (labeled Michael figures
 explained); with a prepared package, send `draft_outreach` (draft copy
 that never sends); with owner-supplied pages, post
-`POST /wondrue/assist/extract` (page-validated claims, unverified).
+`POST /wondrue/assist/extract` (historical interface; execution retired by the current cockpit contract above).
 All are consequential (ask-with-token or full, never read-only) and
 spend at most one model call each from the shared budget; without
 `use_live`, labeled replays rehearse the same shapes for free.

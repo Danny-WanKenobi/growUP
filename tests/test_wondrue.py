@@ -418,8 +418,8 @@ def test_route_ask_preview_and_approve() -> None:
             "approval_token": body["approval_token"],
         },
     )
-    assert done.status_code == 200
-    assert done.json()["data"]["summary"]["decision"] == "authorized"
+    assert done.status_code == 403
+    assert DEMO.runs == {}  # Legacy approval tokens cannot bypass the durable review queue.
 
 
 def test_route_full_demo_and_labels() -> None:
@@ -431,30 +431,23 @@ def test_route_full_demo_and_labels() -> None:
             "intent": {"intent": "start_demo", "args": {"run_key": "demo-route2"}},
         },
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["data"]["label"] == DEMO_LABEL
-    assert body["data"]["summary"]["synthetic"] is True
+    assert resp.status_code == 403
+    assert DEMO.runs == {}
 
 
 def test_route_unknown_intent_rejected() -> None:
     resp = client.post(
         "/wondrue/command",
         headers=_OPERATOR_HEADERS,
-        json={"mode": "full", "target": "demo", "intent": {"intent": "launch", "args": {}}},
+        json={"mode": "read-only", "target": "demo", "intent": {"intent": "launch", "args": {}}},
     )
     assert resp.status_code == 422
 
 
 def test_route_demo_reset() -> None:
-    client.post(
-        "/wondrue/command",
-        headers=_OPERATOR_HEADERS,
-        json={
-            "mode": "full", "target": "demo",
-            "intent": {"intent": "start_demo", "args": {"run_key": "demo-reset1"}},
-        },
-    )
+    # The isolated in-memory fixture still has its explicit reset route.
+    handle_command(mode="full",max_mode="full",text="",target="demo",store=DEMO,
+                   intent_override={"intent":"start_demo","args":{"run_key":"demo-reset1"}})
     assert DEMO.runs
     resp = client.post("/wondrue/demo/reset", headers=_OPERATOR_HEADERS)
     assert resp.status_code == 200
@@ -507,8 +500,8 @@ def test_route_real_start_without_database_is_503(monkeypatch) -> None:
             },
         },
     )
-    assert resp.status_code == 503
-    assert resp.json()["detail"] == "database_unavailable"
+    assert resp.status_code == 403
+    assert "Hold for Human Review" in resp.json()["detail"]
 
 
 class _RouteConn:
@@ -569,7 +562,7 @@ def test_route_rolls_back_when_command_writes_then_raises(monkeypatch) -> None:
     resp = client.post(
         "/wondrue/command",
         headers=_OPERATOR_HEADERS,
-        json={"mode": "full", "target": "real", "text": "hi"},
+        json={"mode": "read-only", "target": "real", "text": "hi"},
     )
     assert resp.status_code == 400
     (conn,) = conns
@@ -596,7 +589,7 @@ def test_route_failed_commit_is_503_with_rollback(monkeypatch) -> None:
     resp = client.post(
         "/wondrue/command",
         headers=_OPERATOR_HEADERS,
-        json={"mode": "full", "target": "real", "text": "hi"},
+        json={"mode": "read-only", "target": "real", "text": "hi"},
     )
     assert resp.status_code == 503
     assert resp.json()["detail"] == "database_unavailable"
@@ -623,7 +616,7 @@ def test_route_commits_once_on_success(monkeypatch) -> None:
     resp = client.post(
         "/wondrue/command",
         headers=_OPERATOR_HEADERS,
-        json={"mode": "full", "target": "real", "text": "hi"},
+        json={"mode": "read-only", "target": "real", "text": "hi"},
     )
     assert resp.status_code == 200
     (conn,) = conns
@@ -731,7 +724,7 @@ def test_route_demo_reset_requires_auth() -> None:
 
 
 def test_route_page_marks_modes() -> None:
-    resp = client.get("/wondrue")
+    resp = client.get("/wondrue/legacy")
     assert resp.status_code == 200
     text = resp.text
     assert DEMO_LABEL in text
@@ -742,7 +735,7 @@ def test_route_page_marks_modes() -> None:
 def test_route_page_serves_valid_template() -> None:
     import re
 
-    resp = client.get("/wondrue")
+    resp = client.get("/wondrue/legacy")
     assert resp.status_code == 200
     text = resp.text
     # No unrendered doubled braces: the page is static, not formatted.

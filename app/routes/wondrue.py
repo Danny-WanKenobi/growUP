@@ -71,6 +71,8 @@ def post_command(body: CommandRequest, request: Request) -> dict[str, Any]:
     confers no authority.
     """
     grant = wondrue_grant(request)
+    if body.mode == 'full' or body.approval_token or body.use_live:
+        raise HTTPException(403, 'Operational execution is available only through Hold for Human Review; legacy inspection remains available.')
     principal = "wondrue-operator" if grant == "full" else "wondrue-reader"
     conn = None
     if body.target == "real":
@@ -151,6 +153,8 @@ def post_assist_extract(body: ExtractRequest, request: Request) -> dict[str, Any
     from app.wondrue import APPROVALS, MODES
 
     grant = wondrue_grant(request)
+    if body.mode == 'full' or body.approval_token or body.use_live:
+        raise HTTPException(403, 'Document extraction execution is disabled in the legacy cockpit; no provider call was made.')
     principal = "wondrue-operator" if grant == "full" else "wondrue-reader"
     if body.mode not in MODES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown mode")
@@ -488,7 +492,7 @@ restoreProfile();
 """
 
 
-@router.get("/wondrue", response_class=HTMLResponse)
+@router.get("/wondrue/legacy", response_class=HTMLResponse)
 def get_page() -> str:
     """Serve the compact Wondrue interface (static page; no user echo)."""
     return _PAGE.replace("__DEMO_LABEL__", html.escape(DEMO_LABEL))

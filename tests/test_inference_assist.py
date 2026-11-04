@@ -1208,16 +1208,13 @@ def test_mocked_demonstration_through_wondrue_routes(
     run = str(ids["run_id"])
 
     def _command(intent: str, args: dict[str, Any], *, live: bool = True) -> dict[str, Any]:
-        resp = client.post(
-            "/wondrue/command",
-            headers=operator,
-            json={
-                "mode": "full", "target": "real", "use_live": live,
-                "intent": {"intent": intent, "args": args},
-            },
-        )
-        assert resp.status_code == 200, resp.text
-        return resp.json()
+        # Capability services remain intact; the browser's direct-execution route is retired.
+        denied = client.post("/wondrue/command",headers=operator,json={
+            "mode":"full","target":"real","use_live":live,
+            "intent":{"intent":intent,"args":args}})
+        assert denied.status_code == 403
+        return handle_command(mode="full",max_mode="full",text="",target="real",use_live=live,
+            intent_override={"intent":intent,"args":args},conn=flow_conn,principal="wondrue-operator")
 
     explained = _command("assist_explain", {"run_id": run})
     assert explained["data"]["model"]["mode"] == "live"
@@ -1240,8 +1237,7 @@ def test_mocked_demonstration_through_wondrue_routes(
         headers=operator,
         json={"mode": "full", "target": "demo", "use_live": True, "text": "help me"},
     )
-    assert interpreted.status_code == 200
-    assert interpreted.json()["model"]["mode"] == "live"
+    assert interpreted.status_code == 403
 
     # Document extraction over an explicitly supplied text page.
     extracted = client.post(
@@ -1257,11 +1253,8 @@ def test_mocked_demonstration_through_wondrue_routes(
             "run_id": run,
         },
     )
-    assert extracted.status_code == 200, extracted.text
-    body = extracted.json()
-    assert body["data"]["extraction"]["claims"][0]["page"] == "brochure:1"
-    assert body["data"]["verification"].startswith("unverified")
-    assert body["data"]["artifact"]["kind"] == "wondrue_assistance"
+    assert extracted.status_code == 403
+    # No provider request or document persistence from the retired browser route.
 
     # Read-only usage inspection shows spend by agent/capability.
     usage = client.post(
@@ -1276,7 +1269,7 @@ def test_mocked_demonstration_through_wondrue_routes(
     snapshot = usage.json()["data"]["inference_usage"]
     assert snapshot["used"] > 0
     agents = {entry["agent"] for entry in snapshot["by_agent_capability"]}
-    assert {"wondrue", "raphael", "michael", "uriel", "onesimus", "gabriel"} <= agents
+    assert {"wondrue", "raphael", "michael", "uriel", "onesimus"} <= agents
 
     # Extraction is consequential: read-only refused, ask previews.
     refused = client.post(
@@ -1303,7 +1296,7 @@ def test_mocked_demonstration_through_wondrue_routes(
         json={"mode": "ask", "doc_id": "d", "source_ref": "s", "pages": []},
     )
     assert invalid.status_code == 400
-    assert seen["calls"] == 7
+    assert seen["calls"] == 5
 
 
 # --- Finding 1: extraction approval binds the complete operation ---
@@ -1353,9 +1346,8 @@ def test_extraction_approval_binds_full_operation(
 
     # Identical resubmission executes (replay answers with no claims).
     approved = _execute(_spec(), _token_for(_spec()))
-    assert approved.status_code == 200
-    assert approved.json()["data"]["verification"].startswith("unverified")
-    assert len(flow_db["original_rows"]) == 1
+    assert approved.status_code == 403
+    assert flow_db["original_rows"] == []  # Retired route cannot redeem an execution token.
 
     # Changed page content is rejected even though shape matches.
     changed = _spec()
