@@ -693,7 +693,7 @@ python -m app.migrate           # apply SQL migrations in filename order
 uvicorn app.main:app --port 8001
 ```
 
-Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for simulated external execution, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), `SABBATH_BLACKOUT` (default `1`) for the discovery runner's Friday-evening-to-Saturday-evening pause window, and `DCAD_COLLECTION_ENABLED` / `DCAD_ALLOWED_ACCOUNTS` for bounded DCAD collection (both default closed), plus `CENSUS_COLLECTION_ENABLED` for bounded Census county admission (default closed).
+Configuration lives in environment variables (see `.env.example`): `DATABASE_*` for PostgreSQL, `INTAKE_API_KEY` / `RESEARCH_API_KEY` for route authentication, `BRAVE_SEARCH_API_KEY` and `BRAVE_MONTHLY_CEILING` for research spend, `MVP_WORKFLOW_ENABLED=1` to switch on the real-property workflow entry points (off by default), `META_API_URL` (Baseten base or full chat-completions endpoint) / `META_API_KEY` / `META_MODEL` (`meta-models/muse-spark-open-1026`) / `META_SPEND_APPROVED` / `META_MAX_TOKENS` / `META_TIMEOUT_SECONDS` / `META_MAX_RESPONSE_BYTES` for Meta inference, plus `INFERENCE_TOKEN_ALLOWANCE` (default `0` = live disabled) / `INFERENCE_USD_PER_1M_INPUT` / `INFERENCE_USD_PER_1M_OUTPUT` / `INFERENCE_PRICING_MULTIPLIER` / `INFERENCE_PRICING_STATUS` / `INFERENCE_PRICING_SOURCE` / `INFERENCE_PRICING_DATE` (required provisional pricing basis; the retired `INFERENCE_USD_PER_1K_TOKENS` must stay unset) / `INFERENCE_DEMO_RESERVE` / `INFERENCE_LARGE_BATCH_TOKENS` / `INFERENCE_TOKENS_PER_IMAGE` / `INFERENCE_MAX_PROMPT_CHARS` / `INFERENCE_MAX_CONCURRENT` for the shared inference budget (live calls refused unless spending is approved, allowance granted, and pricing configured), `DEMO_MODE` (`yes` default / `no`; anything else rejected) for simulated external execution, `EMERGENCY_DIAGNOSTIC_DEMO` for the restricted post-pilot synthetic fallback, `CUSTODY_HMAC_KEY` for receipt authentication, `CUSTODY_AMENDERS` for the amendment authorizer allowlist (empty refuses all amendments), `WONDRUE_OPERATOR_KEY` / `WONDRUE_READER_KEY` for cockpit credentials (operator grants the full mode range, reader grants read-only), `SABBATH_BLACKOUT` (default `1`) for the shared Jerusalem astronomical-dusk Sabbath pause window, and `DCAD_COLLECTION_ENABLED` / `DCAD_ALLOWED_ACCOUNTS` for bounded DCAD collection (both default closed), plus `CENSUS_COLLECTION_ENABLED` for bounded Census county admission (default closed).
 
 **Permanent search priority (owner directive 2026-11-02):** Gabriel searches in one fixed nationwide sequence, installed in app/agents/gabriel/search_priority.py over config/search_priority.json (2020 Census basis): (1) DFW Metroplex county-by-county in the existing DFW order, (2) Houston Metroplex (12 most populous counties), (3) remaining Texas metros by principal-city population descending, (4) every remaining state by state population descending, each front being that state most populous city metroplex, then (5) restart at DFW with the next cycle. A front advances only when attempt-complete (quota met or legitimate sources exhausted; owner-selected trigger). The order is permanent; metro county sets resolve through batch-geography datasets and report geography_data_required where a dataset is not yet present rather than inventing counties. Gabriel discovery, qualification, and geography derivation contain no DEMO_MODE branch: demo/live parity for Gabriel is pinned by contract test (tests/test_search_priority.py), while the separate synthetic demonstration harness (app/demo.py) and Priscilla simulated events remain labeled simulations outside Gabriel. Checks: python -m pytest -q tests/test_search_priority.py.
 
@@ -4036,12 +4036,19 @@ ownership fencing (owner token + heartbeat; a stalled row is adopted
 only after its lease lapses, and stop requests keep the slot so no
 second worker overlaps an in-flight pass), checkpointed evaluations
 that are never re-driven once terminal, and a Sabbath guard that
-refuses/pauses inside an owner-configured blackout evaluated in
-`America/Chicago` (`SABBATH_BLACKOUT`, `SABBATH_START`, `SABBATH_END`;
-defaults Fri 18:00–Sat 20:00 Chicago). The window is a configured
-approximation, not an astronomical sundown calculation — adjust it for
-the season, and set `SABBATH_BLACKOUT=0` only with explicit operator
-authorization. Without `tzdata` the guard fails closed.
+refuses/pauses from Friday astronomical dusk through Saturday astronomical dusk
+in `Asia/Jerusalem`. `app/sabbath.py` calculates the solar-centre -18 degree
+crossing offline for 31.778 N, 35.235 E using NOAA/Meeus solar geometry. This is
+the owner's definition of complete evening twilight, not ordinary disk sunset or
+a religious-calendar ruling. Seasonal changes and Israel DST follow IANA tzdata.
+Starts round down and ends up to whole minutes. It is a calculated level-horizon
+estimate, not a measurement of clouds, terrain or actual sky brightness. Missing
+timezone data or failed calculations stop work. Only explicit `SABBATH_BLACKOUT=0`
+disables it; retired `SABBATH_START` / `SABBATH_END` values cannot override it.
+Sources: [USNO twilight definitions](https://aa.usno.navy.mil/faq/RST_defs) and
+[NOAA solar geometry](https://gml.noaa.gov/grad/solcalc/calcdetails.html).
+The read-only command `python -B -m app.sabbath` displays the calculated window.
+No runtime network calls, new dependencies, spending or database changes are needed.
 
 Every created id is enqueued in a durable evaluation backlog
 (checkpoint `backlog`, saved before any per-pass cap applies), and
@@ -5943,11 +5950,10 @@ vault comparison is checked in the existing vault test.
 runtime database except `growup_dev` as `growup_app`; it does not target production,
 the synthetic demo database or the PostgreSQL gate database. Tests use disposable
 gate records through the transaction-level helper only. The emergency stop and
-existing owner-configured Sabbath guard are checked before connecting and between
-dossiers. Dates are derived from the aware worker clock in America/Chicago;
-missing timezone data fails closed through the shared blackout guard. The Sabbath
-window remains the configured clock approximation, not an astronomical sunset
-calculation; keep its existing seasonal configuration accurate.
+shared Jerusalem astronomical-dusk Sabbath guard are checked before connecting
+and between dossiers. Asset accounting dates remain derived from the aware worker
+clock in America/Chicago; the blackout uses Asia/Jerusalem independently. Missing
+timezone data or a failed dusk calculation closes the shared blackout guard.
 
 The development timer runs 2 minutes after boot and every 15 minutes after the
 previous invocation finishes. Each cycle examines at most 20 latest, tracked,

@@ -17,7 +17,7 @@ def test_disabled_emergency_and_sabbath_do_not_connect(monkeypatch):
     monkeypatch.setenv('ASSET_MONITOR_ENABLED','1');monkeypatch.setenv('MVP_WORKFLOW_ENABLED','1');monkeypatch.setenv('DOSSIER_COORDINATOR_EMERGENCY_STOP','1')
     assert monitor.cycle(clock=lambda:NOW)['status']=='paused'
     monkeypatch.delenv('DOSSIER_COORDINATOR_EMERGENCY_STOP');monkeypatch.setenv('SABBATH_BLACKOUT','1')
-    assert monitor.cycle(clock=lambda:datetime(2026,11,7,18,tzinfo=timezone.utc))['status']=='paused'
+    assert monitor.cycle(clock=lambda:datetime(2026,11,7,16,tzinfo=timezone.utc))['status']=='paused'
 
 
 class MonitorCursor(Cursor):

@@ -264,67 +264,13 @@ TIMED_TWO_HOUR_PRESET = {
 }
 
 
-SABBATH_TZ = "America/Chicago"
-SABBATH_START_ENV = "SABBATH_START"
-SABBATH_END_ENV = "SABBATH_END"
-SABBATH_DEFAULT_START = "fri 18:00"
-SABBATH_DEFAULT_END = "sat 20:00"
-_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
-
-
-def _sabbath_endpoint(raw: str, name: str) -> int:
-    """Parse 'day HH:MM' into minutes since Monday 00:00 (strict)."""
-    parts = str(raw or "").strip().lower().split()
-    if len(parts) != 2 or parts[0] not in _WEEKDAYS:
-        raise RunnerError(f"{name} must look like 'fri 18:00'")
-    clock = parts[1].split(":")
-    if len(clock) != 2 or not clock[0].isdigit() or not clock[1].isdigit():
-        raise RunnerError(f"{name} must look like 'fri 18:00'")
-    hour, minute = int(clock[0]), int(clock[1])
-    if hour > 23 or minute > 59:
-        raise RunnerError(f"{name} must look like 'fri 18:00'")
-    return _WEEKDAYS[parts[0]] * 1440 + hour * 60 + minute
+from app.sabbath import SABBATH_TZ
 
 
 def _sabbath_blackout(now: datetime | None = None) -> bool:
-    """Owner-configured Sabbath blackout evaluated in America/Chicago.
-
-    The window is an explicit operator approximation (default Friday
-    18:00 through Saturday 20:00 Chicago time), NOT an astronomical
-    sundown calculation: the owner adjusts SABBATH_START/SABBATH_END
-    for the season rather than trusting a fixed clock time to precede
-    sundown year-round. Naive datetimes are interpreted as Chicago
-    time. Disable only with explicit SABBATH_BLACKOUT=0. When the
-    timezone database is unavailable the guard fails closed (blackout).
-    """
-    if os.getenv("SABBATH_BLACKOUT", "1").strip() == "0":
-        return False
-    try:
-        from zoneinfo import ZoneInfo
-    except ImportError:  # pragma: no cover - stdlib present, data maybe not
-        return True
-    try:
-        chicago = ZoneInfo(SABBATH_TZ)
-    except Exception:
-        return True
-    try:
-        start = _sabbath_endpoint(
-            os.getenv(SABBATH_START_ENV, SABBATH_DEFAULT_START), SABBATH_START_ENV
-        )
-        end = _sabbath_endpoint(
-            os.getenv(SABBATH_END_ENV, SABBATH_DEFAULT_END), SABBATH_END_ENV
-        )
-    except RunnerError:
-        return True
-    current = now or datetime.now(tz=chicago)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=chicago)
-    else:
-        current = current.astimezone(chicago)
-    minute = current.weekday() * 1440 + current.hour * 60 + current.minute
-    if start <= end:
-        return start <= minute < end
-    return minute >= start or minute < end
+    """Shared Jerusalem astronomical-dusk guard; no runtime network lookup."""
+    from app.sabbath import blackout
+    return blackout(now)
 
 
 def _is_auth_error(exc: BaseException) -> bool:

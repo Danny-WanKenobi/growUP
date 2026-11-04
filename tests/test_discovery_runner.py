@@ -637,38 +637,33 @@ def test_worker_exits_when_ownership_lost_mid_pass() -> None:
     assert db["runs"][0]["status"] == "running"
 
 
-def test_sabbath_uses_chicago_time(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sabbath_uses_jerusalem_astronomical_dusk(monkeypatch):
     from app.discovery_runner import _sabbath_blackout
+    from app.sabbath import window_for_week
+    from datetime import date, timedelta
+    monkeypatch.delenv('SABBATH_BLACKOUT',raising=False)
+    start,end=window_for_week(date(2026,11,6))
+    assert not _sabbath_blackout(start-timedelta(microseconds=1))
+    assert _sabbath_blackout(start)
+    assert _sabbath_blackout(end-timedelta(microseconds=1))
+    assert not _sabbath_blackout(end)
+    # A Chicago timestamp and a Jerusalem timestamp naming the same instant agree.
+    from zoneinfo import ZoneInfo
+    assert _sabbath_blackout(start.astimezone(ZoneInfo('America/Chicago')))
+    assert _sabbath_blackout(datetime(2026,11,6,18,30))
+    assert not _sabbath_blackout(datetime(2026,11,9,12))
 
-    monkeypatch.delenv("SABBATH_BLACKOUT", raising=False)
-    monkeypatch.delenv("SABBATH_START", raising=False)
-    monkeypatch.delenv("SABBATH_END", raising=False)
-    friday = datetime(2026, 10, 30, tzinfo=timezone.utc)
-    # 17:30 CDT (UTC-5) on Friday: before the window.
-    assert _sabbath_blackout(friday.replace(hour=22, minute=30)) is False
-    # 18:30 CDT on Friday: inside the window.
-    assert _sabbath_blackout(friday.replace(hour=23, minute=30)) is True
-    # Naive datetimes are interpreted as Chicago time.
-    assert _sabbath_blackout(datetime(2026, 10, 30, 17, 30)) is False
-    assert _sabbath_blackout(datetime(2026, 10, 30, 18, 30)) is True
-    assert _sabbath_blackout(datetime(2026, 10, 31, 12, 0)) is True
-    assert _sabbath_blackout(datetime(2026, 11, 2, 12, 0)) is False
 
-
-def test_sabbath_window_configurable_and_fail_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_sabbath_retired_clocks_cannot_override_and_calculation_failure_closes(monkeypatch):
+    from app import sabbath
     from app.discovery_runner import _sabbath_blackout
-
-    monkeypatch.delenv("SABBATH_BLACKOUT", raising=False)
-    monkeypatch.setenv("SABBATH_START", "sun 00:00")
-    monkeypatch.setenv("SABBATH_END", "sun 01:00")
-    assert _sabbath_blackout(datetime(2026, 11, 1, 0, 30)) is True
-    assert _sabbath_blackout(datetime(2026, 11, 2, 12, 0)) is False
-    monkeypatch.setenv("SABBATH_START", "bogus")
-    assert _sabbath_blackout(datetime(2026, 11, 2, 12, 0)) is True
-    monkeypatch.setenv("SABBATH_BLACKOUT", "0")
-    assert _sabbath_blackout(datetime(2026, 10, 31, 12, 0)) is False
+    monkeypatch.setenv('SABBATH_START','sun 00:00')
+    monkeypatch.setenv('SABBATH_END','bogus')
+    assert not _sabbath_blackout(datetime(2026,11,1,0,30))
+    monkeypatch.setattr(sabbath,'window_for_week',lambda day: (_ for _ in ()).throw(ValueError('unavailable')))
+    assert _sabbath_blackout(datetime(2026,11,2,12))
+    monkeypatch.setenv('SABBATH_BLACKOUT','0')
+    assert not _sabbath_blackout(datetime(2026,11,2,12))
 
 
 @needs_live_pg
