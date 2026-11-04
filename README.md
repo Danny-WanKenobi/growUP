@@ -6712,3 +6712,6 @@ redirect HTTP 8080 to standard HTTPS; the live 443 UI then redirects to canonica
 
 The CSR PostgreSQL proof also exercises the parameterized queue-recovery scan.
 The recovery timer is enabled only after its first service invocation succeeds.
+
+The no-secret Resend readiness report distinguishes CSR-only intake readiness and
+CSR draft/live reply mode from the separately disabled general tracking gateway.

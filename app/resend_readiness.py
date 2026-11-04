@@ -94,6 +94,13 @@ def inspect(environ=None):
         "direct_mailbox_routing_enabled":env.get("RESEND_MAILBOX_ROUTING_ENABLED", "0")=="1",
         "direct_mailbox_delivery_implemented":False,
         "receiving_read_api_key_installed":bool(env.get("RESEND_RECEIVING_API_KEY","")),
+        "csr_public_enabled":env.get("CSR_PUBLIC_ENABLED","0")=="1",
+        "csr_email_intake_enabled":env.get("CSR_EMAIL_ENABLED","0")=="1",
+        "csr_email_intake_configuration_complete":bool(env.get("CSR_EMAIL_ENABLED","0")=="1"
+            and env.get("RESEND_MAILBOX_ROUTING_ENABLED","0")=="1" and target.callback_available
+            and secret_ready and receiving_ready and valid_url),
+        "csr_email_reply_mode":"live_inbound_reply" if env.get("DEMO_MODE","yes")=="no"
+            and env.get("CSR_EMAIL_DELIVERY_APPROVED","0")=="1" else "draft_only",
         "webhook_configuration_complete":not blockers, "polling_configuration_complete":not poll_blockers, "polling_blockers":poll_blockers,
         "public_reachability_verified":False, "live_provider_compatibility_verified":False,
         "provider_calls":0, "database_writes":0,
