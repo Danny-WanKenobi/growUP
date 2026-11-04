@@ -6709,3 +6709,6 @@ screenshot QA is not claimed. A public empty favicon response prevents incidenta
 browser icon requests from invoking private Basic auth. Cloudflare may first
 redirect HTTP 8080 to standard HTTPS; the live 443 UI then redirects to canonical
 8443 while exempting the registered signed callback.
+
+The CSR PostgreSQL proof also exercises the parameterized queue-recovery scan.
+The recovery timer is enabled only after its first service invocation succeeds.

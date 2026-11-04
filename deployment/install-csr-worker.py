@@ -51,8 +51,8 @@ def main():
         if path.exists():(backup/name).write_bytes(path.read_bytes())
         path.write_text(text);os.chmod(path,0o644)
     subprocess.run(['systemctl','daemon-reload'],check=True)
-    subprocess.run(['systemctl','enable','--now','growup-csr.timer'],check=True)
     subprocess.run(['systemctl','start','growup-csr.service'],check=True)
+    subprocess.run(['systemctl','enable','--now','growup-csr.timer'],check=True)
     print('CSR recovery timer installed. Live delivery flags and action mode unchanged. Stop: systemctl disable --now growup-csr.timer')
 
 

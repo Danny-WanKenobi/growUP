@@ -145,9 +145,10 @@ def drain_web(limit=20):
         with conn.cursor() as cur:
             cur.execute("SELECT run_id,record_key FROM (SELECT DISTINCT ON(run_id,record_key) "
                 "run_id,record_key,payload FROM workflow_records WHERE kind='research_artifact' "
-                "AND record_key LIKE 'message:%' AND run_id IN (SELECT run_id FROM workflow_runs "
-                "WHERE idempotency_key LIKE 'csr-session:%') ORDER BY run_id,record_key,version DESC) q "
-                "WHERE payload->>'status' IN ('queued','processing') AND (payload->>'attempts')::int<3 LIMIT %(limit)s",{'limit':min(limit,20)})
+                "AND record_key LIKE %(message_prefix)s AND run_id IN (SELECT run_id FROM workflow_runs "
+                "WHERE idempotency_key LIKE %(session_prefix)s) ORDER BY run_id,record_key,version DESC) q "
+                "WHERE payload->>'status' IN ('queued','processing') AND (payload->>'attempts')::int<3 LIMIT %(limit)s",
+                {'limit':min(limit,20),'message_prefix':'message:%','session_prefix':'csr-session:%'})
             jobs=cur.fetchall()
     def process(job):
         rid=str(job['run_id']); mid=job['record_key'].split(':',1)[1]

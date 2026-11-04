@@ -147,3 +147,6 @@ def test_pg_csr_worker_contention_persistence_and_appointments(monkeypatch):
     assert appointment is not None
     assert appointment['status']=='tentative_reserved'
     assert csr.transaction('test_appointment',lambda conn:csr.reserve_appointment(conn,identity,request_id,'simeon',when.isoformat(),'test@example.test'))==appointment
+    # Exercise the actual parameterized queue-recovery query, not only job helpers.
+    csr.transaction('test_queued',lambda conn:csr.enqueue(conn,identity,str(uuid4()),'What is Grow Up?'))
+    assert csr.drain_web()['inspected']>=1
