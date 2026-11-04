@@ -6715,3 +6715,10 @@ The recovery timer is enabled only after its first service invocation succeeds.
 
 The no-secret Resend readiness report distinguishes CSR-only intake readiness and
 CSR draft/live reply mode from the separately disabled general tracking gateway.
+
+The November 4 CSR email proof received a real owner greeting through the signed
+Resend callback, authenticated/retrieved its body, and retained a draft with zero
+send claims under DEMO_MODE. Greeting/FAQ matching ignores client signatures for
+classification while preserving the complete original message. A corrected draft
+appended version 2 and preserved the original review history. Existing demo drafts
+are not automatically released by a later switch to live delivery.

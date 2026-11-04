@@ -21,17 +21,21 @@ FAQS = [
 def answer(text):
     """Deterministic FAQ matching, with explicit escalation rather than invention."""
     import re
+    # Classify the new inquiry, not client signatures or quoted reply history.
+    # Full authenticated content remains retained separately by email intake.
+    text=re.split(r'\n\s*(?:Sent with\b|On [^\n]+wrote:)',text,maxsplit=1,flags=re.IGNORECASE)[0]
     words=set(re.findall(r'[a-z]+',text.lower()))
     normalized=' '.join(re.findall(r'[a-z]+',text.lower()))
+    if words & {'urgent','emergency','hazard','unsafe'}:
+        return {'text':'I cannot assess an emergency or authorize work. Please use the appropriate local emergency or qualified site-response service. I can retain your concern for owner review.', 'escalate':'human_owner'}
     for index,(question,response) in enumerate(FAQS,1):
-        if normalized==' '.join(re.findall(r'[a-z]+',question.lower())):
+        expected=' '.join(re.findall(r'[a-z]+',question.lower()))
+        if normalized==expected or normalized.startswith(expected+' '):
             return {'text':response,'faq':index,'escalate':None}
-    if words and words <= {'hi','hello','hey','there','thanks','thank','you'}:
+    if words and words <= {'hi','hello','hey','there','thanks','thank','you','csr','grow','up','care'}:
         return {'text':'Hello! I’m Grow Up Care. Ask me about Grow Up, preliminary farm concepts, evidence requirements or how to reach Simeon or Solomon.', 'escalate':None}
     target = 'solomon' if words & {'construction','contractor','solomon','procurement','site'} else (
         'simeon' if words & {'simeon','deal','closing','offer','contract','proposal','opportunity'} else None)
-    if words & {'urgent','emergency','hazard','unsafe'}:
-        return {'text':'I cannot assess an emergency or authorize work. Please use the appropriate local emergency or qualified site-response service. I can retain your concern for owner review.', 'escalate':'human_owner'}
     if target:
         name=target.title()
         return {'text':f'I have recorded this for {name} review. You can also contact {target}@growup.securecodeusa.com. No agreement, booking or work authorization is created by this conversation.', 'escalate':target}

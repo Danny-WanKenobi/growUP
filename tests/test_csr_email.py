@@ -22,6 +22,7 @@ def detail():
 
 def test_inbound_csr_process_retains_draft_and_never_sends_in_demo(store,monkeypatch):
     source=detail()
+    source['text']='Hello, CSR!!!\n\nSent with [Proton Mail](https://proton.me/mail/home) secure email.'
     result=mailbox_routing.receive(store,metadata={**source,'email_id':source['id']},event_id='test',body_digest='x',authentication='resend_authenticated_api')
     assert result['mailbox']=='csr'
     csr_email.enqueue(store,{**source,'email_id':source['id']})
@@ -33,6 +34,7 @@ def test_inbound_csr_process_retains_draft_and_never_sends_in_demo(store,monkeyp
         return source
     monkeypatch.setattr(csr_email,'http',fake)
     assert csr_email.process(run.run_id)['status']=='draft_only'
+    assert 'Hello!' in csr.read(store,run.run_id,'csr-reply-draft').payload['text']
     assert csr_email.process(run.run_id)['status']=='already_complete_or_leased'
     assert calls==['fetch']
 
@@ -43,6 +45,8 @@ def test_auto_reply_suppression_and_html_sanitizing(store):
                     {'from':'csr@growup.securecodeusa.com'},{'authentication':None}):
         assert not csr_email.eligible({**source,**changes})
     assert csr_email.plain({'text':None,'html':'<script>danger</script><p>Hello</p>'}).strip()=='Hello'
+    from app.public_faq import answer
+    assert answer('What is Grow Up?\n\nSent with Proton Mail secure email.')['faq']==1
 
 
 def test_send_claim_is_durable_and_sender_cooldown_prevents_loops(store):
