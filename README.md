@@ -4906,7 +4906,9 @@ an operator attestation of an existing send receipt, not independent API retriev
 not permission to send, and not proof of delivery. It appends a prepared event,
 which contributes no delivery count, plus a permanent audit in the same transaction.
 
-Set `RESEND_SENDER=uriel@securecodeusa.com` and `RESEND_RECEIVING_DOMAIN` to the
+The following alias enrollment describes the existing campaign-tracking path;
+the named-mailbox intake below also accepts first-contact messages without an
+existing campaign. Set `RESEND_SENDER=uriel@growup.securecodeusa.com` and `RESEND_RECEIVING_DOMAIN` to the
 exact receiving domain shown by Resend (a Resend-managed `<id>.resend.app`
 domain may be used). For each outbound message, generate a fresh random UUID
 and use `reply-<32 lowercase UUID hex characters>@<receiving domain>` as its
@@ -6340,3 +6342,71 @@ has been sent. Actual receiving-domain/signing-secret setup and the still-missin
 outbound transport remain explicit follow-up work. The development instance uses
 DEV_SERVER; root-owned tool installation/explicit environment configuration may
 require the owner's local dev-console command described in the deployment guide.
+
+### Direct mailboxes — offline-verified, activation disabled
+
+`app/mailbox_routing.py` adds a direct-mailbox branch to the existing authenticated
+Resend intake, using the same workflow records, advisory locks, integrity checks,
+and consequential audit transaction. No migration or second event gateway is needed.
+Both `RESEND_TRACKING_ENABLED=1` and `RESEND_MAILBOX_ROUTING_ENABLED=1` are required
+for direct callback processing. Keep both disabled until the activation checkpoint.
+The VPS registration and privately installed signing secret do not enable this code.
+
+Use `RESEND_RECEIVING_DOMAIN=growup.securecodeusa.com`. Named addresses are:
+
+- `uriel@`: system-owned unattended-mailbox notice draft directing the sender to
+  `simeon@`; Uriel receives no conversation response authority. Known self-mail,
+  bounce and no-reply senders suppress the notice. All notices remain unsent.
+- `simeon@`: inbound-owned conversation and response drafts; an existing inbound
+  UUID is required, so this endpoint cannot initiate unsolicited contact.
+- `solomon@`: inbound construction conversation and response drafts. Initiating
+  construction proposals and actual transport are not implemented by this endpoint.
+- Unknown recipients, mail outside the configured domain, or multiple local
+  recipients are retained for human review, with no guessed agent/dossier binding.
+
+Webhook message UUIDs deduplicate retries across delivery IDs. Conflicting sender,
+recipient or subject material is refused, preserving prior records. Metadata-only
+callbacks never become verified owner identity, message-body evidence or interest.
+Existing `reply-<uuid>@` aliases still use exact campaign enrollment and sender checks.
+Direct intake does not invent Priscilla campaign/conversion events.
+
+Private operator endpoint: `POST /integrations/resend/mailboxes` (Wondrue full grant;
+not part of the public Nginx webhook exception). Request fields:
+`conversation_id` (retained inbound provider UUID), `action` (`inspect`, `draft`,
+`request_uriel_followup`), and for mutations `expected_revision` plus bounded `text`.
+`inspect` shows retained state and an optional notice; `draft` is available only
+for Simeon/Solomon. The emergency stop blocks mutations. Revision checks reject
+stale concurrent actions. All action records append; none rewrite inbound evidence.
+
+Simeon's `request_uriel_followup` retains notes and the exact inbound-record digest
+as a request requiring a dossier link and campaign review. It does NOT move canonical
+custody, infer that a lead is cold, start outreach, or override suppression. Complete
+linked-dossier rework and multi-message thread correlation remain separate work.
+
+No send adapter is called or provided here. Before activating any future unattended
+notice sender, retrieve authenticated full headers and suppress Auto-Submitted,
+list/bounce messages; enforce per-sender limits, recipient suppression, durable send
+idempotency and action-mode policy. Metadata alone cannot prove loop safety. No
+signed documents, construction action, agreement or owner permission is inferred.
+
+Focused offline validation (no providers or database credentials):
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_mailbox_routing.py tests/test_resend_tracking.py tests/test_communications.py tests/test_resend_readiness.py -q -p no:cacheprovider
+```
+
+Fake-store tests exercise signed HTTP intake through the real parser/router, retries,
+conflicting identities, ownership, notice suppression, reply-only drafts, cold-lead
+requests, stale revisions, emergency stops and operator access. PostgreSQL persistence,
+real provider payload compatibility and delivery remain unproven for the new branch.
+
+Predeployment PostgreSQL proof: stage the committed source plus reviewed mailbox
+changes on securecode-dev, then run `sudo /usr/bin/python3
+<staged-source>/deployment/prove-mailbox-routing.py`. This owner-run helper uses
+the active development virtual environment without installing or activating the
+staged source. It forces localhost and `growup_mvp_gate`, refuses other hosts,
+blocks external network access and runs one targeted test. The test verifies
+fresh-connection persistence, concurrent duplicate intake, stale-write refusal,
+append-only drafts/rework notes, mailbox ownership, and atomic rollback when the
+audit insert fails. It retains fresh-UUID fixtures/audit history in the gate DB.
+An actual passing Ubuntu result is required before claiming this proof complete.

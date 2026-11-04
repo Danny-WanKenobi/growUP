@@ -10,6 +10,7 @@ from app.db import DatabaseNotConfiguredError, DatabaseUnavailableError
 from app.priscilla import PriscillaError
 from app import resend_tracking as service
 from app.routes.tracking_ingress import _unique_pairs
+from app.workflow_db import WorkflowError
 
 router = APIRouter(tags=["resend-tracking"])
 MAX_BODY = 32768
@@ -35,8 +36,32 @@ async def dispatch(action, principal, inputs):
         return await run_in_threadpool(service.audited, action, principal, inputs)
     except (DatabaseNotConfiguredError, DatabaseUnavailableError):
         raise HTTPException(503, "tracking_storage_unavailable") from None
-    except (PriscillaError, ValueError, TypeError, AttributeError):
+    except (PriscillaError, WorkflowError, ValueError, TypeError, AttributeError):
         raise HTTPException(409, "resend_correlation_refused") from None
+
+
+class MailboxCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    conversation_id: str = Field(min_length=36, max_length=36)
+    action: str = Field(pattern="^(inspect|draft|request_uriel_followup)$")
+    expected_revision: int | None = Field(default=None, ge=1)
+    text: str | None = Field(default=None, min_length=1, max_length=8000)
+
+
+@router.post("/integrations/resend/mailboxes")
+async def mailbox_command(body: MailboxCommand, request: Request):
+    enabled()
+    if wondrue_grant(request) != "full":
+        raise HTTPException(403, "operator_required")
+    if os.getenv("RESEND_MAILBOX_ROUTING_ENABLED", "0") != "1":
+        raise HTTPException(404, "mailbox_routing_disabled")
+    from app.mailbox_routing import audited
+    try:
+        return await run_in_threadpool(audited, "wondrue-operator", body.model_dump())
+    except (DatabaseNotConfiguredError, DatabaseUnavailableError):
+        raise HTTPException(503, "mailbox_storage_unavailable") from None
+    except (WorkflowError, PriscillaError, ValueError, TypeError, AttributeError):
+        raise HTTPException(409, "mailbox_operation_refused") from None
 
 
 @router.post("/integrations/resend/enroll")
