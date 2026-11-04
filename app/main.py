@@ -25,6 +25,7 @@ from app.routes.wondrue_cockpit import router as cockpit_router
 from app.routes.wondrue_workbench import router as workbench_router
 from app.routes.owner_evidence import router as evidence_router
 from app.routes.owner_development import router as owner_development_router
+from app.routes.demo_tour import router as demo_tour_router
 from app.routes.guided_demo_review import router as guided_review_router
 
 
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     application.include_router(workbench_router)
     application.include_router(evidence_router)
     application.include_router(owner_development_router)
+    application.include_router(demo_tour_router)
     application.include_router(guided_review_router)
     application.include_router(wondrue_router)
     application.include_router(tracking_ingress_router)

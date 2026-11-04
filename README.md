@@ -244,6 +244,100 @@ Implementation: `evidence_workbench`, `document_worker`, `refresh_workflow`,
 owner rework, linked reassessment, canonical custody and calculator services.
 Rolling back hides new controls while retaining original evidence and all history.
 
+### Wondrue isolated narrated demonstration
+
+Open **https://growup.local:8443/wondrue/demo-tour** after preparation. From the
+ordinary cockpit, typing “Give me a comprehensive tour of Grow Up” opens the
+separate page before creating an operational chat turn. The tour page itself loads
+only its own assets and `/wondrue/api/demo-tour` endpoints. It never loads the
+operational chat, Library, property or review APIs. Authentication still uses the
+existing private gateway; the tour connector requires `growup_handoff_demo` as
+`growup_demo` with its distinct HMAC key and has no operational credential fallback.
+Each read rechecks the prepared dossier digests and canonical custody chains;
+changed sources/holders stop the tour rather than presenting stale proof. A host
+without that isolated database/configuration reports unavailable; the VPS
+operational database is never substituted. Public callbacks/outreach are unchanged.
+
+A one-time read-only candidate selection found zero properties in `growup_prod`
+and 44 existing real development records in `growup_dev`. Four sanitized address
+references were copied into reviewed static seeds: Dallas high-rise, commercial
+and warehouse examples plus Seattle commercial. They are recreated with fresh
+synthetic identities in the isolated demo database; original IDs survive only as
+reference metadata. No runtime source-DB connection is needed. The copied category
+is unverified metadata. All invented dimensions, financial assumptions, consent,
+verification and specialist inputs are explicitly labeled synthetic. Real addresses
+do not imply real vacancy, distress, suitability, client relationships or approval.
+
+The prepared package exercises these four derivatives plus the existing 16 fictional
+US cases through shared calculations/checkpoints/custody. Successful and rejected
+cases remain inspectable, including Hudson’s room economics, Elm Fork’s owner
+lifecycle and outdoor food-forest evidence gaps. Outdoor admission remains honest;
+a fictional lot is not silently treated as an indoor Kratky warehouse. Historical
+demo runs and all operational dossiers remain unchanged.
+
+The **Expansion story** separately stores a fictional plan for 1,230 Texas
+incorporated places and 49 other-state flagship slots. Texas geography comes from
+Census ACS26 incorporated-place data dated January 1, 2026, with retained source URL
+and SHA-256. It includes cities/towns/villages, not every unincorporated community.
+These slots are not executed projects. Actual tallest-building identities are not
+established; some places may have no skyscraper at all. Tenant incentives, vacancy,
+distress, relocation and nonrenewal scenarios are fictional and remain subject to
+consent, lease and legal constraints. No tenant action is authorized.
+
+Seven tailored simulated robotics proposals/counterproposals/contract outcomes name
+Agility Robotics, Apptronik, Tesla, Figure AI, Boston Dynamics, Unitree Robotics and
+UBTECH Robotics, following the owner’s supplied reference. Every outcome says
+SIMULATED. No actual contact, quotation, endorsement, agreement, availability or
+construction suitability is established. Solomon’s synthetic reports retain this
+context; no procurement or communications adapter is activated.
+
+The runtime **Reference library** includes nine source entries with reviewed,
+secondary, unavailable or access-blocked status, plus 39 PDF bibliography links
+marked not independently verified. The two supplied bibliographies are privately
+downloadable. Consequential assumptions remain separate from these references.
+The selected Kratky and Food Forest Abundance baselines are retained; aeroponics,
+recirculating systems, promotional savings and financial guarantees are not silently
+substituted. These are cited reference materials attached to synthetic agent reports,
+not retrained model weights or authenticated property evidence. Market trends and
+recovery counterevidence must remain distinguishable from individual-property facts.
+
+**Start four-minute tour** presents ten chapters, about 560 words, with 24-second
+minimum chapter pacing; an unusually slow device voice can extend the duration.
+Stop, pause/resume, previous/next, references, expansion and typed commands work
+without any speech provider. Pause/resume restarts the current chapter. Local browser
+voices are preferred. Microphone input requires a click and browser permission; local
+recognition is requested when supported. Browser speech services that may transmit
+audio/text require the explicitly labeled opt-in. Unsupported/denied microphone or
+missing voices leave the text tour available. No automatic microphone activation or
+paid speech adapter is installed. Actual microphone, speaker, browser recognition
+availability and natural speech duration depend on the recording browser/device;
+voice scope is tour commands, not unrestricted operational command execution.
+
+Preparation/proof on the development VM:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prepare-demo-tour.py --prove
+```
+
+The helper uses the root-private existing demo environment, denies external network
+access, runs only `tests/test_demo_tour.py`, prepares bounded scenarios and writes a
+sanitized proof to `/home/ubuntu/growup-demo-tour-proof.json`. Repeating the identical
+package reuses its deterministic keys; conflicting retained manifests fail closed.
+Read-only tour requests never build records. No migration, database fallback, real
+email, model call, contract, construction or operational business write is involved.
+
+Implementation: `demo_story`, `demo_tour`, `demo_knowledge`, the private
+`routes/demo_tour` router, standalone tour assets and reviewed static seeds/geography/
+reference files in `config/demo_story`. Focused validation also covers existing
+`test_demo_catalogue.py` and `test_guided_demo_review.py`: 33 passed, one PG-gated
+skip locally. Ubuntu passed seven tour checks and persisted/proved all 20 cases
+using actual isolated PostgreSQL custody services. Browser QA verified text controls,
+reference links, local Microsoft Zira playback start and 390px layout. Microphone
+permission/capture on the recording device and a complete timed audible rehearsal
+remain user/device checks; no recording was made. No full regression suite was run.
+The real-evidence gap and positive real-property execution milestone are deferred
+until after the demo; the narrative never claims they were completed.
+
 ### Evidence validity and competing-claim review
 
 From an attachment’s **Extract, correct & route evidence** screen, open

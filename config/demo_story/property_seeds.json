@@ -1,0 +1,55 @@
+{
+  "synthetic_derivatives_only": true,
+  "live_vps_properties_found": 0,
+  "development_real_properties_found": 44,
+  "seeds": [
+    {
+      "id": "1190b9ac-2be2-4f2e-8954-d4b985f2d84b",
+      "name": "1401 COMMERCE ST, DALLAS",
+      "street_address": "1401 COMMERCE ST",
+      "city": "DALLAS",
+      "state": "TX",
+      "zip_code": "752014901",
+      "category": "high_rise",
+      "snapshot_sha256": "add9165bc7b7ec0d95c290cf0436327e59703dcb60e058ced1258ed732092b5a",
+      "source_database": "growup_dev",
+      "source_kind": "unverified_operational_discovery_metadata"
+    },
+    {
+      "id": "2b695de7-df0f-46d8-85b7-23057de40753",
+      "name": "2023 CADIZ ST, DALLAS",
+      "street_address": "2023 CADIZ ST",
+      "city": "DALLAS",
+      "state": "TX",
+      "zip_code": "752015701",
+      "category": "warehouse_industrial",
+      "snapshot_sha256": "3829d621e84c8df40c95816373af9d223ee39f1c1f95c6a2ded075fa23955d16",
+      "source_database": "growup_dev",
+      "source_kind": "unverified_operational_discovery_metadata"
+    },
+    {
+      "id": "223a7305-f949-43a5-8510-7b6df5456167",
+      "name": "2106 MAIN ST, DALLAS",
+      "street_address": "2106 MAIN ST",
+      "city": "DALLAS",
+      "state": "TX",
+      "zip_code": "75201",
+      "category": "commercial_property",
+      "snapshot_sha256": "87d8c85d53ae963bc0edbaf7f332581b28cee8847eeafc0d4dedc535d9da31f7",
+      "source_database": "growup_dev",
+      "source_kind": "unverified_operational_discovery_metadata"
+    },
+    {
+      "id": "0404c1be-fe20-49f8-8cdc-2235e2afecda",
+      "name": "909 4TH AVE, SEATTLE",
+      "street_address": "909 4TH AVE",
+      "city": "SEATTLE",
+      "state": "WA",
+      "zip_code": "98104",
+      "category": "commercial_property",
+      "snapshot_sha256": "c054fa4c449cac67f20b1b88a1879bad0ef8db25c219919b744e2f0c2760239a",
+      "source_database": "growup_dev",
+      "source_kind": "unverified_operational_discovery_metadata"
+    }
+  ]
+}

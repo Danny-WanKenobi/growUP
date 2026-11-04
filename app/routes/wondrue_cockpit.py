@@ -55,7 +55,7 @@ def page():
 
 @router.get('/wondrue/assets/{name}')
 def asset(name:str):
-    if name not in ('shell.css','shell.js','guided-review.js','workbench.js','evidence.js','owner-tools.js'):raise HTTPException(404)
+    if name not in ('shell.css','shell.js','guided-review.js','workbench.js','evidence.js','owner-tools.js','demo-tour.css','demo-tour.js'):raise HTTPException(404)
     return FileResponse(ASSETS/name,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
 
 

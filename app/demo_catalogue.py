@@ -31,7 +31,8 @@ CASES=(
 def get_case(id):
     if id is None: return None
     from app.workflow_db import WorkflowError
-    item=next((c for c in CASES if c['id']==id),None)
+    from app.demo_story import seed_cases
+    item=next((c for c in (*CASES,*seed_cases()) if c['id']==id),None)
     if item is None: raise WorkflowError('unknown synthetic property scenario')
     return deepcopy(item)
 
@@ -44,6 +45,16 @@ def catalogue():
 def apply(payload,profile,verification):
     dossier=payload['dossier'];dossier.update(name='FICTIONAL '+profile['name'],street_address=profile['address'],city=profile['city'],state=profile['state'],demo_scenario=deepcopy(profile))
     dossier['category_attribution']={'status':'observed','observed':profile['property_type']}
+    from app.demo_knowledge import library
+    from app.workflow import digest_payload
+    context=library()
+    dossier['reference_materials']={'library_digest':digest_payload(context),'method':context['method'],
+        'references':context['references'],'policy':context['policy']}
+    from app.demo_story import program
+    dossier['simulated_robotics_program']=program()['robotics']
+    if profile.get('real_reference'):
+        dossier['reference_copy']=deepcopy(profile['real_reference'])
+        dossier['synthetic_augmentation']=deepcopy(profile['synthetic_augmentation'])
     payload['candidate_verification']=verification
     inputs=dossier['specialist_inputs']
     inputs['nicole']['jurisdiction']['value'].update(city=profile['city'],state=profile['state'])

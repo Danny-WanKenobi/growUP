@@ -280,6 +280,11 @@ def _report(agent, payload, fail_at):
     else:
         report = build_report(agent,payload)
         ok = not report["missing"]
+    dossier=payload['dossier']
+    if agent in ('onesimus','michael','solomon') and dossier.get('reference_materials'):
+        report['reference_context']=deepcopy(dossier['reference_materials'])
+    if agent=='solomon' and dossier.get('simulated_robotics_program'):
+        report['simulated_robotics_program']=deepcopy(dossier['simulated_robotics_program'])
     report = marked(report)
     report.update(agent=agent,source_dossier_digest=payload["digest"],
         checkpoint="GO" if ok else "NO-GO",

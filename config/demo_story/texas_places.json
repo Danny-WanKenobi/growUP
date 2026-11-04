@@ -1,0 +1,6158 @@
+{
+  "source_url": "https://tigerweb.geo.census.gov/tigerwebmain/Files/acs26/tigerweb_acs26_incplace_tx.html",
+  "source_sha256": "332b8bf8fb3becd5b95f20b86c2fbe7c166add04e95a561eee022f0d8b7ca6c2",
+  "source_as_of": "2026-01-01",
+  "scope": "Census incorporated places, including cities/towns/villages; not unincorporated communities. Geography only, not building evidence.",
+  "places": [
+    {
+      "geoid": "4800100",
+      "name": "Abbott",
+      "legal_name": "Abbott city"
+    },
+    {
+      "geoid": "4800160",
+      "name": "Abernathy",
+      "legal_name": "Abernathy city"
+    },
+    {
+      "geoid": "4801000",
+      "name": "Abilene",
+      "legal_name": "Abilene city"
+    },
+    {
+      "geoid": "4801108",
+      "name": "Ackerly",
+      "legal_name": "Ackerly city"
+    },
+    {
+      "geoid": "4801240",
+      "name": "Addison",
+      "legal_name": "Addison town"
+    },
+    {
+      "geoid": "4801324",
+      "name": "Adrian",
+      "legal_name": "Adrian city"
+    },
+    {
+      "geoid": "4801396",
+      "name": "Agua Dulce",
+      "legal_name": "Agua Dulce city"
+    },
+    {
+      "geoid": "4801600",
+      "name": "Alamo Heights",
+      "legal_name": "Alamo Heights city"
+    },
+    {
+      "geoid": "4801576",
+      "name": "Alamo",
+      "legal_name": "Alamo city"
+    },
+    {
+      "geoid": "4801636",
+      "name": "Alba",
+      "legal_name": "Alba town"
+    },
+    {
+      "geoid": "4801648",
+      "name": "Albany",
+      "legal_name": "Albany city"
+    },
+    {
+      "geoid": "4801744",
+      "name": "Aledo",
+      "legal_name": "Aledo city"
+    },
+    {
+      "geoid": "4801852",
+      "name": "Alice",
+      "legal_name": "Alice city"
+    },
+    {
+      "geoid": "4801924",
+      "name": "Allen",
+      "legal_name": "Allen city"
+    },
+    {
+      "geoid": "4802044",
+      "name": "Alma",
+      "legal_name": "Alma town"
+    },
+    {
+      "geoid": "4802104",
+      "name": "Alpine",
+      "legal_name": "Alpine city"
+    },
+    {
+      "geoid": "4802188",
+      "name": "Alto",
+      "legal_name": "Alto town"
+    },
+    {
+      "geoid": "4802212",
+      "name": "Alton",
+      "legal_name": "Alton city"
+    },
+    {
+      "geoid": "4802260",
+      "name": "Alvarado",
+      "legal_name": "Alvarado city"
+    },
+    {
+      "geoid": "4802272",
+      "name": "Alvin",
+      "legal_name": "Alvin city"
+    },
+    {
+      "geoid": "4802284",
+      "name": "Alvord",
+      "legal_name": "Alvord town"
+    },
+    {
+      "geoid": "4803000",
+      "name": "Amarillo",
+      "legal_name": "Amarillo city"
+    },
+    {
+      "geoid": "4803072",
+      "name": "Ames",
+      "legal_name": "Ames city"
+    },
+    {
+      "geoid": "4803084",
+      "name": "Amherst",
+      "legal_name": "Amherst city"
+    },
+    {
+      "geoid": "4803144",
+      "name": "Anahuac",
+      "legal_name": "Anahuac city"
+    },
+    {
+      "geoid": "4803192",
+      "name": "Anderson",
+      "legal_name": "Anderson city"
+    },
+    {
+      "geoid": "4803216",
+      "name": "Andrews",
+      "legal_name": "Andrews city"
+    },
+    {
+      "geoid": "4803264",
+      "name": "Angleton",
+      "legal_name": "Angleton city"
+    },
+    {
+      "geoid": "4803288",
+      "name": "Angus",
+      "legal_name": "Angus city"
+    },
+    {
+      "geoid": "4803300",
+      "name": "Anna",
+      "legal_name": "Anna city"
+    },
+    {
+      "geoid": "4803340",
+      "name": "Annetta North",
+      "legal_name": "Annetta North town"
+    },
+    {
+      "geoid": "4803342",
+      "name": "Annetta South",
+      "legal_name": "Annetta South city"
+    },
+    {
+      "geoid": "4803336",
+      "name": "Annetta",
+      "legal_name": "Annetta town"
+    },
+    {
+      "geoid": "4803360",
+      "name": "Annona",
+      "legal_name": "Annona town"
+    },
+    {
+      "geoid": "4803372",
+      "name": "Anson",
+      "legal_name": "Anson city"
+    },
+    {
+      "geoid": "4803432",
+      "name": "Anthony",
+      "legal_name": "Anthony town"
+    },
+    {
+      "geoid": "4803540",
+      "name": "Anton",
+      "legal_name": "Anton city"
+    },
+    {
+      "geoid": "4803564",
+      "name": "Appleby",
+      "legal_name": "Appleby city"
+    },
+    {
+      "geoid": "4803588",
+      "name": "Aquilla",
+      "legal_name": "Aquilla city"
+    },
+    {
+      "geoid": "4803600",
+      "name": "Aransas Pass",
+      "legal_name": "Aransas Pass city"
+    },
+    {
+      "geoid": "4803696",
+      "name": "Archer City",
+      "legal_name": "Archer City city"
+    },
+    {
+      "geoid": "4803708",
+      "name": "Arcola",
+      "legal_name": "Arcola city"
+    },
+    {
+      "geoid": "4803768",
+      "name": "Argyle",
+      "legal_name": "Argyle city"
+    },
+    {
+      "geoid": "4804000",
+      "name": "Arlington",
+      "legal_name": "Arlington city"
+    },
+    {
+      "geoid": "4804156",
+      "name": "Arp",
+      "legal_name": "Arp city"
+    },
+    {
+      "geoid": "4804300",
+      "name": "Asherton",
+      "legal_name": "Asherton city"
+    },
+    {
+      "geoid": "4804408",
+      "name": "Aspermont",
+      "legal_name": "Aspermont town"
+    },
+    {
+      "geoid": "4804504",
+      "name": "Athens",
+      "legal_name": "Athens city"
+    },
+    {
+      "geoid": "4804516",
+      "name": "Atlanta",
+      "legal_name": "Atlanta city"
+    },
+    {
+      "geoid": "4804600",
+      "name": "Aubrey",
+      "legal_name": "Aubrey city"
+    },
+    {
+      "geoid": "4804672",
+      "name": "Aurora",
+      "legal_name": "Aurora city"
+    },
+    {
+      "geoid": "4805000",
+      "name": "Austin",
+      "legal_name": "Austin city"
+    },
+    {
+      "geoid": "4805036",
+      "name": "Austwell",
+      "legal_name": "Austwell city"
+    },
+    {
+      "geoid": "4805072",
+      "name": "Avery",
+      "legal_name": "Avery town"
+    },
+    {
+      "geoid": "4805084",
+      "name": "Avinger",
+      "legal_name": "Avinger town"
+    },
+    {
+      "geoid": "4805168",
+      "name": "Azle",
+      "legal_name": "Azle city"
+    },
+    {
+      "geoid": "4805264",
+      "name": "Bailey",
+      "legal_name": "Bailey city"
+    },
+    {
+      "geoid": "4805288",
+      "name": "Bailey's Prairie",
+      "legal_name": "Bailey's Prairie village"
+    },
+    {
+      "geoid": "4805336",
+      "name": "Baird",
+      "legal_name": "Baird city"
+    },
+    {
+      "geoid": "4805372",
+      "name": "Balch Springs",
+      "legal_name": "Balch Springs city"
+    },
+    {
+      "geoid": "4805384",
+      "name": "Balcones Heights",
+      "legal_name": "Balcones Heights city"
+    },
+    {
+      "geoid": "4805456",
+      "name": "Ballinger",
+      "legal_name": "Ballinger city"
+    },
+    {
+      "geoid": "4805468",
+      "name": "Balmorhea",
+      "legal_name": "Balmorhea city"
+    },
+    {
+      "geoid": "4805528",
+      "name": "Bandera",
+      "legal_name": "Bandera city"
+    },
+    {
+      "geoid": "4805552",
+      "name": "Bangs",
+      "legal_name": "Bangs city"
+    },
+    {
+      "geoid": "4805612",
+      "name": "Bardwell",
+      "legal_name": "Bardwell city"
+    },
+    {
+      "geoid": "4805708",
+      "name": "Barry",
+      "legal_name": "Barry city"
+    },
+    {
+      "geoid": "4805720",
+      "name": "Barstow",
+      "legal_name": "Barstow city"
+    },
+    {
+      "geoid": "4805732",
+      "name": "Bartlett",
+      "legal_name": "Bartlett city"
+    },
+    {
+      "geoid": "4805768",
+      "name": "Bartonville",
+      "legal_name": "Bartonville town"
+    },
+    {
+      "geoid": "4805864",
+      "name": "Bastrop",
+      "legal_name": "Bastrop city"
+    },
+    {
+      "geoid": "4805984",
+      "name": "Bay City",
+      "legal_name": "Bay City city"
+    },
+    {
+      "geoid": "4806060",
+      "name": "Bayou Vista",
+      "legal_name": "Bayou Vista city"
+    },
+    {
+      "geoid": "4806104",
+      "name": "Bayside",
+      "legal_name": "Bayside town"
+    },
+    {
+      "geoid": "4806128",
+      "name": "Baytown",
+      "legal_name": "Baytown city"
+    },
+    {
+      "geoid": "4806140",
+      "name": "Bayview",
+      "legal_name": "Bayview town"
+    },
+    {
+      "geoid": "4806200",
+      "name": "Beach City",
+      "legal_name": "Beach City city"
+    },
+    {
+      "geoid": "4806242",
+      "name": "Bear Creek",
+      "legal_name": "Bear Creek village"
+    },
+    {
+      "geoid": "4806272",
+      "name": "Beasley",
+      "legal_name": "Beasley city"
+    },
+    {
+      "geoid": "4807000",
+      "name": "Beaumont",
+      "legal_name": "Beaumont city"
+    },
+    {
+      "geoid": "4807108",
+      "name": "Beckville",
+      "legal_name": "Beckville city"
+    },
+    {
+      "geoid": "4807132",
+      "name": "Bedford",
+      "legal_name": "Bedford city"
+    },
+    {
+      "geoid": "4807144",
+      "name": "Bedias",
+      "legal_name": "Bedias city"
+    },
+    {
+      "geoid": "4807156",
+      "name": "Bee Cave",
+      "legal_name": "Bee Cave city"
+    },
+    {
+      "geoid": "4807192",
+      "name": "Beeville",
+      "legal_name": "Beeville city"
+    },
+    {
+      "geoid": "4807300",
+      "name": "Bellaire",
+      "legal_name": "Bellaire city"
+    },
+    {
+      "geoid": "4807396",
+      "name": "Bellevue",
+      "legal_name": "Bellevue city"
+    },
+    {
+      "geoid": "4807408",
+      "name": "Bellmead",
+      "legal_name": "Bellmead city"
+    },
+    {
+      "geoid": "4807420",
+      "name": "Bells",
+      "legal_name": "Bells town"
+    },
+    {
+      "geoid": "4807432",
+      "name": "Bellville",
+      "legal_name": "Bellville city"
+    },
+    {
+      "geoid": "4807492",
+      "name": "Belton",
+      "legal_name": "Belton city"
+    },
+    {
+      "geoid": "4807528",
+      "name": "Benavides",
+      "legal_name": "Benavides city"
+    },
+    {
+      "geoid": "4807552",
+      "name": "Benbrook",
+      "legal_name": "Benbrook city"
+    },
+    {
+      "geoid": "4807636",
+      "name": "Benjamin",
+      "legal_name": "Benjamin city"
+    },
+    {
+      "geoid": "4807852",
+      "name": "Berryville",
+      "legal_name": "Berryville town"
+    },
+    {
+      "geoid": "4807864",
+      "name": "Bertram",
+      "legal_name": "Bertram city"
+    },
+    {
+      "geoid": "4808104",
+      "name": "Beverly Hills",
+      "legal_name": "Beverly Hills city"
+    },
+    {
+      "geoid": "4808128",
+      "name": "Bevil Oaks",
+      "legal_name": "Bevil Oaks city"
+    },
+    {
+      "geoid": "4808212",
+      "name": "Big Lake",
+      "legal_name": "Big Lake city"
+    },
+    {
+      "geoid": "4808224",
+      "name": "Big Sandy",
+      "legal_name": "Big Sandy town"
+    },
+    {
+      "geoid": "4808236",
+      "name": "Big Spring",
+      "legal_name": "Big Spring city"
+    },
+    {
+      "geoid": "4808260",
+      "name": "Big Wells",
+      "legal_name": "Big Wells city"
+    },
+    {
+      "geoid": "4808398",
+      "name": "Bishop Hills",
+      "legal_name": "Bishop Hills town"
+    },
+    {
+      "geoid": "4808392",
+      "name": "Bishop",
+      "legal_name": "Bishop city"
+    },
+    {
+      "geoid": "4808488",
+      "name": "Blackwell",
+      "legal_name": "Blackwell city"
+    },
+    {
+      "geoid": "4808536",
+      "name": "Blanco",
+      "legal_name": "Blanco city"
+    },
+    {
+      "geoid": "4808596",
+      "name": "Blanket",
+      "legal_name": "Blanket town"
+    },
+    {
+      "geoid": "4808752",
+      "name": "Bloomburg",
+      "legal_name": "Bloomburg town"
+    },
+    {
+      "geoid": "4808788",
+      "name": "Blooming Grove",
+      "legal_name": "Blooming Grove town"
+    },
+    {
+      "geoid": "4808800",
+      "name": "Bloomington",
+      "legal_name": "Bloomington city"
+    },
+    {
+      "geoid": "4808812",
+      "name": "Blossom",
+      "legal_name": "Blossom city"
+    },
+    {
+      "geoid": "4808860",
+      "name": "Blue Mound",
+      "legal_name": "Blue Mound city"
+    },
+    {
+      "geoid": "4808872",
+      "name": "Blue Ridge",
+      "legal_name": "Blue Ridge city"
+    },
+    {
+      "geoid": "4809004",
+      "name": "Blum",
+      "legal_name": "Blum town"
+    },
+    {
+      "geoid": "4809160",
+      "name": "Boerne",
+      "legal_name": "Boerne city"
+    },
+    {
+      "geoid": "4809172",
+      "name": "Bogata",
+      "legal_name": "Bogata city"
+    },
+    {
+      "geoid": "4809328",
+      "name": "Bonham",
+      "legal_name": "Bonham city"
+    },
+    {
+      "geoid": "4809388",
+      "name": "Bonney",
+      "legal_name": "Bonney village"
+    },
+    {
+      "geoid": "4809448",
+      "name": "Booker",
+      "legal_name": "Booker town"
+    },
+    {
+      "geoid": "4809556",
+      "name": "Borger",
+      "legal_name": "Borger city"
+    },
+    {
+      "geoid": "4809628",
+      "name": "Bovina",
+      "legal_name": "Bovina city"
+    },
+    {
+      "geoid": "4809640",
+      "name": "Bowie",
+      "legal_name": "Bowie city"
+    },
+    {
+      "geoid": "4809748",
+      "name": "Boyd",
+      "legal_name": "Boyd town"
+    },
+    {
+      "geoid": "4809868",
+      "name": "Brackettville",
+      "legal_name": "Brackettville city"
+    },
+    {
+      "geoid": "4809916",
+      "name": "Brady",
+      "legal_name": "Brady city"
+    },
+    {
+      "geoid": "4810072",
+      "name": "Brazoria",
+      "legal_name": "Brazoria city"
+    },
+    {
+      "geoid": "4810090",
+      "name": "Brazos Country",
+      "legal_name": "Brazos Country city"
+    },
+    {
+      "geoid": "4810132",
+      "name": "Breckenridge",
+      "legal_name": "Breckenridge city"
+    },
+    {
+      "geoid": "4810144",
+      "name": "Bremond",
+      "legal_name": "Bremond city"
+    },
+    {
+      "geoid": "4810156",
+      "name": "Brenham",
+      "legal_name": "Brenham city"
+    },
+    {
+      "geoid": "4810197",
+      "name": "Briarcliff",
+      "legal_name": "Briarcliff village"
+    },
+    {
+      "geoid": "4810216",
+      "name": "Briaroaks",
+      "legal_name": "Briaroaks city"
+    },
+    {
+      "geoid": "4810252",
+      "name": "Bridge City",
+      "legal_name": "Bridge City city"
+    },
+    {
+      "geoid": "4810264",
+      "name": "Bridgeport",
+      "legal_name": "Bridgeport city"
+    },
+    {
+      "geoid": "4810384",
+      "name": "Broaddus",
+      "legal_name": "Broaddus town"
+    },
+    {
+      "geoid": "4810528",
+      "name": "Bronte",
+      "legal_name": "Bronte town"
+    },
+    {
+      "geoid": "4810636",
+      "name": "Brookshire",
+      "legal_name": "Brookshire city"
+    },
+    {
+      "geoid": "4810648",
+      "name": "Brookside Village",
+      "legal_name": "Brookside Village city"
+    },
+    {
+      "geoid": "4810708",
+      "name": "Browndell",
+      "legal_name": "Browndell city"
+    },
+    {
+      "geoid": "4810720",
+      "name": "Brownfield",
+      "legal_name": "Brownfield city"
+    },
+    {
+      "geoid": "4810756",
+      "name": "Brownsboro",
+      "legal_name": "Brownsboro city"
+    },
+    {
+      "geoid": "4810768",
+      "name": "Brownsville",
+      "legal_name": "Brownsville city"
+    },
+    {
+      "geoid": "4810780",
+      "name": "Brownwood",
+      "legal_name": "Brownwood city"
+    },
+    {
+      "geoid": "4810828",
+      "name": "Bruceville-Eddy",
+      "legal_name": "Bruceville-Eddy city"
+    },
+    {
+      "geoid": "4810912",
+      "name": "Bryan",
+      "legal_name": "Bryan city"
+    },
+    {
+      "geoid": "4810960",
+      "name": "Bryson",
+      "legal_name": "Bryson city"
+    },
+    {
+      "geoid": "4811020",
+      "name": "Buckholts",
+      "legal_name": "Buckholts town"
+    },
+    {
+      "geoid": "4811080",
+      "name": "Buda",
+      "legal_name": "Buda city"
+    },
+    {
+      "geoid": "4811128",
+      "name": "Buffalo Gap",
+      "legal_name": "Buffalo Gap town"
+    },
+    {
+      "geoid": "4811155",
+      "name": "Buffalo Springs Lake",
+      "legal_name": "Buffalo Springs Lake village"
+    },
+    {
+      "geoid": "4811116",
+      "name": "Buffalo",
+      "legal_name": "Buffalo city"
+    },
+    {
+      "geoid": "4811212",
+      "name": "Bullard",
+      "legal_name": "Bullard town"
+    },
+    {
+      "geoid": "4811224",
+      "name": "Bulverde",
+      "legal_name": "Bulverde city"
+    },
+    {
+      "geoid": "4811300",
+      "name": "Bunker Hill Village",
+      "legal_name": "Bunker Hill Village city"
+    },
+    {
+      "geoid": "4811368",
+      "name": "Burkburnett",
+      "legal_name": "Burkburnett city"
+    },
+    {
+      "geoid": "4811380",
+      "name": "Burke",
+      "legal_name": "Burke city"
+    },
+    {
+      "geoid": "4811428",
+      "name": "Burleson",
+      "legal_name": "Burleson city"
+    },
+    {
+      "geoid": "4811464",
+      "name": "Burnet",
+      "legal_name": "Burnet city"
+    },
+    {
+      "geoid": "4811536",
+      "name": "Burton",
+      "legal_name": "Burton city"
+    },
+    {
+      "geoid": "4811644",
+      "name": "Byers",
+      "legal_name": "Byers city"
+    },
+    {
+      "geoid": "4811656",
+      "name": "Bynum",
+      "legal_name": "Bynum city"
+    },
+    {
+      "geoid": "4811692",
+      "name": "Cactus",
+      "legal_name": "Cactus city"
+    },
+    {
+      "geoid": "4811716",
+      "name": "Caddo Mills",
+      "legal_name": "Caddo Mills city"
+    },
+    {
+      "geoid": "4811836",
+      "name": "Caldwell",
+      "legal_name": "Caldwell city"
+    },
+    {
+      "geoid": "4811968",
+      "name": "Callisburg",
+      "legal_name": "Callisburg city"
+    },
+    {
+      "geoid": "4811992",
+      "name": "Calvert",
+      "legal_name": "Calvert city"
+    },
+    {
+      "geoid": "4812040",
+      "name": "Cameron",
+      "legal_name": "Cameron city"
+    },
+    {
+      "geoid": "4812388",
+      "name": "Camp Wood",
+      "legal_name": "Camp Wood city"
+    },
+    {
+      "geoid": "4812112",
+      "name": "Campbell",
+      "legal_name": "Campbell city"
+    },
+    {
+      "geoid": "4812412",
+      "name": "Canadian",
+      "legal_name": "Canadian city"
+    },
+    {
+      "geoid": "4812472",
+      "name": "Caney City",
+      "legal_name": "Caney City town"
+    },
+    {
+      "geoid": "4812496",
+      "name": "Canton",
+      "legal_name": "Canton city"
+    },
+    {
+      "geoid": "4812532",
+      "name": "Canyon",
+      "legal_name": "Canyon city"
+    },
+    {
+      "geoid": "4812736",
+      "name": "Carbon",
+      "legal_name": "Carbon town"
+    },
+    {
+      "geoid": "4812895",
+      "name": "Carl's Corner",
+      "legal_name": "Carl's Corner town"
+    },
+    {
+      "geoid": "4812916",
+      "name": "Carmine",
+      "legal_name": "Carmine city"
+    },
+    {
+      "geoid": "4812988",
+      "name": "Carrizo Springs",
+      "legal_name": "Carrizo Springs city"
+    },
+    {
+      "geoid": "4813024",
+      "name": "Carrollton",
+      "legal_name": "Carrollton city"
+    },
+    {
+      "geoid": "4813108",
+      "name": "Carthage",
+      "legal_name": "Carthage city"
+    },
+    {
+      "geoid": "4813198",
+      "name": "Cashion Community",
+      "legal_name": "Cashion Community city"
+    },
+    {
+      "geoid": "4813276",
+      "name": "Castle Hills",
+      "legal_name": "Castle Hills city"
+    },
+    {
+      "geoid": "4813312",
+      "name": "Castroville",
+      "legal_name": "Castroville city"
+    },
+    {
+      "geoid": "4813492",
+      "name": "Cedar Hill",
+      "legal_name": "Cedar Hill city"
+    },
+    {
+      "geoid": "4813552",
+      "name": "Cedar Park",
+      "legal_name": "Cedar Park city"
+    },
+    {
+      "geoid": "4813672",
+      "name": "Celeste",
+      "legal_name": "Celeste city"
+    },
+    {
+      "geoid": "4813684",
+      "name": "Celina",
+      "legal_name": "Celina city"
+    },
+    {
+      "geoid": "4813732",
+      "name": "Center",
+      "legal_name": "Center city"
+    },
+    {
+      "geoid": "4813900",
+      "name": "Centerville",
+      "legal_name": "Centerville city"
+    },
+    {
+      "geoid": "4814224",
+      "name": "Chandler",
+      "legal_name": "Chandler city"
+    },
+    {
+      "geoid": "4814260",
+      "name": "Channing",
+      "legal_name": "Channing city"
+    },
+    {
+      "geoid": "4814404",
+      "name": "Charlotte",
+      "legal_name": "Charlotte city"
+    },
+    {
+      "geoid": "4814584",
+      "name": "Chester",
+      "legal_name": "Chester town"
+    },
+    {
+      "geoid": "4814620",
+      "name": "Chico",
+      "legal_name": "Chico city"
+    },
+    {
+      "geoid": "4814668",
+      "name": "Childress",
+      "legal_name": "Childress city"
+    },
+    {
+      "geoid": "4814680",
+      "name": "Chillicothe",
+      "legal_name": "Chillicothe city"
+    },
+    {
+      "geoid": "4814716",
+      "name": "China Grove",
+      "legal_name": "China Grove town"
+    },
+    {
+      "geoid": "4814704",
+      "name": "China",
+      "legal_name": "China city"
+    },
+    {
+      "geoid": "4814776",
+      "name": "Chireno",
+      "legal_name": "Chireno city"
+    },
+    {
+      "geoid": "4814860",
+      "name": "Christine",
+      "legal_name": "Christine town"
+    },
+    {
+      "geoid": "4814920",
+      "name": "Cibolo",
+      "legal_name": "Cibolo city"
+    },
+    {
+      "geoid": "4815004",
+      "name": "Cisco",
+      "legal_name": "Cisco city"
+    },
+    {
+      "geoid": "4815112",
+      "name": "Clarendon",
+      "legal_name": "Clarendon city"
+    },
+    {
+      "geoid": "4815172",
+      "name": "Clarksville City",
+      "legal_name": "Clarksville City city"
+    },
+    {
+      "geoid": "4815160",
+      "name": "Clarksville",
+      "legal_name": "Clarksville city"
+    },
+    {
+      "geoid": "4815196",
+      "name": "Claude",
+      "legal_name": "Claude city"
+    },
+    {
+      "geoid": "4815328",
+      "name": "Clear Lake Shores",
+      "legal_name": "Clear Lake Shores city"
+    },
+    {
+      "geoid": "4815364",
+      "name": "Cleburne",
+      "legal_name": "Cleburne city"
+    },
+    {
+      "geoid": "4815436",
+      "name": "Cleveland",
+      "legal_name": "Cleveland city"
+    },
+    {
+      "geoid": "4815472",
+      "name": "Clifton",
+      "legal_name": "Clifton city"
+    },
+    {
+      "geoid": "4815544",
+      "name": "Clint",
+      "legal_name": "Clint town"
+    },
+    {
+      "geoid": "4815652",
+      "name": "Clute",
+      "legal_name": "Clute city"
+    },
+    {
+      "geoid": "4815676",
+      "name": "Clyde",
+      "legal_name": "Clyde city"
+    },
+    {
+      "geoid": "4815700",
+      "name": "Coahoma",
+      "legal_name": "Coahoma town"
+    },
+    {
+      "geoid": "4815796",
+      "name": "Cockrell Hill",
+      "legal_name": "Cockrell Hill city"
+    },
+    {
+      "geoid": "4815820",
+      "name": "Coffee City",
+      "legal_name": "Coffee City town"
+    },
+    {
+      "geoid": "4815892",
+      "name": "Coldspring",
+      "legal_name": "Coldspring city"
+    },
+    {
+      "geoid": "4815916",
+      "name": "Coleman",
+      "legal_name": "Coleman city"
+    },
+    {
+      "geoid": "4815976",
+      "name": "College Station",
+      "legal_name": "College Station city"
+    },
+    {
+      "geoid": "4815988",
+      "name": "Colleyville",
+      "legal_name": "Colleyville city"
+    },
+    {
+      "geoid": "4816036",
+      "name": "Collinsville",
+      "legal_name": "Collinsville town"
+    },
+    {
+      "geoid": "4816048",
+      "name": "Colmesneil",
+      "legal_name": "Colmesneil city"
+    },
+    {
+      "geoid": "4816120",
+      "name": "Colorado City",
+      "legal_name": "Colorado City city"
+    },
+    {
+      "geoid": "4816168",
+      "name": "Columbus",
+      "legal_name": "Columbus city"
+    },
+    {
+      "geoid": "4816192",
+      "name": "Comanche",
+      "legal_name": "Comanche city"
+    },
+    {
+      "geoid": "4816204",
+      "name": "Combes",
+      "legal_name": "Combes town"
+    },
+    {
+      "geoid": "4816216",
+      "name": "Combine",
+      "legal_name": "Combine city"
+    },
+    {
+      "geoid": "4816240",
+      "name": "Commerce",
+      "legal_name": "Commerce city"
+    },
+    {
+      "geoid": "4816252",
+      "name": "Como",
+      "legal_name": "Como town"
+    },
+    {
+      "geoid": "4816432",
+      "name": "Conroe",
+      "legal_name": "Conroe city"
+    },
+    {
+      "geoid": "4816468",
+      "name": "Converse",
+      "legal_name": "Converse city"
+    },
+    {
+      "geoid": "4816540",
+      "name": "Cool",
+      "legal_name": "Cool city"
+    },
+    {
+      "geoid": "4816552",
+      "name": "Coolidge",
+      "legal_name": "Coolidge town"
+    },
+    {
+      "geoid": "4816564",
+      "name": "Cooper",
+      "legal_name": "Cooper city"
+    },
+    {
+      "geoid": "4816612",
+      "name": "Coppell",
+      "legal_name": "Coppell city"
+    },
+    {
+      "geoid": "4816636",
+      "name": "Copper Canyon",
+      "legal_name": "Copper Canyon town"
+    },
+    {
+      "geoid": "4816624",
+      "name": "Copperas Cove",
+      "legal_name": "Copperas Cove city"
+    },
+    {
+      "geoid": "4816696",
+      "name": "Corinth",
+      "legal_name": "Corinth city"
+    },
+    {
+      "geoid": "4817000",
+      "name": "Corpus Christi",
+      "legal_name": "Corpus Christi city"
+    },
+    {
+      "geoid": "4817021",
+      "name": "Corral City",
+      "legal_name": "Corral City town"
+    },
+    {
+      "geoid": "4817036",
+      "name": "Corrigan",
+      "legal_name": "Corrigan town"
+    },
+    {
+      "geoid": "4817060",
+      "name": "Corsicana",
+      "legal_name": "Corsicana city"
+    },
+    {
+      "geoid": "4817208",
+      "name": "Cottonwood Shores",
+      "legal_name": "Cottonwood Shores city"
+    },
+    {
+      "geoid": "4817200",
+      "name": "Cottonwood",
+      "legal_name": "Cottonwood city"
+    },
+    {
+      "geoid": "4817216",
+      "name": "Cotulla",
+      "legal_name": "Cotulla city"
+    },
+    {
+      "geoid": "4817312",
+      "name": "Coupland",
+      "legal_name": "Coupland city"
+    },
+    {
+      "geoid": "4817336",
+      "name": "Cove",
+      "legal_name": "Cove city"
+    },
+    {
+      "geoid": "4817372",
+      "name": "Covington",
+      "legal_name": "Covington city"
+    },
+    {
+      "geoid": "4817429",
+      "name": "Coyote Flats",
+      "legal_name": "Coyote Flats city"
+    },
+    {
+      "geoid": "4817504",
+      "name": "Crandall",
+      "legal_name": "Crandall city"
+    },
+    {
+      "geoid": "4817516",
+      "name": "Crane",
+      "legal_name": "Crane city"
+    },
+    {
+      "geoid": "4817540",
+      "name": "Cranfills Gap",
+      "legal_name": "Cranfills Gap city"
+    },
+    {
+      "geoid": "4817564",
+      "name": "Crawford",
+      "legal_name": "Crawford town"
+    },
+    {
+      "geoid": "4817612",
+      "name": "Creedmoor",
+      "legal_name": "Creedmoor city"
+    },
+    {
+      "geoid": "4817648",
+      "name": "Cresson",
+      "legal_name": "Cresson city"
+    },
+    {
+      "geoid": "4817744",
+      "name": "Crockett",
+      "legal_name": "Crockett city"
+    },
+    {
+      "geoid": "4817768",
+      "name": "Crosbyton",
+      "legal_name": "Crosbyton city"
+    },
+    {
+      "geoid": "4817816",
+      "name": "Cross Plains",
+      "legal_name": "Cross Plains town"
+    },
+    {
+      "geoid": "4817852",
+      "name": "Cross Roads",
+      "legal_name": "Cross Roads town"
+    },
+    {
+      "geoid": "4817917",
+      "name": "Cross Timber",
+      "legal_name": "Cross Timber town"
+    },
+    {
+      "geoid": "4817948",
+      "name": "Crowell",
+      "legal_name": "Crowell city"
+    },
+    {
+      "geoid": "4817960",
+      "name": "Crowley",
+      "legal_name": "Crowley city"
+    },
+    {
+      "geoid": "4818020",
+      "name": "Crystal City",
+      "legal_name": "Crystal City city"
+    },
+    {
+      "geoid": "4818092",
+      "name": "Cuero",
+      "legal_name": "Cuero city"
+    },
+    {
+      "geoid": "4818128",
+      "name": "Cumby",
+      "legal_name": "Cumby city"
+    },
+    {
+      "geoid": "4818152",
+      "name": "Cuney",
+      "legal_name": "Cuney town"
+    },
+    {
+      "geoid": "4818224",
+      "name": "Cushing",
+      "legal_name": "Cushing city"
+    },
+    {
+      "geoid": "4818260",
+      "name": "Cut and Shoot",
+      "legal_name": "Cut and Shoot city"
+    },
+    {
+      "geoid": "4820540",
+      "name": "DISH",
+      "legal_name": "DISH town"
+    },
+    {
+      "geoid": "4818464",
+      "name": "Daingerfield",
+      "legal_name": "Daingerfield city"
+    },
+    {
+      "geoid": "4818476",
+      "name": "Daisetta",
+      "legal_name": "Daisetta city"
+    },
+    {
+      "geoid": "4818524",
+      "name": "Dalhart",
+      "legal_name": "Dalhart city"
+    },
+    {
+      "geoid": "4819000",
+      "name": "Dallas",
+      "legal_name": "Dallas city"
+    },
+    {
+      "geoid": "4819084",
+      "name": "Dalworthington Gardens",
+      "legal_name": "Dalworthington Gardens city"
+    },
+    {
+      "geoid": "4819120",
+      "name": "Danbury",
+      "legal_name": "Danbury city"
+    },
+    {
+      "geoid": "4819288",
+      "name": "Darrouzett",
+      "legal_name": "Darrouzett town"
+    },
+    {
+      "geoid": "4819420",
+      "name": "Dawson",
+      "legal_name": "Dawson town"
+    },
+    {
+      "geoid": "4819435",
+      "name": "Dayton Lakes",
+      "legal_name": "Dayton Lakes city"
+    },
+    {
+      "geoid": "4819432",
+      "name": "Dayton",
+      "legal_name": "Dayton city"
+    },
+    {
+      "geoid": "4819648",
+      "name": "De Kalb",
+      "legal_name": "De Kalb city"
+    },
+    {
+      "geoid": "4819672",
+      "name": "De Leon",
+      "legal_name": "De Leon city"
+    },
+    {
+      "geoid": "4819570",
+      "name": "DeCordova",
+      "legal_name": "DeCordova city"
+    },
+    {
+      "geoid": "4820092",
+      "name": "DeSoto",
+      "legal_name": "DeSoto city"
+    },
+    {
+      "geoid": "4819456",
+      "name": "Dean",
+      "legal_name": "Dean city"
+    },
+    {
+      "geoid": "4819528",
+      "name": "Decatur",
+      "legal_name": "Decatur city"
+    },
+    {
+      "geoid": "4819624",
+      "name": "Deer Park",
+      "legal_name": "Deer Park city"
+    },
+    {
+      "geoid": "4819792",
+      "name": "Del Rio",
+      "legal_name": "Del Rio city"
+    },
+    {
+      "geoid": "4819708",
+      "name": "Dell City",
+      "legal_name": "Dell City city"
+    },
+    {
+      "geoid": "4819900",
+      "name": "Denison",
+      "legal_name": "Denison city"
+    },
+    {
+      "geoid": "4819924",
+      "name": "Dennis",
+      "legal_name": "Dennis town"
+    },
+    {
+      "geoid": "4819972",
+      "name": "Denton",
+      "legal_name": "Denton city"
+    },
+    {
+      "geoid": "4819984",
+      "name": "Denver City",
+      "legal_name": "Denver City town"
+    },
+    {
+      "geoid": "4820020",
+      "name": "Deport",
+      "legal_name": "Deport city"
+    },
+    {
+      "geoid": "4820128",
+      "name": "Detroit",
+      "legal_name": "Detroit town"
+    },
+    {
+      "geoid": "4820140",
+      "name": "Devers",
+      "legal_name": "Devers city"
+    },
+    {
+      "geoid": "4820152",
+      "name": "Devine",
+      "legal_name": "Devine city"
+    },
+    {
+      "geoid": "4820308",
+      "name": "Diboll",
+      "legal_name": "Diboll city"
+    },
+    {
+      "geoid": "4820332",
+      "name": "Dickens",
+      "legal_name": "Dickens city"
+    },
+    {
+      "geoid": "4820344",
+      "name": "Dickinson",
+      "legal_name": "Dickinson city"
+    },
+    {
+      "geoid": "4820428",
+      "name": "Dilley",
+      "legal_name": "Dilley city"
+    },
+    {
+      "geoid": "4820464",
+      "name": "Dimmitt",
+      "legal_name": "Dimmitt city"
+    },
+    {
+      "geoid": "4820680",
+      "name": "Dodd City",
+      "legal_name": "Dodd City town"
+    },
+    {
+      "geoid": "4820716",
+      "name": "Dodson",
+      "legal_name": "Dodson town"
+    },
+    {
+      "geoid": "4820848",
+      "name": "Domino",
+      "legal_name": "Domino town"
+    },
+    {
+      "geoid": "4820884",
+      "name": "Donna",
+      "legal_name": "Donna city"
+    },
+    {
+      "geoid": "4820932",
+      "name": "Dorchester",
+      "legal_name": "Dorchester city"
+    },
+    {
+      "geoid": "4821031",
+      "name": "Double Horn",
+      "legal_name": "Double Horn city"
+    },
+    {
+      "geoid": "4821028",
+      "name": "Double Oak",
+      "legal_name": "Double Oak town"
+    },
+    {
+      "geoid": "4821112",
+      "name": "Douglassville",
+      "legal_name": "Douglassville town"
+    },
+    {
+      "geoid": "4821424",
+      "name": "Dripping Springs",
+      "legal_name": "Dripping Springs city"
+    },
+    {
+      "geoid": "4821436",
+      "name": "Driscoll",
+      "legal_name": "Driscoll city"
+    },
+    {
+      "geoid": "4821484",
+      "name": "Dublin",
+      "legal_name": "Dublin city"
+    },
+    {
+      "geoid": "4821556",
+      "name": "Dumas",
+      "legal_name": "Dumas city"
+    },
+    {
+      "geoid": "4821628",
+      "name": "Duncanville",
+      "legal_name": "Duncanville city"
+    },
+    {
+      "geoid": "4821844",
+      "name": "Eagle Lake",
+      "legal_name": "Eagle Lake city"
+    },
+    {
+      "geoid": "4821892",
+      "name": "Eagle Pass",
+      "legal_name": "Eagle Pass city"
+    },
+    {
+      "geoid": "4821904",
+      "name": "Early",
+      "legal_name": "Early city"
+    },
+    {
+      "geoid": "4821928",
+      "name": "Earth",
+      "legal_name": "Earth city"
+    },
+    {
+      "geoid": "4821988",
+      "name": "East Bernard",
+      "legal_name": "East Bernard city"
+    },
+    {
+      "geoid": "4822168",
+      "name": "East Mountain",
+      "legal_name": "East Mountain city"
+    },
+    {
+      "geoid": "4822276",
+      "name": "East Tawakoni",
+      "legal_name": "East Tawakoni city"
+    },
+    {
+      "geoid": "4822132",
+      "name": "Eastland",
+      "legal_name": "Eastland city"
+    },
+    {
+      "geoid": "4822192",
+      "name": "Easton",
+      "legal_name": "Easton city"
+    },
+    {
+      "geoid": "4822516",
+      "name": "Ector",
+      "legal_name": "Ector city"
+    },
+    {
+      "geoid": "4822528",
+      "name": "Edcouch",
+      "legal_name": "Edcouch city"
+    },
+    {
+      "geoid": "4822552",
+      "name": "Eden",
+      "legal_name": "Eden city"
+    },
+    {
+      "geoid": "4822588",
+      "name": "Edgecliff Village",
+      "legal_name": "Edgecliff Village town"
+    },
+    {
+      "geoid": "4822612",
+      "name": "Edgewood",
+      "legal_name": "Edgewood town"
+    },
+    {
+      "geoid": "4822660",
+      "name": "Edinburg",
+      "legal_name": "Edinburg city"
+    },
+    {
+      "geoid": "4822708",
+      "name": "Edmonson",
+      "legal_name": "Edmonson town"
+    },
+    {
+      "geoid": "4822720",
+      "name": "Edna",
+      "legal_name": "Edna city"
+    },
+    {
+      "geoid": "4822744",
+      "name": "Edom",
+      "legal_name": "Edom city"
+    },
+    {
+      "geoid": "4822864",
+      "name": "El Campo",
+      "legal_name": "El Campo city"
+    },
+    {
+      "geoid": "4822905",
+      "name": "El Cenizo",
+      "legal_name": "El Cenizo city"
+    },
+    {
+      "geoid": "4823164",
+      "name": "El Lago",
+      "legal_name": "El Lago city"
+    },
+    {
+      "geoid": "4824000",
+      "name": "El Paso",
+      "legal_name": "El Paso city"
+    },
+    {
+      "geoid": "4822960",
+      "name": "Eldorado",
+      "legal_name": "Eldorado city"
+    },
+    {
+      "geoid": "4822984",
+      "name": "Electra",
+      "legal_name": "Electra city"
+    },
+    {
+      "geoid": "4823044",
+      "name": "Elgin",
+      "legal_name": "Elgin city"
+    },
+    {
+      "geoid": "4823140",
+      "name": "Elkhart",
+      "legal_name": "Elkhart town"
+    },
+    {
+      "geoid": "4823176",
+      "name": "Ellinger",
+      "legal_name": "Ellinger city"
+    },
+    {
+      "geoid": "4823272",
+      "name": "Elmendorf",
+      "legal_name": "Elmendorf city"
+    },
+    {
+      "geoid": "4824036",
+      "name": "Elsa",
+      "legal_name": "Elsa city"
+    },
+    {
+      "geoid": "4824168",
+      "name": "Emhouse",
+      "legal_name": "Emhouse town"
+    },
+    {
+      "geoid": "4824216",
+      "name": "Emory",
+      "legal_name": "Emory city"
+    },
+    {
+      "geoid": "4824228",
+      "name": "Enchanted Oaks",
+      "legal_name": "Enchanted Oaks town"
+    },
+    {
+      "geoid": "4824240",
+      "name": "Encinal",
+      "legal_name": "Encinal city"
+    },
+    {
+      "geoid": "4824348",
+      "name": "Ennis",
+      "legal_name": "Ennis city"
+    },
+    {
+      "geoid": "4824552",
+      "name": "Escobares",
+      "legal_name": "Escobares city"
+    },
+    {
+      "geoid": "4824636",
+      "name": "Estelline",
+      "legal_name": "Estelline town"
+    },
+    {
+      "geoid": "4824768",
+      "name": "Euless",
+      "legal_name": "Euless city"
+    },
+    {
+      "geoid": "4824816",
+      "name": "Eureka",
+      "legal_name": "Eureka city"
+    },
+    {
+      "geoid": "4824828",
+      "name": "Eustace",
+      "legal_name": "Eustace city"
+    },
+    {
+      "geoid": "4824864",
+      "name": "Evant",
+      "legal_name": "Evant town"
+    },
+    {
+      "geoid": "4824912",
+      "name": "Everman",
+      "legal_name": "Everman city"
+    },
+    {
+      "geoid": "4825168",
+      "name": "Fair Oaks Ranch",
+      "legal_name": "Fair Oaks Ranch city"
+    },
+    {
+      "geoid": "4825068",
+      "name": "Fairchilds",
+      "legal_name": "Fairchilds village"
+    },
+    {
+      "geoid": "4825104",
+      "name": "Fairfield",
+      "legal_name": "Fairfield city"
+    },
+    {
+      "geoid": "4825224",
+      "name": "Fairview",
+      "legal_name": "Fairview town"
+    },
+    {
+      "geoid": "4825368",
+      "name": "Falfurrias",
+      "legal_name": "Falfurrias city"
+    },
+    {
+      "geoid": "4825392",
+      "name": "Falls City",
+      "legal_name": "Falls City city"
+    },
+    {
+      "geoid": "4825452",
+      "name": "Farmers Branch",
+      "legal_name": "Farmers Branch city"
+    },
+    {
+      "geoid": "4825488",
+      "name": "Farmersville",
+      "legal_name": "Farmersville city"
+    },
+    {
+      "geoid": "4825548",
+      "name": "Farwell",
+      "legal_name": "Farwell city"
+    },
+    {
+      "geoid": "4825572",
+      "name": "Fate",
+      "legal_name": "Fate city"
+    },
+    {
+      "geoid": "4825644",
+      "name": "Fayetteville",
+      "legal_name": "Fayetteville city"
+    },
+    {
+      "geoid": "4825752",
+      "name": "Ferris",
+      "legal_name": "Ferris city"
+    },
+    {
+      "geoid": "4826028",
+      "name": "Flatonia",
+      "legal_name": "Flatonia town"
+    },
+    {
+      "geoid": "4826136",
+      "name": "Florence",
+      "legal_name": "Florence city"
+    },
+    {
+      "geoid": "4826160",
+      "name": "Floresville",
+      "legal_name": "Floresville city"
+    },
+    {
+      "geoid": "4826232",
+      "name": "Flower Mound",
+      "legal_name": "Flower Mound town"
+    },
+    {
+      "geoid": "4826268",
+      "name": "Floydada",
+      "legal_name": "Floydada city"
+    },
+    {
+      "geoid": "4826328",
+      "name": "Follett",
+      "legal_name": "Follett city"
+    },
+    {
+      "geoid": "4826544",
+      "name": "Forest Hill",
+      "legal_name": "Forest Hill city"
+    },
+    {
+      "geoid": "4826604",
+      "name": "Forney",
+      "legal_name": "Forney city"
+    },
+    {
+      "geoid": "4826640",
+      "name": "Forsan",
+      "legal_name": "Forsan city"
+    },
+    {
+      "geoid": "4826808",
+      "name": "Fort Stockton",
+      "legal_name": "Fort Stockton city"
+    },
+    {
+      "geoid": "4827000",
+      "name": "Fort Worth",
+      "legal_name": "Fort Worth city"
+    },
+    {
+      "geoid": "4827288",
+      "name": "Franklin",
+      "legal_name": "Franklin city"
+    },
+    {
+      "geoid": "4827300",
+      "name": "Frankston",
+      "legal_name": "Frankston town"
+    },
+    {
+      "geoid": "4827348",
+      "name": "Fredericksburg",
+      "legal_name": "Fredericksburg city"
+    },
+    {
+      "geoid": "4827420",
+      "name": "Freeport",
+      "legal_name": "Freeport city"
+    },
+    {
+      "geoid": "4827432",
+      "name": "Freer",
+      "legal_name": "Freer city"
+    },
+    {
+      "geoid": "4827648",
+      "name": "Friendswood",
+      "legal_name": "Friendswood city"
+    },
+    {
+      "geoid": "4827660",
+      "name": "Friona",
+      "legal_name": "Friona city"
+    },
+    {
+      "geoid": "4827684",
+      "name": "Frisco",
+      "legal_name": "Frisco city"
+    },
+    {
+      "geoid": "4827696",
+      "name": "Fritch",
+      "legal_name": "Fritch city"
+    },
+    {
+      "geoid": "4827768",
+      "name": "Frost",
+      "legal_name": "Frost city"
+    },
+    {
+      "geoid": "4827804",
+      "name": "Fruitvale",
+      "legal_name": "Fruitvale city"
+    },
+    {
+      "geoid": "4827876",
+      "name": "Fulshear",
+      "legal_name": "Fulshear city"
+    },
+    {
+      "geoid": "4827888",
+      "name": "Fulton",
+      "legal_name": "Fulton town"
+    },
+    {
+      "geoid": "4827984",
+      "name": "Gainesville",
+      "legal_name": "Gainesville city"
+    },
+    {
+      "geoid": "4827996",
+      "name": "Galena Park",
+      "legal_name": "Galena Park city"
+    },
+    {
+      "geoid": "4828008",
+      "name": "Gallatin",
+      "legal_name": "Gallatin city"
+    },
+    {
+      "geoid": "4828068",
+      "name": "Galveston",
+      "legal_name": "Galveston city"
+    },
+    {
+      "geoid": "4828080",
+      "name": "Ganado",
+      "legal_name": "Ganado city"
+    },
+    {
+      "geoid": "4828248",
+      "name": "Garden Ridge",
+      "legal_name": "Garden Ridge city"
+    },
+    {
+      "geoid": "4829000",
+      "name": "Garland",
+      "legal_name": "Garland city"
+    },
+    {
+      "geoid": "4829036",
+      "name": "Garrett",
+      "legal_name": "Garrett town"
+    },
+    {
+      "geoid": "4829060",
+      "name": "Garrison",
+      "legal_name": "Garrison city"
+    },
+    {
+      "geoid": "4829108",
+      "name": "Gary City",
+      "legal_name": "Gary City town"
+    },
+    {
+      "geoid": "4829168",
+      "name": "Gatesville",
+      "legal_name": "Gatesville city"
+    },
+    {
+      "geoid": "4829348",
+      "name": "George West",
+      "legal_name": "George West city"
+    },
+    {
+      "geoid": "4829336",
+      "name": "Georgetown",
+      "legal_name": "Georgetown city"
+    },
+    {
+      "geoid": "4829408",
+      "name": "Gholson",
+      "legal_name": "Gholson city"
+    },
+    {
+      "geoid": "4829432",
+      "name": "Giddings",
+      "legal_name": "Giddings city"
+    },
+    {
+      "geoid": "4829564",
+      "name": "Gilmer",
+      "legal_name": "Gilmer city"
+    },
+    {
+      "geoid": "4829660",
+      "name": "Gladewater",
+      "legal_name": "Gladewater city"
+    },
+    {
+      "geoid": "4829876",
+      "name": "Glen Rose",
+      "legal_name": "Glen Rose city"
+    },
+    {
+      "geoid": "4829840",
+      "name": "Glenn Heights",
+      "legal_name": "Glenn Heights city"
+    },
+    {
+      "geoid": "4829972",
+      "name": "Godley",
+      "legal_name": "Godley city"
+    },
+    {
+      "geoid": "4830044",
+      "name": "Goldsmith",
+      "legal_name": "Goldsmith city"
+    },
+    {
+      "geoid": "4830056",
+      "name": "Goldthwaite",
+      "legal_name": "Goldthwaite city"
+    },
+    {
+      "geoid": "4830080",
+      "name": "Goliad",
+      "legal_name": "Goliad city"
+    },
+    {
+      "geoid": "4830092",
+      "name": "Golinda",
+      "legal_name": "Golinda city"
+    },
+    {
+      "geoid": "4830116",
+      "name": "Gonzales",
+      "legal_name": "Gonzales city"
+    },
+    {
+      "geoid": "4830188",
+      "name": "Goodlow",
+      "legal_name": "Goodlow city"
+    },
+    {
+      "geoid": "4830224",
+      "name": "Goodrich",
+      "legal_name": "Goodrich city"
+    },
+    {
+      "geoid": "4830272",
+      "name": "Gordon",
+      "legal_name": "Gordon city"
+    },
+    {
+      "geoid": "4830296",
+      "name": "Goree",
+      "legal_name": "Goree city"
+    },
+    {
+      "geoid": "4830308",
+      "name": "Gorman",
+      "legal_name": "Gorman city"
+    },
+    {
+      "geoid": "4830380",
+      "name": "Graford",
+      "legal_name": "Graford city"
+    },
+    {
+      "geoid": "4830392",
+      "name": "Graham",
+      "legal_name": "Graham city"
+    },
+    {
+      "geoid": "4830416",
+      "name": "Granbury",
+      "legal_name": "Granbury city"
+    },
+    {
+      "geoid": "4830464",
+      "name": "Grand Prairie",
+      "legal_name": "Grand Prairie city"
+    },
+    {
+      "geoid": "4830476",
+      "name": "Grand Saline",
+      "legal_name": "Grand Saline city"
+    },
+    {
+      "geoid": "4830440",
+      "name": "Grandfalls",
+      "legal_name": "Grandfalls town"
+    },
+    {
+      "geoid": "4830512",
+      "name": "Grandview",
+      "legal_name": "Grandview city"
+    },
+    {
+      "geoid": "4830548",
+      "name": "Granger",
+      "legal_name": "Granger city"
+    },
+    {
+      "geoid": "4830584",
+      "name": "Granite Shoals",
+      "legal_name": "Granite Shoals city"
+    },
+    {
+      "geoid": "4830608",
+      "name": "Granjeno",
+      "legal_name": "Granjeno city"
+    },
+    {
+      "geoid": "4830632",
+      "name": "Grapeland",
+      "legal_name": "Grapeland city"
+    },
+    {
+      "geoid": "4830644",
+      "name": "Grapevine",
+      "legal_name": "Grapevine city"
+    },
+    {
+      "geoid": "4830752",
+      "name": "Grays Prairie",
+      "legal_name": "Grays Prairie village"
+    },
+    {
+      "geoid": "4830920",
+      "name": "Greenville",
+      "legal_name": "Greenville city"
+    },
+    {
+      "geoid": "4831064",
+      "name": "Gregory",
+      "legal_name": "Gregory city"
+    },
+    {
+      "geoid": "4831100",
+      "name": "Grey Forest",
+      "legal_name": "Grey Forest city"
+    },
+    {
+      "geoid": "4831280",
+      "name": "Groesbeck",
+      "legal_name": "Groesbeck city"
+    },
+    {
+      "geoid": "4831292",
+      "name": "Groom",
+      "legal_name": "Groom town"
+    },
+    {
+      "geoid": "4831328",
+      "name": "Groves",
+      "legal_name": "Groves city"
+    },
+    {
+      "geoid": "4831340",
+      "name": "Groveton",
+      "legal_name": "Groveton city"
+    },
+    {
+      "geoid": "4831412",
+      "name": "Gruver",
+      "legal_name": "Gruver city"
+    },
+    {
+      "geoid": "4831592",
+      "name": "Gun Barrel City",
+      "legal_name": "Gun Barrel City city"
+    },
+    {
+      "geoid": "4831616",
+      "name": "Gunter",
+      "legal_name": "Gunter city"
+    },
+    {
+      "geoid": "4831628",
+      "name": "Gustine",
+      "legal_name": "Gustine town"
+    },
+    {
+      "geoid": "4831715",
+      "name": "Hackberry",
+      "legal_name": "Hackberry town"
+    },
+    {
+      "geoid": "4831820",
+      "name": "Hale Center",
+      "legal_name": "Hale Center city"
+    },
+    {
+      "geoid": "4831868",
+      "name": "Hallettsville",
+      "legal_name": "Hallettsville city"
+    },
+    {
+      "geoid": "4831880",
+      "name": "Hallsburg",
+      "legal_name": "Hallsburg city"
+    },
+    {
+      "geoid": "4831904",
+      "name": "Hallsville",
+      "legal_name": "Hallsville city"
+    },
+    {
+      "geoid": "4831928",
+      "name": "Haltom City",
+      "legal_name": "Haltom City city"
+    },
+    {
+      "geoid": "4831952",
+      "name": "Hamilton",
+      "legal_name": "Hamilton city"
+    },
+    {
+      "geoid": "4831964",
+      "name": "Hamlin",
+      "legal_name": "Hamlin city"
+    },
+    {
+      "geoid": "4832156",
+      "name": "Happy",
+      "legal_name": "Happy town"
+    },
+    {
+      "geoid": "4832240",
+      "name": "Hardin",
+      "legal_name": "Hardin city"
+    },
+    {
+      "geoid": "4832312",
+      "name": "Harker Heights",
+      "legal_name": "Harker Heights city"
+    },
+    {
+      "geoid": "4832372",
+      "name": "Harlingen",
+      "legal_name": "Harlingen city"
+    },
+    {
+      "geoid": "4832576",
+      "name": "Hart",
+      "legal_name": "Hart city"
+    },
+    {
+      "geoid": "4832684",
+      "name": "Harwood",
+      "legal_name": "Harwood town"
+    },
+    {
+      "geoid": "4832696",
+      "name": "Haskell",
+      "legal_name": "Haskell city"
+    },
+    {
+      "geoid": "4832720",
+      "name": "Haslet",
+      "legal_name": "Haslet city"
+    },
+    {
+      "geoid": "4832810",
+      "name": "Hawk Cove",
+      "legal_name": "Hawk Cove city"
+    },
+    {
+      "geoid": "4832816",
+      "name": "Hawkins",
+      "legal_name": "Hawkins city"
+    },
+    {
+      "geoid": "4832840",
+      "name": "Hawley",
+      "legal_name": "Hawley city"
+    },
+    {
+      "geoid": "4832906",
+      "name": "Hays",
+      "legal_name": "Hays city"
+    },
+    {
+      "geoid": "4832972",
+      "name": "Hearne",
+      "legal_name": "Hearne city"
+    },
+    {
+      "geoid": "4832984",
+      "name": "Heath",
+      "legal_name": "Heath city"
+    },
+    {
+      "geoid": "4833020",
+      "name": "Hebron",
+      "legal_name": "Hebron town"
+    },
+    {
+      "geoid": "4833044",
+      "name": "Hedley",
+      "legal_name": "Hedley city"
+    },
+    {
+      "geoid": "4833068",
+      "name": "Hedwig Village",
+      "legal_name": "Hedwig Village city"
+    },
+    {
+      "geoid": "4833146",
+      "name": "Helotes",
+      "legal_name": "Helotes city"
+    },
+    {
+      "geoid": "4833188",
+      "name": "Hemphill",
+      "legal_name": "Hemphill city"
+    },
+    {
+      "geoid": "4833200",
+      "name": "Hempstead",
+      "legal_name": "Hempstead city"
+    },
+    {
+      "geoid": "4833212",
+      "name": "Henderson",
+      "legal_name": "Henderson city"
+    },
+    {
+      "geoid": "4833284",
+      "name": "Henrietta",
+      "legal_name": "Henrietta city"
+    },
+    {
+      "geoid": "4833320",
+      "name": "Hereford",
+      "legal_name": "Hereford city"
+    },
+    {
+      "geoid": "4833428",
+      "name": "Hewitt",
+      "legal_name": "Hewitt city"
+    },
+    {
+      "geoid": "4833476",
+      "name": "Hickory Creek",
+      "legal_name": "Hickory Creek town"
+    },
+    {
+      "geoid": "4833548",
+      "name": "Hico",
+      "legal_name": "Hico city"
+    },
+    {
+      "geoid": "4833560",
+      "name": "Hidalgo",
+      "legal_name": "Hidalgo city"
+    },
+    {
+      "geoid": "4833578",
+      "name": "Hideaway",
+      "legal_name": "Hideaway city"
+    },
+    {
+      "geoid": "4833608",
+      "name": "Higgins",
+      "legal_name": "Higgins city"
+    },
+    {
+      "geoid": "4833794",
+      "name": "Highland Haven",
+      "legal_name": "Highland Haven city"
+    },
+    {
+      "geoid": "4833824",
+      "name": "Highland Park",
+      "legal_name": "Highland Park town"
+    },
+    {
+      "geoid": "4833848",
+      "name": "Highland Village",
+      "legal_name": "Highland Village city"
+    },
+    {
+      "geoid": "4833968",
+      "name": "Hill Country Village",
+      "legal_name": "Hill Country Village city"
+    },
+    {
+      "geoid": "4834018",
+      "name": "Hillcrest Village",
+      "legal_name": "Hillcrest Village city"
+    },
+    {
+      "geoid": "4834088",
+      "name": "Hillsboro",
+      "legal_name": "Hillsboro city"
+    },
+    {
+      "geoid": "4834148",
+      "name": "Hilshire Village",
+      "legal_name": "Hilshire Village city"
+    },
+    {
+      "geoid": "4834220",
+      "name": "Hitchcock",
+      "legal_name": "Hitchcock city"
+    },
+    {
+      "geoid": "4834502",
+      "name": "Holiday Lakes",
+      "legal_name": "Holiday Lakes town"
+    },
+    {
+      "geoid": "4834508",
+      "name": "Holland",
+      "legal_name": "Holland town"
+    },
+    {
+      "geoid": "4834532",
+      "name": "Holliday",
+      "legal_name": "Holliday city"
+    },
+    {
+      "geoid": "4834628",
+      "name": "Hollywood Park",
+      "legal_name": "Hollywood Park town"
+    },
+    {
+      "geoid": "4834676",
+      "name": "Hondo",
+      "legal_name": "Hondo city"
+    },
+    {
+      "geoid": "4834700",
+      "name": "Honey Grove",
+      "legal_name": "Honey Grove city"
+    },
+    {
+      "geoid": "4834736",
+      "name": "Hooks",
+      "legal_name": "Hooks city"
+    },
+    {
+      "geoid": "4834832",
+      "name": "Horizon City",
+      "legal_name": "Horizon City city"
+    },
+    {
+      "geoid": "4834862",
+      "name": "Horseshoe Bay",
+      "legal_name": "Horseshoe Bay city"
+    },
+    {
+      "geoid": "4835000",
+      "name": "Houston",
+      "legal_name": "Houston city"
+    },
+    {
+      "geoid": "4835072",
+      "name": "Howardwick",
+      "legal_name": "Howardwick city"
+    },
+    {
+      "geoid": "4835084",
+      "name": "Howe",
+      "legal_name": "Howe town"
+    },
+    {
+      "geoid": "4835180",
+      "name": "Hubbard",
+      "legal_name": "Hubbard city"
+    },
+    {
+      "geoid": "4835254",
+      "name": "Hudson Oaks",
+      "legal_name": "Hudson Oaks city"
+    },
+    {
+      "geoid": "4835228",
+      "name": "Hudson",
+      "legal_name": "Hudson city"
+    },
+    {
+      "geoid": "4835300",
+      "name": "Hughes Springs",
+      "legal_name": "Hughes Springs city"
+    },
+    {
+      "geoid": "4835348",
+      "name": "Humble",
+      "legal_name": "Humble city"
+    },
+    {
+      "geoid": "4835480",
+      "name": "Hunters Creek Village",
+      "legal_name": "Hunters Creek Village city"
+    },
+    {
+      "geoid": "4835492",
+      "name": "Huntington",
+      "legal_name": "Huntington city"
+    },
+    {
+      "geoid": "4835528",
+      "name": "Huntsville",
+      "legal_name": "Huntsville city"
+    },
+    {
+      "geoid": "4835576",
+      "name": "Hurst",
+      "legal_name": "Hurst city"
+    },
+    {
+      "geoid": "4835612",
+      "name": "Hutchins",
+      "legal_name": "Hutchins city"
+    },
+    {
+      "geoid": "4835624",
+      "name": "Hutto",
+      "legal_name": "Hutto city"
+    },
+    {
+      "geoid": "4835636",
+      "name": "Huxley",
+      "legal_name": "Huxley city"
+    },
+    {
+      "geoid": "4835732",
+      "name": "Idalou",
+      "legal_name": "Idalou city"
+    },
+    {
+      "geoid": "4835816",
+      "name": "Impact",
+      "legal_name": "Impact town"
+    },
+    {
+      "geoid": "4835918",
+      "name": "Indian Lake",
+      "legal_name": "Indian Lake town"
+    },
+    {
+      "geoid": "4835984",
+      "name": "Industry",
+      "legal_name": "Industry city"
+    },
+    {
+      "geoid": "4836008",
+      "name": "Ingleside",
+      "legal_name": "Ingleside city"
+    },
+    {
+      "geoid": "4836020",
+      "name": "Ingleside on the Bay",
+      "legal_name": "Ingleside on the Bay city"
+    },
+    {
+      "geoid": "4836032",
+      "name": "Ingram",
+      "legal_name": "Ingram city"
+    },
+    {
+      "geoid": "4836068",
+      "name": "Iola",
+      "legal_name": "Iola city"
+    },
+    {
+      "geoid": "4836092",
+      "name": "Iowa Colony",
+      "legal_name": "Iowa Colony village"
+    },
+    {
+      "geoid": "4836104",
+      "name": "Iowa Park",
+      "legal_name": "Iowa Park city"
+    },
+    {
+      "geoid": "4836128",
+      "name": "Iraan",
+      "legal_name": "Iraan city"
+    },
+    {
+      "geoid": "4836140",
+      "name": "Iredell",
+      "legal_name": "Iredell city"
+    },
+    {
+      "geoid": "4837000",
+      "name": "Irving",
+      "legal_name": "Irving city"
+    },
+    {
+      "geoid": "4837072",
+      "name": "Italy",
+      "legal_name": "Italy town"
+    },
+    {
+      "geoid": "4837084",
+      "name": "Itasca",
+      "legal_name": "Itasca city"
+    },
+    {
+      "geoid": "4837112",
+      "name": "Ivanhoe",
+      "legal_name": "Ivanhoe city"
+    },
+    {
+      "geoid": "4837156",
+      "name": "Jacinto City",
+      "legal_name": "Jacinto City city"
+    },
+    {
+      "geoid": "4837168",
+      "name": "Jacksboro",
+      "legal_name": "Jacksboro city"
+    },
+    {
+      "geoid": "4837216",
+      "name": "Jacksonville",
+      "legal_name": "Jacksonville city"
+    },
+    {
+      "geoid": "4837252",
+      "name": "Jamaica Beach",
+      "legal_name": "Jamaica Beach city"
+    },
+    {
+      "geoid": "4837396",
+      "name": "Jarrell",
+      "legal_name": "Jarrell city"
+    },
+    {
+      "geoid": "4837420",
+      "name": "Jasper",
+      "legal_name": "Jasper city"
+    },
+    {
+      "geoid": "4837468",
+      "name": "Jayton",
+      "legal_name": "Jayton city"
+    },
+    {
+      "geoid": "4837528",
+      "name": "Jefferson",
+      "legal_name": "Jefferson city"
+    },
+    {
+      "geoid": "4837612",
+      "name": "Jersey Village",
+      "legal_name": "Jersey Village city"
+    },
+    {
+      "geoid": "4837648",
+      "name": "Jewett",
+      "legal_name": "Jewett city"
+    },
+    {
+      "geoid": "4837684",
+      "name": "Joaquin",
+      "legal_name": "Joaquin city"
+    },
+    {
+      "geoid": "4837780",
+      "name": "Johnson City",
+      "legal_name": "Johnson City city"
+    },
+    {
+      "geoid": "4837924",
+      "name": "Jolly",
+      "legal_name": "Jolly city"
+    },
+    {
+      "geoid": "4837984",
+      "name": "Jones Creek",
+      "legal_name": "Jones Creek village"
+    },
+    {
+      "geoid": "4838020",
+      "name": "Jonestown",
+      "legal_name": "Jonestown city"
+    },
+    {
+      "geoid": "4838068",
+      "name": "Josephine",
+      "legal_name": "Josephine city"
+    },
+    {
+      "geoid": "4838080",
+      "name": "Joshua",
+      "legal_name": "Joshua city"
+    },
+    {
+      "geoid": "4838116",
+      "name": "Jourdanton",
+      "legal_name": "Jourdanton city"
+    },
+    {
+      "geoid": "4838248",
+      "name": "Junction",
+      "legal_name": "Junction city"
+    },
+    {
+      "geoid": "4838332",
+      "name": "Justin",
+      "legal_name": "Justin city"
+    },
+    {
+      "geoid": "4838452",
+      "name": "Karnes City",
+      "legal_name": "Karnes City city"
+    },
+    {
+      "geoid": "4838476",
+      "name": "Katy",
+      "legal_name": "Katy city"
+    },
+    {
+      "geoid": "4838488",
+      "name": "Kaufman",
+      "legal_name": "Kaufman city"
+    },
+    {
+      "geoid": "4838548",
+      "name": "Keene",
+      "legal_name": "Keene city"
+    },
+    {
+      "geoid": "4838632",
+      "name": "Keller",
+      "legal_name": "Keller city"
+    },
+    {
+      "geoid": "4838776",
+      "name": "Kemah",
+      "legal_name": "Kemah city"
+    },
+    {
+      "geoid": "4838788",
+      "name": "Kemp",
+      "legal_name": "Kemp city"
+    },
+    {
+      "geoid": "4838800",
+      "name": "Kempner",
+      "legal_name": "Kempner city"
+    },
+    {
+      "geoid": "4838848",
+      "name": "Kendleton",
+      "legal_name": "Kendleton city"
+    },
+    {
+      "geoid": "4838860",
+      "name": "Kenedy",
+      "legal_name": "Kenedy city"
+    },
+    {
+      "geoid": "4838872",
+      "name": "Kenefick",
+      "legal_name": "Kenefick town"
+    },
+    {
+      "geoid": "4838884",
+      "name": "Kennard",
+      "legal_name": "Kennard city"
+    },
+    {
+      "geoid": "4838896",
+      "name": "Kennedale",
+      "legal_name": "Kennedale city"
+    },
+    {
+      "geoid": "4838992",
+      "name": "Kerens",
+      "legal_name": "Kerens city"
+    },
+    {
+      "geoid": "4839004",
+      "name": "Kermit",
+      "legal_name": "Kermit city"
+    },
+    {
+      "geoid": "4839040",
+      "name": "Kerrville",
+      "legal_name": "Kerrville city"
+    },
+    {
+      "geoid": "4839124",
+      "name": "Kilgore",
+      "legal_name": "Kilgore city"
+    },
+    {
+      "geoid": "4839148",
+      "name": "Killeen",
+      "legal_name": "Killeen city"
+    },
+    {
+      "geoid": "4839292",
+      "name": "Kingsbury",
+      "legal_name": "Kingsbury city"
+    },
+    {
+      "geoid": "4839352",
+      "name": "Kingsville",
+      "legal_name": "Kingsville city"
+    },
+    {
+      "geoid": "4839448",
+      "name": "Kirby",
+      "legal_name": "Kirby city"
+    },
+    {
+      "geoid": "4839460",
+      "name": "Kirbyville",
+      "legal_name": "Kirbyville city"
+    },
+    {
+      "geoid": "4839520",
+      "name": "Kirvin",
+      "legal_name": "Kirvin town"
+    },
+    {
+      "geoid": "4839680",
+      "name": "Knollwood",
+      "legal_name": "Knollwood city"
+    },
+    {
+      "geoid": "4839700",
+      "name": "Knox City",
+      "legal_name": "Knox City town"
+    },
+    {
+      "geoid": "4839844",
+      "name": "Kosse",
+      "legal_name": "Kosse town"
+    },
+    {
+      "geoid": "4839868",
+      "name": "Kountze",
+      "legal_name": "Kountze city"
+    },
+    {
+      "geoid": "4839904",
+      "name": "Kress",
+      "legal_name": "Kress city"
+    },
+    {
+      "geoid": "4839916",
+      "name": "Krugerville",
+      "legal_name": "Krugerville city"
+    },
+    {
+      "geoid": "4839928",
+      "name": "Krum",
+      "legal_name": "Krum city"
+    },
+    {
+      "geoid": "4839940",
+      "name": "Kurten",
+      "legal_name": "Kurten town"
+    },
+    {
+      "geoid": "4839952",
+      "name": "Kyle",
+      "legal_name": "Kyle city"
+    },
+    {
+      "geoid": "4840204",
+      "name": "La Feria",
+      "legal_name": "La Feria city"
+    },
+    {
+      "geoid": "4840276",
+      "name": "La Grange",
+      "legal_name": "La Grange city"
+    },
+    {
+      "geoid": "4840288",
+      "name": "La Grulla",
+      "legal_name": "La Grulla city"
+    },
+    {
+      "geoid": "4840384",
+      "name": "La Joya",
+      "legal_name": "La Joya city"
+    },
+    {
+      "geoid": "4841116",
+      "name": "La Marque",
+      "legal_name": "La Marque city"
+    },
+    {
+      "geoid": "4841440",
+      "name": "La Porte",
+      "legal_name": "La Porte city"
+    },
+    {
+      "geoid": "4841764",
+      "name": "La Vernia",
+      "legal_name": "La Vernia city"
+    },
+    {
+      "geoid": "4841788",
+      "name": "La Villa",
+      "legal_name": "La Villa city"
+    },
+    {
+      "geoid": "4841848",
+      "name": "La Ward",
+      "legal_name": "La Ward city"
+    },
+    {
+      "geoid": "4840108",
+      "name": "LaCoste",
+      "legal_name": "LaCoste city"
+    },
+    {
+      "geoid": "4840168",
+      "name": "Lacy-Lakeview",
+      "legal_name": "Lacy-Lakeview city"
+    },
+    {
+      "geoid": "4840180",
+      "name": "Ladonia",
+      "legal_name": "Ladonia town"
+    },
+    {
+      "geoid": "4840264",
+      "name": "Lago Vista",
+      "legal_name": "Lago Vista city"
+    },
+    {
+      "geoid": "4840336",
+      "name": "Laguna Vista",
+      "legal_name": "Laguna Vista town"
+    },
+    {
+      "geoid": "4840450",
+      "name": "Lake Bridgeport",
+      "legal_name": "Lake Bridgeport city"
+    },
+    {
+      "geoid": "4840472",
+      "name": "Lake City",
+      "legal_name": "Lake City town"
+    },
+    {
+      "geoid": "4840516",
+      "name": "Lake Dallas",
+      "legal_name": "Lake Dallas city"
+    },
+    {
+      "geoid": "4840588",
+      "name": "Lake Jackson",
+      "legal_name": "Lake Jackson city"
+    },
+    {
+      "geoid": "4840804",
+      "name": "Lake Tanglewood",
+      "legal_name": "Lake Tanglewood village"
+    },
+    {
+      "geoid": "4841056",
+      "name": "Lake Worth",
+      "legal_name": "Lake Worth city"
+    },
+    {
+      "geoid": "4840696",
+      "name": "Lakeport",
+      "legal_name": "Lakeport city"
+    },
+    {
+      "geoid": "4840756",
+      "name": "Lakeside City",
+      "legal_name": "Lakeside City town"
+    },
+    {
+      "geoid": "4840738",
+      "name": "Lakeside",
+      "legal_name": "Lakeside town"
+    },
+    {
+      "geoid": "4840744",
+      "name": "Lakeside",
+      "legal_name": "Lakeside town"
+    },
+    {
+      "geoid": "4840888",
+      "name": "Lakeview",
+      "legal_name": "Lakeview town"
+    },
+    {
+      "geoid": "4840984",
+      "name": "Lakeway",
+      "legal_name": "Lakeway city"
+    },
+    {
+      "geoid": "4841050",
+      "name": "Lakewood Village",
+      "legal_name": "Lakewood Village city"
+    },
+    {
+      "geoid": "4841164",
+      "name": "Lamesa",
+      "legal_name": "Lamesa city"
+    },
+    {
+      "geoid": "4841188",
+      "name": "Lampasas",
+      "legal_name": "Lampasas city"
+    },
+    {
+      "geoid": "4841212",
+      "name": "Lancaster",
+      "legal_name": "Lancaster city"
+    },
+    {
+      "geoid": "4841464",
+      "name": "Laredo",
+      "legal_name": "Laredo city"
+    },
+    {
+      "geoid": "4841644",
+      "name": "Latexo",
+      "legal_name": "Latexo city"
+    },
+    {
+      "geoid": "4841800",
+      "name": "Lavon",
+      "legal_name": "Lavon city"
+    },
+    {
+      "geoid": "4841872",
+      "name": "Lawn",
+      "legal_name": "Lawn town"
+    },
+    {
+      "geoid": "4841980",
+      "name": "League City",
+      "legal_name": "League City city"
+    },
+    {
+      "geoid": "4842004",
+      "name": "Leakey",
+      "legal_name": "Leakey city"
+    },
+    {
+      "geoid": "4842016",
+      "name": "Leander",
+      "legal_name": "Leander city"
+    },
+    {
+      "geoid": "4842028",
+      "name": "Leary",
+      "legal_name": "Leary city"
+    },
+    {
+      "geoid": "4842148",
+      "name": "Lefors",
+      "legal_name": "Lefors town"
+    },
+    {
+      "geoid": "4842388",
+      "name": "Leon Valley",
+      "legal_name": "Leon Valley city"
+    },
+    {
+      "geoid": "4842340",
+      "name": "Leona",
+      "legal_name": "Leona city"
+    },
+    {
+      "geoid": "4842352",
+      "name": "Leonard",
+      "legal_name": "Leonard city"
+    },
+    {
+      "geoid": "4842400",
+      "name": "Leroy",
+      "legal_name": "Leroy city"
+    },
+    {
+      "geoid": "4842448",
+      "name": "Levelland",
+      "legal_name": "Levelland city"
+    },
+    {
+      "geoid": "4842508",
+      "name": "Lewisville",
+      "legal_name": "Lewisville city"
+    },
+    {
+      "geoid": "4842532",
+      "name": "Lexington",
+      "legal_name": "Lexington town"
+    },
+    {
+      "geoid": "4842664",
+      "name": "Liberty Hill",
+      "legal_name": "Liberty Hill city"
+    },
+    {
+      "geoid": "4842568",
+      "name": "Liberty",
+      "legal_name": "Liberty city"
+    },
+    {
+      "geoid": "4842820",
+      "name": "Lindale",
+      "legal_name": "Lindale city"
+    },
+    {
+      "geoid": "4842844",
+      "name": "Linden",
+      "legal_name": "Linden city"
+    },
+    {
+      "geoid": "4842868",
+      "name": "Lindsay",
+      "legal_name": "Lindsay city"
+    },
+    {
+      "geoid": "4842940",
+      "name": "Lipan",
+      "legal_name": "Lipan city"
+    },
+    {
+      "geoid": "4843012",
+      "name": "Little Elm",
+      "legal_name": "Little Elm city"
+    },
+    {
+      "geoid": "4843066",
+      "name": "Little River-Academy",
+      "legal_name": "Little River-Academy city"
+    },
+    {
+      "geoid": "4843024",
+      "name": "Littlefield",
+      "legal_name": "Littlefield city"
+    },
+    {
+      "geoid": "4843096",
+      "name": "Live Oak",
+      "legal_name": "Live Oak city"
+    },
+    {
+      "geoid": "4843120",
+      "name": "Liverpool",
+      "legal_name": "Liverpool city"
+    },
+    {
+      "geoid": "4843132",
+      "name": "Livingston",
+      "legal_name": "Livingston city"
+    },
+    {
+      "geoid": "4843144",
+      "name": "Llano",
+      "legal_name": "Llano city"
+    },
+    {
+      "geoid": "4843240",
+      "name": "Lockhart",
+      "legal_name": "Lockhart city"
+    },
+    {
+      "geoid": "4843252",
+      "name": "Lockney",
+      "legal_name": "Lockney town"
+    },
+    {
+      "geoid": "4843354",
+      "name": "Log Cabin",
+      "legal_name": "Log Cabin city"
+    },
+    {
+      "geoid": "4843516",
+      "name": "Lometa",
+      "legal_name": "Lometa city"
+    },
+    {
+      "geoid": "4843636",
+      "name": "Lone Oak",
+      "legal_name": "Lone Oak city"
+    },
+    {
+      "geoid": "4843684",
+      "name": "Lone Star",
+      "legal_name": "Lone Star city"
+    },
+    {
+      "geoid": "4843888",
+      "name": "Longview",
+      "legal_name": "Longview city"
+    },
+    {
+      "geoid": "4843996",
+      "name": "Loraine",
+      "legal_name": "Loraine town"
+    },
+    {
+      "geoid": "4844020",
+      "name": "Lorena",
+      "legal_name": "Lorena city"
+    },
+    {
+      "geoid": "4844032",
+      "name": "Lorenzo",
+      "legal_name": "Lorenzo city"
+    },
+    {
+      "geoid": "4844116",
+      "name": "Los Fresnos",
+      "legal_name": "Los Fresnos city"
+    },
+    {
+      "geoid": "4844128",
+      "name": "Los Indios",
+      "legal_name": "Los Indios town"
+    },
+    {
+      "geoid": "4844170",
+      "name": "Los Ybanez",
+      "legal_name": "Los Ybanez city"
+    },
+    {
+      "geoid": "4844176",
+      "name": "Lott",
+      "legal_name": "Lott city"
+    },
+    {
+      "geoid": "4844260",
+      "name": "Lovelady",
+      "legal_name": "Lovelady city"
+    },
+    {
+      "geoid": "4844308",
+      "name": "Lowry Crossing",
+      "legal_name": "Lowry Crossing city"
+    },
+    {
+      "geoid": "4845000",
+      "name": "Lubbock",
+      "legal_name": "Lubbock city"
+    },
+    {
+      "geoid": "4845012",
+      "name": "Lucas",
+      "legal_name": "Lucas city"
+    },
+    {
+      "geoid": "4845048",
+      "name": "Lueders",
+      "legal_name": "Lueders city"
+    },
+    {
+      "geoid": "4845072",
+      "name": "Lufkin",
+      "legal_name": "Lufkin city"
+    },
+    {
+      "geoid": "4845096",
+      "name": "Luling",
+      "legal_name": "Luling city"
+    },
+    {
+      "geoid": "4845120",
+      "name": "Lumberton",
+      "legal_name": "Lumberton city"
+    },
+    {
+      "geoid": "4845228",
+      "name": "Lyford",
+      "legal_name": "Lyford city"
+    },
+    {
+      "geoid": "4845288",
+      "name": "Lytle",
+      "legal_name": "Lytle city"
+    },
+    {
+      "geoid": "4845324",
+      "name": "Mabank",
+      "legal_name": "Mabank town"
+    },
+    {
+      "geoid": "4845996",
+      "name": "Madisonville",
+      "legal_name": "Madisonville city"
+    },
+    {
+      "geoid": "4846056",
+      "name": "Magnolia",
+      "legal_name": "Magnolia city"
+    },
+    {
+      "geoid": "4846224",
+      "name": "Malakoff",
+      "legal_name": "Malakoff city"
+    },
+    {
+      "geoid": "4846260",
+      "name": "Malone",
+      "legal_name": "Malone town"
+    },
+    {
+      "geoid": "4846440",
+      "name": "Manor",
+      "legal_name": "Manor city"
+    },
+    {
+      "geoid": "4846452",
+      "name": "Mansfield",
+      "legal_name": "Mansfield city"
+    },
+    {
+      "geoid": "4846500",
+      "name": "Manvel",
+      "legal_name": "Manvel city"
+    },
+    {
+      "geoid": "4846584",
+      "name": "Marble Falls",
+      "legal_name": "Marble Falls city"
+    },
+    {
+      "geoid": "4846620",
+      "name": "Marfa",
+      "legal_name": "Marfa city"
+    },
+    {
+      "geoid": "4846668",
+      "name": "Marietta",
+      "legal_name": "Marietta town"
+    },
+    {
+      "geoid": "4846692",
+      "name": "Marion",
+      "legal_name": "Marion city"
+    },
+    {
+      "geoid": "4846740",
+      "name": "Marlin",
+      "legal_name": "Marlin city"
+    },
+    {
+      "geoid": "4846752",
+      "name": "Marquez",
+      "legal_name": "Marquez city"
+    },
+    {
+      "geoid": "4846776",
+      "name": "Marshall",
+      "legal_name": "Marshall city"
+    },
+    {
+      "geoid": "4846824",
+      "name": "Mart",
+      "legal_name": "Mart city"
+    },
+    {
+      "geoid": "4846848",
+      "name": "Martindale",
+      "legal_name": "Martindale city"
+    },
+    {
+      "geoid": "4846968",
+      "name": "Mason",
+      "legal_name": "Mason city"
+    },
+    {
+      "geoid": "4847004",
+      "name": "Matador",
+      "legal_name": "Matador town"
+    },
+    {
+      "geoid": "4847040",
+      "name": "Mathis",
+      "legal_name": "Mathis city"
+    },
+    {
+      "geoid": "4847088",
+      "name": "Maud",
+      "legal_name": "Maud city"
+    },
+    {
+      "geoid": "4847268",
+      "name": "Maypearl",
+      "legal_name": "Maypearl city"
+    },
+    {
+      "geoid": "4845384",
+      "name": "McAllen",
+      "legal_name": "McAllen city"
+    },
+    {
+      "geoid": "4845432",
+      "name": "McCamey",
+      "legal_name": "McCamey city"
+    },
+    {
+      "geoid": "4845672",
+      "name": "McGregor",
+      "legal_name": "McGregor city"
+    },
+    {
+      "geoid": "4845744",
+      "name": "McKinney",
+      "legal_name": "McKinney city"
+    },
+    {
+      "geoid": "4845780",
+      "name": "McLean",
+      "legal_name": "McLean town"
+    },
+    {
+      "geoid": "4845804",
+      "name": "McLendon-Chisholm",
+      "legal_name": "McLendon-Chisholm city"
+    },
+    {
+      "geoid": "4847316",
+      "name": "Meadow",
+      "legal_name": "Meadow town"
+    },
+    {
+      "geoid": "4847330",
+      "name": "Meadowlakes",
+      "legal_name": "Meadowlakes city"
+    },
+    {
+      "geoid": "4847337",
+      "name": "Meadows Place",
+      "legal_name": "Meadows Place city"
+    },
+    {
+      "geoid": "4847460",
+      "name": "Megargel",
+      "legal_name": "Megargel town"
+    },
+    {
+      "geoid": "4847496",
+      "name": "Melissa",
+      "legal_name": "Melissa city"
+    },
+    {
+      "geoid": "4847568",
+      "name": "Melvin",
+      "legal_name": "Melvin town"
+    },
+    {
+      "geoid": "4847616",
+      "name": "Memphis",
+      "legal_name": "Memphis city"
+    },
+    {
+      "geoid": "4847628",
+      "name": "Menard",
+      "legal_name": "Menard city"
+    },
+    {
+      "geoid": "4847700",
+      "name": "Mercedes",
+      "legal_name": "Mercedes city"
+    },
+    {
+      "geoid": "4847760",
+      "name": "Meridian",
+      "legal_name": "Meridian city"
+    },
+    {
+      "geoid": "4847796",
+      "name": "Merkel",
+      "legal_name": "Merkel town"
+    },
+    {
+      "geoid": "4847820",
+      "name": "Mertens",
+      "legal_name": "Mertens town"
+    },
+    {
+      "geoid": "4847832",
+      "name": "Mertzon",
+      "legal_name": "Mertzon city"
+    },
+    {
+      "geoid": "4847892",
+      "name": "Mesquite",
+      "legal_name": "Mesquite city"
+    },
+    {
+      "geoid": "4847916",
+      "name": "Mexia",
+      "legal_name": "Mexia city"
+    },
+    {
+      "geoid": "4847988",
+      "name": "Miami",
+      "legal_name": "Miami city"
+    },
+    {
+      "geoid": "4848072",
+      "name": "Midland",
+      "legal_name": "Midland city"
+    },
+    {
+      "geoid": "4848096",
+      "name": "Midlothian",
+      "legal_name": "Midlothian city"
+    },
+    {
+      "geoid": "4848180",
+      "name": "Midway",
+      "legal_name": "Midway city"
+    },
+    {
+      "geoid": "4848336",
+      "name": "Milano",
+      "legal_name": "Milano city"
+    },
+    {
+      "geoid": "4848372",
+      "name": "Mildred",
+      "legal_name": "Mildred town"
+    },
+    {
+      "geoid": "4848396",
+      "name": "Miles",
+      "legal_name": "Miles city"
+    },
+    {
+      "geoid": "4848408",
+      "name": "Milford",
+      "legal_name": "Milford town"
+    },
+    {
+      "geoid": "4848478",
+      "name": "Miller's Cove",
+      "legal_name": "Miller's Cove town"
+    },
+    {
+      "geoid": "4848564",
+      "name": "Millsap",
+      "legal_name": "Millsap town"
+    },
+    {
+      "geoid": "4848648",
+      "name": "Mineola",
+      "legal_name": "Mineola city"
+    },
+    {
+      "geoid": "4848684",
+      "name": "Mineral Wells",
+      "legal_name": "Mineral Wells city"
+    },
+    {
+      "geoid": "4848720",
+      "name": "Mingus",
+      "legal_name": "Mingus city"
+    },
+    {
+      "geoid": "4848768",
+      "name": "Mission",
+      "legal_name": "Mission city"
+    },
+    {
+      "geoid": "4848804",
+      "name": "Missouri City",
+      "legal_name": "Missouri City city"
+    },
+    {
+      "geoid": "4848852",
+      "name": "Mobeetie",
+      "legal_name": "Mobeetie city"
+    },
+    {
+      "geoid": "4848858",
+      "name": "Mobile City",
+      "legal_name": "Mobile City city"
+    },
+    {
+      "geoid": "4848936",
+      "name": "Monahans",
+      "legal_name": "Monahans city"
+    },
+    {
+      "geoid": "4849068",
+      "name": "Mont Belvieu",
+      "legal_name": "Mont Belvieu city"
+    },
+    {
+      "geoid": "4849128",
+      "name": "Montgomery",
+      "legal_name": "Montgomery city"
+    },
+    {
+      "geoid": "4849200",
+      "name": "Moody",
+      "legal_name": "Moody city"
+    },
+    {
+      "geoid": "4849272",
+      "name": "Moore Station",
+      "legal_name": "Moore Station city"
+    },
+    {
+      "geoid": "4849320",
+      "name": "Moran",
+      "legal_name": "Moran city"
+    },
+    {
+      "geoid": "4849356",
+      "name": "Morgan",
+      "legal_name": "Morgan city"
+    },
+    {
+      "geoid": "4849392",
+      "name": "Morgan's Point Resort",
+      "legal_name": "Morgan's Point Resort city"
+    },
+    {
+      "geoid": "4849380",
+      "name": "Morgan's Point",
+      "legal_name": "Morgan's Point city"
+    },
+    {
+      "geoid": "4849464",
+      "name": "Morton",
+      "legal_name": "Morton city"
+    },
+    {
+      "geoid": "4849560",
+      "name": "Moulton",
+      "legal_name": "Moulton town"
+    },
+    {
+      "geoid": "4849692",
+      "name": "Mount Calm",
+      "legal_name": "Mount Calm city"
+    },
+    {
+      "geoid": "4849728",
+      "name": "Mount Enterprise",
+      "legal_name": "Mount Enterprise city"
+    },
+    {
+      "geoid": "4849800",
+      "name": "Mount Pleasant",
+      "legal_name": "Mount Pleasant city"
+    },
+    {
+      "geoid": "4849860",
+      "name": "Mount Vernon",
+      "legal_name": "Mount Vernon town"
+    },
+    {
+      "geoid": "4849600",
+      "name": "Mountain City",
+      "legal_name": "Mountain City city"
+    },
+    {
+      "geoid": "4849932",
+      "name": "Muenster",
+      "legal_name": "Muenster city"
+    },
+    {
+      "geoid": "4849968",
+      "name": "Muleshoe",
+      "legal_name": "Muleshoe city"
+    },
+    {
+      "geoid": "4849992",
+      "name": "Mullin",
+      "legal_name": "Mullin town"
+    },
+    {
+      "geoid": "4850040",
+      "name": "Munday",
+      "legal_name": "Munday city"
+    },
+    {
+      "geoid": "4850076",
+      "name": "Murchison",
+      "legal_name": "Murchison city"
+    },
+    {
+      "geoid": "4850100",
+      "name": "Murphy",
+      "legal_name": "Murphy city"
+    },
+    {
+      "geoid": "4850200",
+      "name": "Mustang Ridge",
+      "legal_name": "Mustang Ridge city"
+    },
+    {
+      "geoid": "4850184",
+      "name": "Mustang",
+      "legal_name": "Mustang town"
+    },
+    {
+      "geoid": "4850256",
+      "name": "Nacogdoches",
+      "legal_name": "Nacogdoches city"
+    },
+    {
+      "geoid": "4850316",
+      "name": "Naples",
+      "legal_name": "Naples city"
+    },
+    {
+      "geoid": "4850352",
+      "name": "Nash",
+      "legal_name": "Nash city"
+    },
+    {
+      "geoid": "4850376",
+      "name": "Nassau Bay",
+      "legal_name": "Nassau Bay city"
+    },
+    {
+      "geoid": "4850400",
+      "name": "Natalia",
+      "legal_name": "Natalia city"
+    },
+    {
+      "geoid": "4850448",
+      "name": "Navarro",
+      "legal_name": "Navarro town"
+    },
+    {
+      "geoid": "4850472",
+      "name": "Navasota",
+      "legal_name": "Navasota city"
+    },
+    {
+      "geoid": "4850496",
+      "name": "Nazareth",
+      "legal_name": "Nazareth city"
+    },
+    {
+      "geoid": "4850580",
+      "name": "Nederland",
+      "legal_name": "Nederland city"
+    },
+    {
+      "geoid": "4850628",
+      "name": "Needville",
+      "legal_name": "Needville city"
+    },
+    {
+      "geoid": "4850724",
+      "name": "Nesbitt",
+      "legal_name": "Nesbitt town"
+    },
+    {
+      "geoid": "4850760",
+      "name": "Nevada",
+      "legal_name": "Nevada city"
+    },
+    {
+      "geoid": "4850796",
+      "name": "New Berlin",
+      "legal_name": "New Berlin city"
+    },
+    {
+      "geoid": "4850808",
+      "name": "New Boston",
+      "legal_name": "New Boston city"
+    },
+    {
+      "geoid": "4850820",
+      "name": "New Braunfels",
+      "legal_name": "New Braunfels city"
+    },
+    {
+      "geoid": "4850876",
+      "name": "New Chapel Hill",
+      "legal_name": "New Chapel Hill city"
+    },
+    {
+      "geoid": "4850916",
+      "name": "New Deal",
+      "legal_name": "New Deal town"
+    },
+    {
+      "geoid": "4850920",
+      "name": "New Fairview",
+      "legal_name": "New Fairview city"
+    },
+    {
+      "geoid": "4851012",
+      "name": "New Home",
+      "legal_name": "New Home city"
+    },
+    {
+      "geoid": "4851036",
+      "name": "New Hope",
+      "legal_name": "New Hope town"
+    },
+    {
+      "geoid": "4851168",
+      "name": "New London",
+      "legal_name": "New London city"
+    },
+    {
+      "geoid": "4851336",
+      "name": "New Summerfield",
+      "legal_name": "New Summerfield city"
+    },
+    {
+      "geoid": "4851396",
+      "name": "New Waverly",
+      "legal_name": "New Waverly city"
+    },
+    {
+      "geoid": "4850772",
+      "name": "Newark",
+      "legal_name": "Newark city"
+    },
+    {
+      "geoid": "4850868",
+      "name": "Newcastle",
+      "legal_name": "Newcastle city"
+    },
+    {
+      "geoid": "4851372",
+      "name": "Newton",
+      "legal_name": "Newton city"
+    },
+    {
+      "geoid": "4851444",
+      "name": "Neylandville",
+      "legal_name": "Neylandville town"
+    },
+    {
+      "geoid": "4851492",
+      "name": "Niederwald",
+      "legal_name": "Niederwald city"
+    },
+    {
+      "geoid": "4851588",
+      "name": "Nixon",
+      "legal_name": "Nixon city"
+    },
+    {
+      "geoid": "4851648",
+      "name": "Nocona",
+      "legal_name": "Nocona city"
+    },
+    {
+      "geoid": "4851708",
+      "name": "Nolanville",
+      "legal_name": "Nolanville city"
+    },
+    {
+      "geoid": "4851720",
+      "name": "Nome",
+      "legal_name": "Nome city"
+    },
+    {
+      "geoid": "4851756",
+      "name": "Noonday",
+      "legal_name": "Noonday city"
+    },
+    {
+      "geoid": "4851792",
+      "name": "Nordheim",
+      "legal_name": "Nordheim city"
+    },
+    {
+      "geoid": "4851840",
+      "name": "Normangee",
+      "legal_name": "Normangee town"
+    },
+    {
+      "geoid": "4851984",
+      "name": "North Cleveland",
+      "legal_name": "North Cleveland city"
+    },
+    {
+      "geoid": "4852356",
+      "name": "North Richland Hills",
+      "legal_name": "North Richland Hills city"
+    },
+    {
+      "geoid": "4852212",
+      "name": "Northlake",
+      "legal_name": "Northlake town"
+    },
+    {
+      "geoid": "4852668",
+      "name": "Novice",
+      "legal_name": "Novice city"
+    },
+    {
+      "geoid": "4853304",
+      "name": "O'Brien",
+      "legal_name": "O'Brien city"
+    },
+    {
+      "geoid": "4853436",
+      "name": "O'Donnell",
+      "legal_name": "O'Donnell city"
+    },
+    {
+      "geoid": "4852902",
+      "name": "Oak Grove",
+      "legal_name": "Oak Grove town"
+    },
+    {
+      "geoid": "4853115",
+      "name": "Oak Leaf",
+      "legal_name": "Oak Leaf city"
+    },
+    {
+      "geoid": "4853130",
+      "name": "Oak Point",
+      "legal_name": "Oak Point city"
+    },
+    {
+      "geoid": "4853190",
+      "name": "Oak Ridge North",
+      "legal_name": "Oak Ridge North city"
+    },
+    {
+      "geoid": "4853154",
+      "name": "Oak Ridge",
+      "legal_name": "Oak Ridge town"
+    },
+    {
+      "geoid": "4853160",
+      "name": "Oak Ridge",
+      "legal_name": "Oak Ridge town"
+    },
+    {
+      "geoid": "4853217",
+      "name": "Oak Valley",
+      "legal_name": "Oak Valley town"
+    },
+    {
+      "geoid": "4853232",
+      "name": "Oakwood",
+      "legal_name": "Oakwood town"
+    },
+    {
+      "geoid": "4853376",
+      "name": "Odem",
+      "legal_name": "Odem city"
+    },
+    {
+      "geoid": "4853388",
+      "name": "Odessa",
+      "legal_name": "Odessa city"
+    },
+    {
+      "geoid": "4853520",
+      "name": "Oglesby",
+      "legal_name": "Oglesby city"
+    },
+    {
+      "geoid": "4853824",
+      "name": "Old River-Winfree",
+      "legal_name": "Old River-Winfree city"
+    },
+    {
+      "geoid": "4853988",
+      "name": "Olmos Park",
+      "legal_name": "Olmos Park city"
+    },
+    {
+      "geoid": "4854000",
+      "name": "Olney",
+      "legal_name": "Olney city"
+    },
+    {
+      "geoid": "4854012",
+      "name": "Olton",
+      "legal_name": "Olton city"
+    },
+    {
+      "geoid": "4854024",
+      "name": "Omaha",
+      "legal_name": "Omaha city"
+    },
+    {
+      "geoid": "4854048",
+      "name": "Onalaska",
+      "legal_name": "Onalaska city"
+    },
+    {
+      "geoid": "4854075",
+      "name": "Opdyke West",
+      "legal_name": "Opdyke West town"
+    },
+    {
+      "geoid": "4854168",
+      "name": "Orange Grove",
+      "legal_name": "Orange Grove city"
+    },
+    {
+      "geoid": "4854132",
+      "name": "Orange",
+      "legal_name": "Orange city"
+    },
+    {
+      "geoid": "4854192",
+      "name": "Orchard",
+      "legal_name": "Orchard city"
+    },
+    {
+      "geoid": "4854216",
+      "name": "Ore City",
+      "legal_name": "Ore City city"
+    },
+    {
+      "geoid": "4854432",
+      "name": "Overton",
+      "legal_name": "Overton city"
+    },
+    {
+      "geoid": "4854444",
+      "name": "Ovilla",
+      "legal_name": "Ovilla city"
+    },
+    {
+      "geoid": "4854528",
+      "name": "Oyster Creek",
+      "legal_name": "Oyster Creek city"
+    },
+    {
+      "geoid": "4854600",
+      "name": "Paducah",
+      "legal_name": "Paducah town"
+    },
+    {
+      "geoid": "4854636",
+      "name": "Paint Rock",
+      "legal_name": "Paint Rock town"
+    },
+    {
+      "geoid": "4854684",
+      "name": "Palacios",
+      "legal_name": "Palacios city"
+    },
+    {
+      "geoid": "4854708",
+      "name": "Palestine",
+      "legal_name": "Palestine city"
+    },
+    {
+      "geoid": "4854726",
+      "name": "Palisades",
+      "legal_name": "Palisades village"
+    },
+    {
+      "geoid": "4854798",
+      "name": "Palm Valley",
+      "legal_name": "Palm Valley city"
+    },
+    {
+      "geoid": "4854744",
+      "name": "Palmer",
+      "legal_name": "Palmer town"
+    },
+    {
+      "geoid": "4854780",
+      "name": "Palmhurst",
+      "legal_name": "Palmhurst city"
+    },
+    {
+      "geoid": "4854804",
+      "name": "Palmview",
+      "legal_name": "Palmview city"
+    },
+    {
+      "geoid": "4854912",
+      "name": "Pampa",
+      "legal_name": "Pampa city"
+    },
+    {
+      "geoid": "4854960",
+      "name": "Panhandle",
+      "legal_name": "Panhandle town"
+    },
+    {
+      "geoid": "4855008",
+      "name": "Panorama Village",
+      "legal_name": "Panorama Village city"
+    },
+    {
+      "geoid": "4855020",
+      "name": "Pantego",
+      "legal_name": "Pantego town"
+    },
+    {
+      "geoid": "4855056",
+      "name": "Paradise",
+      "legal_name": "Paradise city"
+    },
+    {
+      "geoid": "4855080",
+      "name": "Paris",
+      "legal_name": "Paris city"
+    },
+    {
+      "geoid": "4855152",
+      "name": "Parker",
+      "legal_name": "Parker city"
+    },
+    {
+      "geoid": "4856000",
+      "name": "Pasadena",
+      "legal_name": "Pasadena city"
+    },
+    {
+      "geoid": "4856108",
+      "name": "Pattison",
+      "legal_name": "Pattison city"
+    },
+    {
+      "geoid": "4856156",
+      "name": "Patton Village",
+      "legal_name": "Patton Village city"
+    },
+    {
+      "geoid": "4856276",
+      "name": "Payne Springs",
+      "legal_name": "Payne Springs town"
+    },
+    {
+      "geoid": "4856348",
+      "name": "Pearland",
+      "legal_name": "Pearland city"
+    },
+    {
+      "geoid": "4856384",
+      "name": "Pearsall",
+      "legal_name": "Pearsall city"
+    },
+    {
+      "geoid": "4856432",
+      "name": "Peaster",
+      "legal_name": "Peaster town"
+    },
+    {
+      "geoid": "4856468",
+      "name": "Pecan Gap",
+      "legal_name": "Pecan Gap city"
+    },
+    {
+      "geoid": "4856485",
+      "name": "Pecan Hill",
+      "legal_name": "Pecan Hill city"
+    },
+    {
+      "geoid": "4856640",
+      "name": "Pelican Bay",
+      "legal_name": "Pelican Bay city"
+    },
+    {
+      "geoid": "4856672",
+      "name": "Penelope",
+      "legal_name": "Penelope town"
+    },
+    {
+      "geoid": "4856696",
+      "name": "Penitas",
+      "legal_name": "Penitas city"
+    },
+    {
+      "geoid": "4856912",
+      "name": "Perryton",
+      "legal_name": "Perryton city"
+    },
+    {
+      "geoid": "4856996",
+      "name": "Petersburg",
+      "legal_name": "Petersburg city"
+    },
+    {
+      "geoid": "4857044",
+      "name": "Petrolia",
+      "legal_name": "Petrolia city"
+    },
+    {
+      "geoid": "4857056",
+      "name": "Petronila",
+      "legal_name": "Petronila city"
+    },
+    {
+      "geoid": "4857176",
+      "name": "Pflugerville",
+      "legal_name": "Pflugerville city"
+    },
+    {
+      "geoid": "4857200",
+      "name": "Pharr",
+      "legal_name": "Pharr city"
+    },
+    {
+      "geoid": "4857476",
+      "name": "Pilot Point",
+      "legal_name": "Pilot Point city"
+    },
+    {
+      "geoid": "4857524",
+      "name": "Pine Forest",
+      "legal_name": "Pine Forest city"
+    },
+    {
+      "geoid": "4857615",
+      "name": "Pine Island",
+      "legal_name": "Pine Island town"
+    },
+    {
+      "geoid": "4857608",
+      "name": "Pinehurst",
+      "legal_name": "Pinehurst city"
+    },
+    {
+      "geoid": "4857644",
+      "name": "Pineland",
+      "legal_name": "Pineland city"
+    },
+    {
+      "geoid": "4857800",
+      "name": "Piney Point Village",
+      "legal_name": "Piney Point Village city"
+    },
+    {
+      "geoid": "4857908",
+      "name": "Pittsburg",
+      "legal_name": "Pittsburg city"
+    },
+    {
+      "geoid": "4857968",
+      "name": "Plains",
+      "legal_name": "Plains town"
+    },
+    {
+      "geoid": "4857980",
+      "name": "Plainview",
+      "legal_name": "Plainview city"
+    },
+    {
+      "geoid": "4858016",
+      "name": "Plano",
+      "legal_name": "Plano city"
+    },
+    {
+      "geoid": "4858040",
+      "name": "Plantersville",
+      "legal_name": "Plantersville city"
+    },
+    {
+      "geoid": "4858088",
+      "name": "Pleak",
+      "legal_name": "Pleak village"
+    },
+    {
+      "geoid": "4858400",
+      "name": "Pleasant Valley",
+      "legal_name": "Pleasant Valley town"
+    },
+    {
+      "geoid": "4858280",
+      "name": "Pleasanton",
+      "legal_name": "Pleasanton city"
+    },
+    {
+      "geoid": "4858448",
+      "name": "Plum Grove",
+      "legal_name": "Plum Grove city"
+    },
+    {
+      "geoid": "4858502",
+      "name": "Poetry",
+      "legal_name": "Poetry town"
+    },
+    {
+      "geoid": "4858556",
+      "name": "Point Blank",
+      "legal_name": "Point Blank city"
+    },
+    {
+      "geoid": "4858568",
+      "name": "Point Comfort",
+      "legal_name": "Point Comfort city"
+    },
+    {
+      "geoid": "4858586",
+      "name": "Point Venture",
+      "legal_name": "Point Venture village"
+    },
+    {
+      "geoid": "4858532",
+      "name": "Point",
+      "legal_name": "Point city"
+    },
+    {
+      "geoid": "4858664",
+      "name": "Ponder",
+      "legal_name": "Ponder town"
+    },
+    {
+      "geoid": "4858808",
+      "name": "Port Aransas",
+      "legal_name": "Port Aransas city"
+    },
+    {
+      "geoid": "4858820",
+      "name": "Port Arthur",
+      "legal_name": "Port Arthur city"
+    },
+    {
+      "geoid": "4858892",
+      "name": "Port Isabel",
+      "legal_name": "Port Isabel city"
+    },
+    {
+      "geoid": "4858916",
+      "name": "Port Lavaca",
+      "legal_name": "Port Lavaca city"
+    },
+    {
+      "geoid": "4858940",
+      "name": "Port Neches",
+      "legal_name": "Port Neches city"
+    },
+    {
+      "geoid": "4858904",
+      "name": "Portland",
+      "legal_name": "Portland city"
+    },
+    {
+      "geoid": "4859065",
+      "name": "Post Oak Bend",
+      "legal_name": "Post Oak Bend city"
+    },
+    {
+      "geoid": "4859012",
+      "name": "Post",
+      "legal_name": "Post city"
+    },
+    {
+      "geoid": "4859084",
+      "name": "Poteet",
+      "legal_name": "Poteet city"
+    },
+    {
+      "geoid": "4859096",
+      "name": "Poth",
+      "legal_name": "Poth town"
+    },
+    {
+      "geoid": "4859132",
+      "name": "Pottsboro",
+      "legal_name": "Pottsboro town"
+    },
+    {
+      "geoid": "4859168",
+      "name": "Powell",
+      "legal_name": "Powell town"
+    },
+    {
+      "geoid": "4859192",
+      "name": "Poynor",
+      "legal_name": "Poynor town"
+    },
+    {
+      "geoid": "4859336",
+      "name": "Prairie View",
+      "legal_name": "Prairie View city"
+    },
+    {
+      "geoid": "4859384",
+      "name": "Premont",
+      "legal_name": "Premont city"
+    },
+    {
+      "geoid": "4859396",
+      "name": "Presidio",
+      "legal_name": "Presidio city"
+    },
+    {
+      "geoid": "4859540",
+      "name": "Primera",
+      "legal_name": "Primera town"
+    },
+    {
+      "geoid": "4859576",
+      "name": "Princeton",
+      "legal_name": "Princeton city"
+    },
+    {
+      "geoid": "4859642",
+      "name": "Progreso Lakes",
+      "legal_name": "Progreso Lakes city"
+    },
+    {
+      "geoid": "4859636",
+      "name": "Progreso",
+      "legal_name": "Progreso city"
+    },
+    {
+      "geoid": "4859696",
+      "name": "Prosper",
+      "legal_name": "Prosper town"
+    },
+    {
+      "geoid": "4859748",
+      "name": "Providence Village",
+      "legal_name": "Providence Village town"
+    },
+    {
+      "geoid": "4859984",
+      "name": "Putnam",
+      "legal_name": "Putnam town"
+    },
+    {
+      "geoid": "4859996",
+      "name": "Pyote",
+      "legal_name": "Pyote town"
+    },
+    {
+      "geoid": "4860044",
+      "name": "Quanah",
+      "legal_name": "Quanah city"
+    },
+    {
+      "geoid": "4860080",
+      "name": "Queen City",
+      "legal_name": "Queen City city"
+    },
+    {
+      "geoid": "4860140",
+      "name": "Quinlan",
+      "legal_name": "Quinlan city"
+    },
+    {
+      "geoid": "4860164",
+      "name": "Quintana",
+      "legal_name": "Quintana town"
+    },
+    {
+      "geoid": "4860176",
+      "name": "Quitaque",
+      "legal_name": "Quitaque city"
+    },
+    {
+      "geoid": "4860188",
+      "name": "Quitman",
+      "legal_name": "Quitman city"
+    },
+    {
+      "geoid": "4860356",
+      "name": "Ralls",
+      "legal_name": "Ralls city"
+    },
+    {
+      "geoid": "4860544",
+      "name": "Rancho Viejo",
+      "legal_name": "Rancho Viejo town"
+    },
+    {
+      "geoid": "4860632",
+      "name": "Ranger",
+      "legal_name": "Ranger city"
+    },
+    {
+      "geoid": "4860644",
+      "name": "Rangerville",
+      "legal_name": "Rangerville city"
+    },
+    {
+      "geoid": "4860668",
+      "name": "Rankin",
+      "legal_name": "Rankin city"
+    },
+    {
+      "geoid": "4860672",
+      "name": "Ransom Canyon",
+      "legal_name": "Ransom Canyon town"
+    },
+    {
+      "geoid": "4860752",
+      "name": "Ravenna",
+      "legal_name": "Ravenna city"
+    },
+    {
+      "geoid": "4860836",
+      "name": "Raymondville",
+      "legal_name": "Raymondville city"
+    },
+    {
+      "geoid": "4861172",
+      "name": "Red Lick",
+      "legal_name": "Red Lick city"
+    },
+    {
+      "geoid": "4861196",
+      "name": "Red Oak",
+      "legal_name": "Red Oak city"
+    },
+    {
+      "geoid": "4861340",
+      "name": "Redwater",
+      "legal_name": "Redwater city"
+    },
+    {
+      "geoid": "4861436",
+      "name": "Refugio",
+      "legal_name": "Refugio town"
+    },
+    {
+      "geoid": "4861508",
+      "name": "Reklaw",
+      "legal_name": "Reklaw city"
+    },
+    {
+      "geoid": "4861604",
+      "name": "Reno",
+      "legal_name": "Reno city"
+    },
+    {
+      "geoid": "4861592",
+      "name": "Reno",
+      "legal_name": "Reno city"
+    },
+    {
+      "geoid": "4861616",
+      "name": "Retreat",
+      "legal_name": "Retreat town"
+    },
+    {
+      "geoid": "4861700",
+      "name": "Rhome",
+      "legal_name": "Rhome city"
+    },
+    {
+      "geoid": "4861736",
+      "name": "Rice",
+      "legal_name": "Rice city"
+    },
+    {
+      "geoid": "4861796",
+      "name": "Richardson",
+      "legal_name": "Richardson city"
+    },
+    {
+      "geoid": "4861844",
+      "name": "Richland Hills",
+      "legal_name": "Richland Hills city"
+    },
+    {
+      "geoid": "4861880",
+      "name": "Richland Springs",
+      "legal_name": "Richland Springs town"
+    },
+    {
+      "geoid": "4861820",
+      "name": "Richland",
+      "legal_name": "Richland town"
+    },
+    {
+      "geoid": "4861892",
+      "name": "Richmond",
+      "legal_name": "Richmond city"
+    },
+    {
+      "geoid": "4861904",
+      "name": "Richwood",
+      "legal_name": "Richwood city"
+    },
+    {
+      "geoid": "4862108",
+      "name": "Riesel",
+      "legal_name": "Riesel city"
+    },
+    {
+      "geoid": "4862138",
+      "name": "Rio Bravo",
+      "legal_name": "Rio Bravo city"
+    },
+    {
+      "geoid": "4862168",
+      "name": "Rio Grande City",
+      "legal_name": "Rio Grande City city"
+    },
+    {
+      "geoid": "4862180",
+      "name": "Rio Hondo",
+      "legal_name": "Rio Hondo city"
+    },
+    {
+      "geoid": "4862240",
+      "name": "Rio Vista",
+      "legal_name": "Rio Vista city"
+    },
+    {
+      "geoid": "4862252",
+      "name": "Rising Star",
+      "legal_name": "Rising Star town"
+    },
+    {
+      "geoid": "4862384",
+      "name": "River Oaks",
+      "legal_name": "River Oaks city"
+    },
+    {
+      "geoid": "4862408",
+      "name": "Riverside",
+      "legal_name": "Riverside city"
+    },
+    {
+      "geoid": "4862486",
+      "name": "Road Runner",
+      "legal_name": "Road Runner town"
+    },
+    {
+      "geoid": "4862504",
+      "name": "Roanoke",
+      "legal_name": "Roanoke city"
+    },
+    {
+      "geoid": "4862528",
+      "name": "Roaring Springs",
+      "legal_name": "Roaring Springs town"
+    },
+    {
+      "geoid": "4862564",
+      "name": "Robert Lee",
+      "legal_name": "Robert Lee city"
+    },
+    {
+      "geoid": "4862588",
+      "name": "Robinson",
+      "legal_name": "Robinson city"
+    },
+    {
+      "geoid": "4862600",
+      "name": "Robstown",
+      "legal_name": "Robstown city"
+    },
+    {
+      "geoid": "4862612",
+      "name": "Roby",
+      "legal_name": "Roby city"
+    },
+    {
+      "geoid": "4862636",
+      "name": "Rochester",
+      "legal_name": "Rochester town"
+    },
+    {
+      "geoid": "4862672",
+      "name": "Rockdale",
+      "legal_name": "Rockdale city"
+    },
+    {
+      "geoid": "4862804",
+      "name": "Rockport",
+      "legal_name": "Rockport city"
+    },
+    {
+      "geoid": "4862816",
+      "name": "Rocksprings",
+      "legal_name": "Rocksprings town"
+    },
+    {
+      "geoid": "4862828",
+      "name": "Rockwall",
+      "legal_name": "Rockwall city"
+    },
+    {
+      "geoid": "4862870",
+      "name": "Rocky Mound",
+      "legal_name": "Rocky Mound town"
+    },
+    {
+      "geoid": "4862924",
+      "name": "Rogers",
+      "legal_name": "Rogers town"
+    },
+    {
+      "geoid": "4863008",
+      "name": "Rollingwood",
+      "legal_name": "Rollingwood city"
+    },
+    {
+      "geoid": "4863020",
+      "name": "Roma",
+      "legal_name": "Roma city"
+    },
+    {
+      "geoid": "4863044",
+      "name": "Roman Forest",
+      "legal_name": "Roman Forest city"
+    },
+    {
+      "geoid": "4863140",
+      "name": "Ropesville",
+      "legal_name": "Ropesville city"
+    },
+    {
+      "geoid": "4863176",
+      "name": "Roscoe",
+      "legal_name": "Roscoe city"
+    },
+    {
+      "geoid": "4863200",
+      "name": "Rose City",
+      "legal_name": "Rose City city"
+    },
+    {
+      "geoid": "4863272",
+      "name": "Rose Hill Acres",
+      "legal_name": "Rose Hill Acres city"
+    },
+    {
+      "geoid": "4863188",
+      "name": "Rosebud",
+      "legal_name": "Rosebud city"
+    },
+    {
+      "geoid": "4863284",
+      "name": "Rosenberg",
+      "legal_name": "Rosenberg city"
+    },
+    {
+      "geoid": "4863380",
+      "name": "Ross",
+      "legal_name": "Ross city"
+    },
+    {
+      "geoid": "4863404",
+      "name": "Rosser",
+      "legal_name": "Rosser village"
+    },
+    {
+      "geoid": "4863464",
+      "name": "Rotan",
+      "legal_name": "Rotan city"
+    },
+    {
+      "geoid": "4863476",
+      "name": "Round Mountain",
+      "legal_name": "Round Mountain town"
+    },
+    {
+      "geoid": "4863500",
+      "name": "Round Rock",
+      "legal_name": "Round Rock city"
+    },
+    {
+      "geoid": "4863524",
+      "name": "Round Top",
+      "legal_name": "Round Top town"
+    },
+    {
+      "geoid": "4863572",
+      "name": "Rowlett",
+      "legal_name": "Rowlett city"
+    },
+    {
+      "geoid": "4863584",
+      "name": "Roxton",
+      "legal_name": "Roxton city"
+    },
+    {
+      "geoid": "4863668",
+      "name": "Royse City",
+      "legal_name": "Royse City city"
+    },
+    {
+      "geoid": "4863752",
+      "name": "Rule",
+      "legal_name": "Rule town"
+    },
+    {
+      "geoid": "4863782",
+      "name": "Runaway Bay",
+      "legal_name": "Runaway Bay city"
+    },
+    {
+      "geoid": "4863788",
+      "name": "Runge",
+      "legal_name": "Runge town"
+    },
+    {
+      "geoid": "4863848",
+      "name": "Rusk",
+      "legal_name": "Rusk city"
+    },
+    {
+      "geoid": "4864004",
+      "name": "Sabinal",
+      "legal_name": "Sabinal city"
+    },
+    {
+      "geoid": "4864064",
+      "name": "Sachse",
+      "legal_name": "Sachse city"
+    },
+    {
+      "geoid": "4864088",
+      "name": "Sadler",
+      "legal_name": "Sadler city"
+    },
+    {
+      "geoid": "4864112",
+      "name": "Saginaw",
+      "legal_name": "Saginaw city"
+    },
+    {
+      "geoid": "4864184",
+      "name": "Saint Jo",
+      "legal_name": "Saint Jo city"
+    },
+    {
+      "geoid": "4864268",
+      "name": "Salado",
+      "legal_name": "Salado village"
+    },
+    {
+      "geoid": "4864472",
+      "name": "San Angelo",
+      "legal_name": "San Angelo city"
+    },
+    {
+      "geoid": "4865000",
+      "name": "San Antonio",
+      "legal_name": "San Antonio city"
+    },
+    {
+      "geoid": "4865024",
+      "name": "San Augustine",
+      "legal_name": "San Augustine city"
+    },
+    {
+      "geoid": "4865036",
+      "name": "San Benito",
+      "legal_name": "San Benito city"
+    },
+    {
+      "geoid": "4865180",
+      "name": "San Diego",
+      "legal_name": "San Diego city"
+    },
+    {
+      "geoid": "4865360",
+      "name": "San Elizario",
+      "legal_name": "San Elizario city"
+    },
+    {
+      "geoid": "4865372",
+      "name": "San Felipe",
+      "legal_name": "San Felipe town"
+    },
+    {
+      "geoid": "4865516",
+      "name": "San Juan",
+      "legal_name": "San Juan city"
+    },
+    {
+      "geoid": "4865552",
+      "name": "San Leanna",
+      "legal_name": "San Leanna village"
+    },
+    {
+      "geoid": "4865600",
+      "name": "San Marcos",
+      "legal_name": "San Marcos city"
+    },
+    {
+      "geoid": "4865612",
+      "name": "San Patricio",
+      "legal_name": "San Patricio city"
+    },
+    {
+      "geoid": "4865636",
+      "name": "San Perlita",
+      "legal_name": "San Perlita city"
+    },
+    {
+      "geoid": "4865648",
+      "name": "San Saba",
+      "legal_name": "San Saba city"
+    },
+    {
+      "geoid": "4865066",
+      "name": "Sanctuary",
+      "legal_name": "Sanctuary town"
+    },
+    {
+      "geoid": "4865344",
+      "name": "Sandy Oaks",
+      "legal_name": "Sandy Oaks city"
+    },
+    {
+      "geoid": "4865345",
+      "name": "Sandy Point",
+      "legal_name": "Sandy Point city"
+    },
+    {
+      "geoid": "4865384",
+      "name": "Sanford",
+      "legal_name": "Sanford town"
+    },
+    {
+      "geoid": "4865408",
+      "name": "Sanger",
+      "legal_name": "Sanger city"
+    },
+    {
+      "geoid": "4865660",
+      "name": "Sansom Park",
+      "legal_name": "Sansom Park city"
+    },
+    {
+      "geoid": "4865672",
+      "name": "Santa Anna",
+      "legal_name": "Santa Anna town"
+    },
+    {
+      "geoid": "4865690",
+      "name": "Santa Clara",
+      "legal_name": "Santa Clara city"
+    },
+    {
+      "geoid": "4865726",
+      "name": "Santa Fe",
+      "legal_name": "Santa Fe city"
+    },
+    {
+      "geoid": "4865768",
+      "name": "Santa Rosa",
+      "legal_name": "Santa Rosa town"
+    },
+    {
+      "geoid": "4866008",
+      "name": "Savoy",
+      "legal_name": "Savoy city"
+    },
+    {
+      "geoid": "4866128",
+      "name": "Schertz",
+      "legal_name": "Schertz city"
+    },
+    {
+      "geoid": "4866188",
+      "name": "Schulenburg",
+      "legal_name": "Schulenburg city"
+    },
+    {
+      "geoid": "4866284",
+      "name": "Scotland",
+      "legal_name": "Scotland city"
+    },
+    {
+      "geoid": "4866332",
+      "name": "Scottsville",
+      "legal_name": "Scottsville city"
+    },
+    {
+      "geoid": "4866368",
+      "name": "Scurry",
+      "legal_name": "Scurry town"
+    },
+    {
+      "geoid": "4866392",
+      "name": "Seabrook",
+      "legal_name": "Seabrook city"
+    },
+    {
+      "geoid": "4866416",
+      "name": "Seadrift",
+      "legal_name": "Seadrift city"
+    },
+    {
+      "geoid": "4866428",
+      "name": "Seagoville",
+      "legal_name": "Seagoville city"
+    },
+    {
+      "geoid": "4866440",
+      "name": "Seagraves",
+      "legal_name": "Seagraves city"
+    },
+    {
+      "geoid": "4866464",
+      "name": "Sealy",
+      "legal_name": "Sealy city"
+    },
+    {
+      "geoid": "4866644",
+      "name": "Seguin",
+      "legal_name": "Seguin city"
+    },
+    {
+      "geoid": "4866704",
+      "name": "Selma",
+      "legal_name": "Selma city"
+    },
+    {
+      "geoid": "4866764",
+      "name": "Seminole",
+      "legal_name": "Seminole city"
+    },
+    {
+      "geoid": "4866884",
+      "name": "Seven Oaks",
+      "legal_name": "Seven Oaks city"
+    },
+    {
+      "geoid": "4866908",
+      "name": "Seven Points",
+      "legal_name": "Seven Points city"
+    },
+    {
+      "geoid": "4866968",
+      "name": "Seymour",
+      "legal_name": "Seymour city"
+    },
+    {
+      "geoid": "4867100",
+      "name": "Shady Shores",
+      "legal_name": "Shady Shores town"
+    },
+    {
+      "geoid": "4867136",
+      "name": "Shallowater",
+      "legal_name": "Shallowater city"
+    },
+    {
+      "geoid": "4867160",
+      "name": "Shamrock",
+      "legal_name": "Shamrock city"
+    },
+    {
+      "geoid": "4867268",
+      "name": "Shavano Park",
+      "legal_name": "Shavano Park city"
+    },
+    {
+      "geoid": "4867400",
+      "name": "Shenandoah",
+      "legal_name": "Shenandoah city"
+    },
+    {
+      "geoid": "4867424",
+      "name": "Shepherd",
+      "legal_name": "Shepherd city"
+    },
+    {
+      "geoid": "4867496",
+      "name": "Sherman",
+      "legal_name": "Sherman city"
+    },
+    {
+      "geoid": "4867640",
+      "name": "Shiner",
+      "legal_name": "Shiner city"
+    },
+    {
+      "geoid": "4867688",
+      "name": "Shoreacres",
+      "legal_name": "Shoreacres city"
+    },
+    {
+      "geoid": "4867832",
+      "name": "Silsbee",
+      "legal_name": "Silsbee city"
+    },
+    {
+      "geoid": "4867904",
+      "name": "Silverton",
+      "legal_name": "Silverton city"
+    },
+    {
+      "geoid": "4867964",
+      "name": "Simonton",
+      "legal_name": "Simonton city"
+    },
+    {
+      "geoid": "4868036",
+      "name": "Sinton",
+      "legal_name": "Sinton city"
+    },
+    {
+      "geoid": "4868120",
+      "name": "Skellytown",
+      "legal_name": "Skellytown town"
+    },
+    {
+      "geoid": "4868180",
+      "name": "Slaton",
+      "legal_name": "Slaton city"
+    },
+    {
+      "geoid": "4868300",
+      "name": "Smiley",
+      "legal_name": "Smiley city"
+    },
+    {
+      "geoid": "4868456",
+      "name": "Smithville",
+      "legal_name": "Smithville city"
+    },
+    {
+      "geoid": "4868504",
+      "name": "Smyer",
+      "legal_name": "Smyer town"
+    },
+    {
+      "geoid": "4868576",
+      "name": "Snook",
+      "legal_name": "Snook city"
+    },
+    {
+      "geoid": "4868624",
+      "name": "Snyder",
+      "legal_name": "Snyder city"
+    },
+    {
+      "geoid": "4868636",
+      "name": "Socorro",
+      "legal_name": "Socorro city"
+    },
+    {
+      "geoid": "4868708",
+      "name": "Somerset",
+      "legal_name": "Somerset city"
+    },
+    {
+      "geoid": "4868720",
+      "name": "Somerville",
+      "legal_name": "Somerville city"
+    },
+    {
+      "geoid": "4868756",
+      "name": "Sonora",
+      "legal_name": "Sonora city"
+    },
+    {
+      "geoid": "4868828",
+      "name": "Sour Lake",
+      "legal_name": "Sour Lake city"
+    },
+    {
+      "geoid": "4868978",
+      "name": "South Frydek",
+      "legal_name": "South Frydek city"
+    },
+    {
+      "geoid": "4869020",
+      "name": "South Houston",
+      "legal_name": "South Houston city"
+    },
+    {
+      "geoid": "4869120",
+      "name": "South Mountain",
+      "legal_name": "South Mountain town"
+    },
+    {
+      "geoid": "4869140",
+      "name": "South Padre Island",
+      "legal_name": "South Padre Island town"
+    },
+    {
+      "geoid": "4869032",
+      "name": "Southlake",
+      "legal_name": "Southlake city"
+    },
+    {
+      "geoid": "4869104",
+      "name": "Southmayd",
+      "legal_name": "Southmayd city"
+    },
+    {
+      "geoid": "4869272",
+      "name": "Southside Place",
+      "legal_name": "Southside Place city"
+    },
+    {
+      "geoid": "4869476",
+      "name": "Spearman",
+      "legal_name": "Spearman city"
+    },
+    {
+      "geoid": "4869548",
+      "name": "Splendora",
+      "legal_name": "Splendora city"
+    },
+    {
+      "geoid": "4869560",
+      "name": "Spofford",
+      "legal_name": "Spofford city"
+    },
+    {
+      "geoid": "4869608",
+      "name": "Spring Branch",
+      "legal_name": "Spring Branch city"
+    },
+    {
+      "geoid": "4869830",
+      "name": "Spring Valley Village",
+      "legal_name": "Spring Valley Village city"
+    },
+    {
+      "geoid": "4869764",
+      "name": "Springlake",
+      "legal_name": "Springlake town"
+    },
+    {
+      "geoid": "4869800",
+      "name": "Springtown",
+      "legal_name": "Springtown city"
+    },
+    {
+      "geoid": "4869848",
+      "name": "Spur",
+      "legal_name": "Spur city"
+    },
+    {
+      "geoid": "4864172",
+      "name": "St. Hedwig",
+      "legal_name": "St. Hedwig town"
+    },
+    {
+      "geoid": "4864220",
+      "name": "St. Paul",
+      "legal_name": "St. Paul town"
+    },
+    {
+      "geoid": "4869908",
+      "name": "Stafford",
+      "legal_name": "Stafford city"
+    },
+    {
+      "geoid": "4869932",
+      "name": "Stagecoach",
+      "legal_name": "Stagecoach town"
+    },
+    {
+      "geoid": "4869980",
+      "name": "Stamford",
+      "legal_name": "Stamford city"
+    },
+    {
+      "geoid": "4870040",
+      "name": "Stanton",
+      "legal_name": "Stanton city"
+    },
+    {
+      "geoid": "4870052",
+      "name": "Staples",
+      "legal_name": "Staples city"
+    },
+    {
+      "geoid": "4870076",
+      "name": "Star Harbor",
+      "legal_name": "Star Harbor city"
+    },
+    {
+      "geoid": "4870070",
+      "name": "Starbase",
+      "legal_name": "Starbase city"
+    },
+    {
+      "geoid": "4870208",
+      "name": "Stephenville",
+      "legal_name": "Stephenville city"
+    },
+    {
+      "geoid": "4870232",
+      "name": "Sterling City",
+      "legal_name": "Sterling City city"
+    },
+    {
+      "geoid": "4870340",
+      "name": "Stinnett",
+      "legal_name": "Stinnett city"
+    },
+    {
+      "geoid": "4870376",
+      "name": "Stockdale",
+      "legal_name": "Stockdale city"
+    },
+    {
+      "geoid": "4870406",
+      "name": "Stockton Bend",
+      "legal_name": "Stockton Bend city"
+    },
+    {
+      "geoid": "4870544",
+      "name": "Stratford",
+      "legal_name": "Stratford city"
+    },
+    {
+      "geoid": "4870580",
+      "name": "Strawn",
+      "legal_name": "Strawn city"
+    },
+    {
+      "geoid": "4870604",
+      "name": "Streetman",
+      "legal_name": "Streetman town"
+    },
+    {
+      "geoid": "4870772",
+      "name": "Sudan",
+      "legal_name": "Sudan city"
+    },
+    {
+      "geoid": "4870808",
+      "name": "Sugar Land",
+      "legal_name": "Sugar Land city"
+    },
+    {
+      "geoid": "4870868",
+      "name": "Sullivan City",
+      "legal_name": "Sullivan City city"
+    },
+    {
+      "geoid": "4870904",
+      "name": "Sulphur Springs",
+      "legal_name": "Sulphur Springs city"
+    },
+    {
+      "geoid": "4871356",
+      "name": "Sun Valley",
+      "legal_name": "Sun Valley city"
+    },
+    {
+      "geoid": "4871060",
+      "name": "Sundown",
+      "legal_name": "Sundown city"
+    },
+    {
+      "geoid": "4871156",
+      "name": "Sunnyvale",
+      "legal_name": "Sunnyvale town"
+    },
+    {
+      "geoid": "4871180",
+      "name": "Sunray",
+      "legal_name": "Sunray city"
+    },
+    {
+      "geoid": "4871228",
+      "name": "Sunrise Beach Village",
+      "legal_name": "Sunrise Beach Village city"
+    },
+    {
+      "geoid": "4871324",
+      "name": "Sunset Valley",
+      "legal_name": "Sunset Valley city"
+    },
+    {
+      "geoid": "4871384",
+      "name": "Surfside Beach",
+      "legal_name": "Surfside Beach city"
+    },
+    {
+      "geoid": "4871492",
+      "name": "Sweeny",
+      "legal_name": "Sweeny city"
+    },
+    {
+      "geoid": "4871540",
+      "name": "Sweetwater",
+      "legal_name": "Sweetwater city"
+    },
+    {
+      "geoid": "4871684",
+      "name": "Taft",
+      "legal_name": "Taft city"
+    },
+    {
+      "geoid": "4871708",
+      "name": "Tahoka",
+      "legal_name": "Tahoka city"
+    },
+    {
+      "geoid": "4871732",
+      "name": "Talco",
+      "legal_name": "Talco city"
+    },
+    {
+      "geoid": "4871756",
+      "name": "Talty",
+      "legal_name": "Talty city"
+    },
+    {
+      "geoid": "4871924",
+      "name": "Tatum",
+      "legal_name": "Tatum city"
+    },
+    {
+      "geoid": "4871960",
+      "name": "Taylor Lake Village",
+      "legal_name": "Taylor Lake Village city"
+    },
+    {
+      "geoid": "4871966",
+      "name": "Taylor Landing",
+      "legal_name": "Taylor Landing city"
+    },
+    {
+      "geoid": "4871948",
+      "name": "Taylor",
+      "legal_name": "Taylor city"
+    },
+    {
+      "geoid": "4872020",
+      "name": "Teague",
+      "legal_name": "Teague city"
+    },
+    {
+      "geoid": "4872080",
+      "name": "Tehuacana",
+      "legal_name": "Tehuacana town"
+    },
+    {
+      "geoid": "4872176",
+      "name": "Temple",
+      "legal_name": "Temple city"
+    },
+    {
+      "geoid": "4872188",
+      "name": "Tenaha",
+      "legal_name": "Tenaha town"
+    },
+    {
+      "geoid": "4872296",
+      "name": "Terrell Hills",
+      "legal_name": "Terrell Hills city"
+    },
+    {
+      "geoid": "4872284",
+      "name": "Terrell",
+      "legal_name": "Terrell city"
+    },
+    {
+      "geoid": "4872368",
+      "name": "Texarkana",
+      "legal_name": "Texarkana city"
+    },
+    {
+      "geoid": "4872392",
+      "name": "Texas City",
+      "legal_name": "Texas City city"
+    },
+    {
+      "geoid": "4872464",
+      "name": "Texhoma",
+      "legal_name": "Texhoma city"
+    },
+    {
+      "geoid": "4872476",
+      "name": "Texline",
+      "legal_name": "Texline town"
+    },
+    {
+      "geoid": "4872530",
+      "name": "The Colony",
+      "legal_name": "The Colony city"
+    },
+    {
+      "geoid": "4872578",
+      "name": "The Hills",
+      "legal_name": "The Hills village"
+    },
+    {
+      "geoid": "4872740",
+      "name": "Thompsons",
+      "legal_name": "Thompsons town"
+    },
+    {
+      "geoid": "4872776",
+      "name": "Thorndale",
+      "legal_name": "Thorndale city"
+    },
+    {
+      "geoid": "4872788",
+      "name": "Thornton",
+      "legal_name": "Thornton town"
+    },
+    {
+      "geoid": "4872800",
+      "name": "Thorntonville",
+      "legal_name": "Thorntonville town"
+    },
+    {
+      "geoid": "4872824",
+      "name": "Thrall",
+      "legal_name": "Thrall city"
+    },
+    {
+      "geoid": "4872872",
+      "name": "Three Rivers",
+      "legal_name": "Three Rivers city"
+    },
+    {
+      "geoid": "4872896",
+      "name": "Throckmorton",
+      "legal_name": "Throckmorton town"
+    },
+    {
+      "geoid": "4872989",
+      "name": "Tiki Island",
+      "legal_name": "Tiki Island village"
+    },
+    {
+      "geoid": "4873030",
+      "name": "Timbercreek Canyon",
+      "legal_name": "Timbercreek Canyon village"
+    },
+    {
+      "geoid": "4873076",
+      "name": "Timpson",
+      "legal_name": "Timpson city"
+    },
+    {
+      "geoid": "4873112",
+      "name": "Tioga",
+      "legal_name": "Tioga town"
+    },
+    {
+      "geoid": "4873124",
+      "name": "Tira",
+      "legal_name": "Tira town"
+    },
+    {
+      "geoid": "4873196",
+      "name": "Toco",
+      "legal_name": "Toco city"
+    },
+    {
+      "geoid": "4873224",
+      "name": "Todd Mission",
+      "legal_name": "Todd Mission city"
+    },
+    {
+      "geoid": "4873268",
+      "name": "Tolar",
+      "legal_name": "Tolar city"
+    },
+    {
+      "geoid": "4873328",
+      "name": "Tom Bean",
+      "legal_name": "Tom Bean city"
+    },
+    {
+      "geoid": "4873316",
+      "name": "Tomball",
+      "legal_name": "Tomball city"
+    },
+    {
+      "geoid": "4873352",
+      "name": "Tool",
+      "legal_name": "Tool city"
+    },
+    {
+      "geoid": "4873493",
+      "name": "Town of Pecos",
+      "legal_name": "Town of Pecos city"
+    },
+    {
+      "geoid": "4873496",
+      "name": "Toyah",
+      "legal_name": "Toyah town"
+    },
+    {
+      "geoid": "4873580",
+      "name": "Trent",
+      "legal_name": "Trent town"
+    },
+    {
+      "geoid": "4873592",
+      "name": "Trenton",
+      "legal_name": "Trenton city"
+    },
+    {
+      "geoid": "4873652",
+      "name": "Trinidad",
+      "legal_name": "Trinidad city"
+    },
+    {
+      "geoid": "4873664",
+      "name": "Trinity",
+      "legal_name": "Trinity city"
+    },
+    {
+      "geoid": "4873710",
+      "name": "Trophy Club",
+      "legal_name": "Trophy Club town"
+    },
+    {
+      "geoid": "4873724",
+      "name": "Troup",
+      "legal_name": "Troup city"
+    },
+    {
+      "geoid": "4873748",
+      "name": "Troy",
+      "legal_name": "Troy city"
+    },
+    {
+      "geoid": "4873868",
+      "name": "Tulia",
+      "legal_name": "Tulia city"
+    },
+    {
+      "geoid": "4873964",
+      "name": "Turkey",
+      "legal_name": "Turkey city"
+    },
+    {
+      "geoid": "4874048",
+      "name": "Tuscola",
+      "legal_name": "Tuscola city"
+    },
+    {
+      "geoid": "4874132",
+      "name": "Tye",
+      "legal_name": "Tye city"
+    },
+    {
+      "geoid": "4874144",
+      "name": "Tyler",
+      "legal_name": "Tyler city"
+    },
+    {
+      "geoid": "4874216",
+      "name": "Uhland",
+      "legal_name": "Uhland city"
+    },
+    {
+      "geoid": "4874240",
+      "name": "Uncertain",
+      "legal_name": "Uncertain city"
+    },
+    {
+      "geoid": "4874312",
+      "name": "Union Grove",
+      "legal_name": "Union Grove city"
+    },
+    {
+      "geoid": "4874372",
+      "name": "Union Valley",
+      "legal_name": "Union Valley city"
+    },
+    {
+      "geoid": "4874408",
+      "name": "Universal City",
+      "legal_name": "Universal City city"
+    },
+    {
+      "geoid": "4874492",
+      "name": "University Park",
+      "legal_name": "University Park city"
+    },
+    {
+      "geoid": "4874588",
+      "name": "Uvalde",
+      "legal_name": "Uvalde city"
+    },
+    {
+      "geoid": "4874648",
+      "name": "Valentine",
+      "legal_name": "Valentine town"
+    },
+    {
+      "geoid": "4874732",
+      "name": "Valley Mills",
+      "legal_name": "Valley Mills city"
+    },
+    {
+      "geoid": "4874756",
+      "name": "Valley View",
+      "legal_name": "Valley View city"
+    },
+    {
+      "geoid": "4874924",
+      "name": "Van Alstyne",
+      "legal_name": "Van Alstyne city"
+    },
+    {
+      "geoid": "4875032",
+      "name": "Van Horn",
+      "legal_name": "Van Horn town"
+    },
+    {
+      "geoid": "4874912",
+      "name": "Van",
+      "legal_name": "Van city"
+    },
+    {
+      "geoid": "4875188",
+      "name": "Vega",
+      "legal_name": "Vega city"
+    },
+    {
+      "geoid": "4875236",
+      "name": "Venus",
+      "legal_name": "Venus city"
+    },
+    {
+      "geoid": "4875308",
+      "name": "Vernon",
+      "legal_name": "Vernon city"
+    },
+    {
+      "geoid": "4875428",
+      "name": "Victoria",
+      "legal_name": "Victoria city"
+    },
+    {
+      "geoid": "4875476",
+      "name": "Vidor",
+      "legal_name": "Vidor city"
+    },
+    {
+      "geoid": "4875668",
+      "name": "Vinton",
+      "legal_name": "Vinton village"
+    },
+    {
+      "geoid": "4875752",
+      "name": "Volente",
+      "legal_name": "Volente village"
+    },
+    {
+      "geoid": "4875764",
+      "name": "Von Ormy",
+      "legal_name": "Von Ormy city"
+    },
+    {
+      "geoid": "4876000",
+      "name": "Waco",
+      "legal_name": "Waco city"
+    },
+    {
+      "geoid": "4876024",
+      "name": "Waelder",
+      "legal_name": "Waelder city"
+    },
+    {
+      "geoid": "4876096",
+      "name": "Wake Village",
+      "legal_name": "Wake Village city"
+    },
+    {
+      "geoid": "4876228",
+      "name": "Waller",
+      "legal_name": "Waller city"
+    },
+    {
+      "geoid": "4876240",
+      "name": "Wallis",
+      "legal_name": "Wallis city"
+    },
+    {
+      "geoid": "4876348",
+      "name": "Walnut Springs",
+      "legal_name": "Walnut Springs city"
+    },
+    {
+      "geoid": "4876576",
+      "name": "Warren City",
+      "legal_name": "Warren City city"
+    },
+    {
+      "geoid": "4876636",
+      "name": "Waskom",
+      "legal_name": "Waskom city"
+    },
+    {
+      "geoid": "4876672",
+      "name": "Watauga",
+      "legal_name": "Watauga city"
+    },
+    {
+      "geoid": "4876816",
+      "name": "Waxahachie",
+      "legal_name": "Waxahachie city"
+    },
+    {
+      "geoid": "4876864",
+      "name": "Weatherford",
+      "legal_name": "Weatherford city"
+    },
+    {
+      "geoid": "4876924",
+      "name": "Webberville",
+      "legal_name": "Webberville village"
+    },
+    {
+      "geoid": "4876948",
+      "name": "Webster",
+      "legal_name": "Webster city"
+    },
+    {
+      "geoid": "4877020",
+      "name": "Weimar",
+      "legal_name": "Weimar city"
+    },
+    {
+      "geoid": "4877044",
+      "name": "Weinert",
+      "legal_name": "Weinert city"
+    },
+    {
+      "geoid": "4877056",
+      "name": "Weir",
+      "legal_name": "Weir city"
+    },
+    {
+      "geoid": "4877152",
+      "name": "Wellington",
+      "legal_name": "Wellington city"
+    },
+    {
+      "geoid": "4877164",
+      "name": "Wellman",
+      "legal_name": "Wellman city"
+    },
+    {
+      "geoid": "4877176",
+      "name": "Wells",
+      "legal_name": "Wells town"
+    },
+    {
+      "geoid": "4877272",
+      "name": "Weslaco",
+      "legal_name": "Weslaco city"
+    },
+    {
+      "geoid": "4877416",
+      "name": "West Columbia",
+      "legal_name": "West Columbia city"
+    },
+    {
+      "geoid": "4877632",
+      "name": "West Lake Hills",
+      "legal_name": "West Lake Hills city"
+    },
+    {
+      "geoid": "4877752",
+      "name": "West Orange",
+      "legal_name": "West Orange city"
+    },
+    {
+      "geoid": "4877896",
+      "name": "West Tawakoni",
+      "legal_name": "West Tawakoni city"
+    },
+    {
+      "geoid": "4877956",
+      "name": "West University Place",
+      "legal_name": "West University Place city"
+    },
+    {
+      "geoid": "4877332",
+      "name": "West",
+      "legal_name": "West city"
+    },
+    {
+      "geoid": "4877380",
+      "name": "Westbrook",
+      "legal_name": "Westbrook city"
+    },
+    {
+      "geoid": "4877620",
+      "name": "Westlake",
+      "legal_name": "Westlake town"
+    },
+    {
+      "geoid": "4877746",
+      "name": "Weston Lakes",
+      "legal_name": "Weston Lakes city"
+    },
+    {
+      "geoid": "4877740",
+      "name": "Weston",
+      "legal_name": "Weston city"
+    },
+    {
+      "geoid": "4877788",
+      "name": "Westover Hills",
+      "legal_name": "Westover Hills town"
+    },
+    {
+      "geoid": "4878076",
+      "name": "Westworth Village",
+      "legal_name": "Westworth Village city"
+    },
+    {
+      "geoid": "4878136",
+      "name": "Wharton",
+      "legal_name": "Wharton city"
+    },
+    {
+      "geoid": "4878208",
+      "name": "Wheeler",
+      "legal_name": "Wheeler city"
+    },
+    {
+      "geoid": "4878316",
+      "name": "White Deer",
+      "legal_name": "White Deer town"
+    },
+    {
+      "geoid": "4878436",
+      "name": "White Oak",
+      "legal_name": "White Oak city"
+    },
+    {
+      "geoid": "4878544",
+      "name": "White Settlement",
+      "legal_name": "White Settlement city"
+    },
+    {
+      "geoid": "4878328",
+      "name": "Whiteface",
+      "legal_name": "Whiteface town"
+    },
+    {
+      "geoid": "4878388",
+      "name": "Whitehouse",
+      "legal_name": "Whitehouse city"
+    },
+    {
+      "geoid": "4878532",
+      "name": "Whitesboro",
+      "legal_name": "Whitesboro city"
+    },
+    {
+      "geoid": "4878628",
+      "name": "Whitewright",
+      "legal_name": "Whitewright town"
+    },
+    {
+      "geoid": "4878664",
+      "name": "Whitney",
+      "legal_name": "Whitney town"
+    },
+    {
+      "geoid": "4879000",
+      "name": "Wichita Falls",
+      "legal_name": "Wichita Falls city"
+    },
+    {
+      "geoid": "4879036",
+      "name": "Wickett",
+      "legal_name": "Wickett town"
+    },
+    {
+      "geoid": "4879408",
+      "name": "Willis",
+      "legal_name": "Willis city"
+    },
+    {
+      "geoid": "4879492",
+      "name": "Willow Park",
+      "legal_name": "Willow Park city"
+    },
+    {
+      "geoid": "4879564",
+      "name": "Wills Point",
+      "legal_name": "Wills Point city"
+    },
+    {
+      "geoid": "4879576",
+      "name": "Wilmer",
+      "legal_name": "Wilmer city"
+    },
+    {
+      "geoid": "4879612",
+      "name": "Wilson",
+      "legal_name": "Wilson city"
+    },
+    {
+      "geoid": "4879624",
+      "name": "Wimberley",
+      "legal_name": "Wimberley city"
+    },
+    {
+      "geoid": "4879672",
+      "name": "Windcrest",
+      "legal_name": "Windcrest city"
+    },
+    {
+      "geoid": "4879684",
+      "name": "Windom",
+      "legal_name": "Windom town"
+    },
+    {
+      "geoid": "4879696",
+      "name": "Windthorst",
+      "legal_name": "Windthorst town"
+    },
+    {
+      "geoid": "4879720",
+      "name": "Winfield",
+      "legal_name": "Winfield city"
+    },
+    {
+      "geoid": "4879768",
+      "name": "Wink",
+      "legal_name": "Wink city"
+    },
+    {
+      "geoid": "4879816",
+      "name": "Winnsboro",
+      "legal_name": "Winnsboro city"
+    },
+    {
+      "geoid": "4879828",
+      "name": "Winona",
+      "legal_name": "Winona town"
+    },
+    {
+      "geoid": "4879876",
+      "name": "Winters",
+      "legal_name": "Winters city"
+    },
+    {
+      "geoid": "4879919",
+      "name": "Wixon Valley",
+      "legal_name": "Wixon Valley city"
+    },
+    {
+      "geoid": "4879948",
+      "name": "Wolfe City",
+      "legal_name": "Wolfe City city"
+    },
+    {
+      "geoid": "4879972",
+      "name": "Wolfforth",
+      "legal_name": "Wolfforth city"
+    },
+    {
+      "geoid": "4880044",
+      "name": "Woodbranch",
+      "legal_name": "Woodbranch city"
+    },
+    {
+      "geoid": "4880058",
+      "name": "Woodcreek",
+      "legal_name": "Woodcreek city"
+    },
+    {
+      "geoid": "4880144",
+      "name": "Woodloch",
+      "legal_name": "Woodloch town"
+    },
+    {
+      "geoid": "4880176",
+      "name": "Woodsboro",
+      "legal_name": "Woodsboro town"
+    },
+    {
+      "geoid": "4880188",
+      "name": "Woodson",
+      "legal_name": "Woodson town"
+    },
+    {
+      "geoid": "4880212",
+      "name": "Woodville",
+      "legal_name": "Woodville town"
+    },
+    {
+      "geoid": "4880224",
+      "name": "Woodway",
+      "legal_name": "Woodway city"
+    },
+    {
+      "geoid": "4880296",
+      "name": "Wortham",
+      "legal_name": "Wortham town"
+    },
+    {
+      "geoid": "4880356",
+      "name": "Wylie",
+      "legal_name": "Wylie city"
+    },
+    {
+      "geoid": "4880440",
+      "name": "Yantis",
+      "legal_name": "Yantis town"
+    },
+    {
+      "geoid": "4880560",
+      "name": "Yoakum",
+      "legal_name": "Yoakum city"
+    },
+    {
+      "geoid": "4880584",
+      "name": "Yorktown",
+      "legal_name": "Yorktown city"
+    },
+    {
+      "geoid": "4880728",
+      "name": "Zavalla",
+      "legal_name": "Zavalla city"
+    }
+  ]
+}
