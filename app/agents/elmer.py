@@ -129,3 +129,16 @@ def assess(property_id, dossier):
         'external_actions':0,'payments_authorized':False,'tax_liability_calculated':False,
         'limitations':['No bank reconciliation, cash-payment proof, completeness certification, tax calculation or filing.',
             'No supplied accounting records means unknown totals; explicit none_reported means zero reported records only.']}
+
+
+def latest_assessment(dossier):
+    """Resolve an intact linked assessment chain without rewriting the original."""
+    previous=(dossier.get('reports') or {}).get('elmer')
+    if not isinstance(previous,dict): return None
+    for report in [previous,*(dossier.get('elmer_assessments') or [])]:
+        if not isinstance(report,dict) or report.get('digest')!=digest_payload({k:v for k,v in report.items() if k!='digest'}):
+            raise ValueError('accounting assessment integrity failure')
+        if report is not previous and report.get('parent_assessment_digest')!=previous['digest']:
+            raise ValueError('accounting assessment lineage failure')
+        previous=report
+    return previous

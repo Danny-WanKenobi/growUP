@@ -25,7 +25,11 @@ def build_report(agent, payload):
         raise WorkflowError("input dossier failed digest verification")
     spec = AGENT_SPECS[agent]
     dossier = payload.get("dossier") or {}
-    reports = dossier.get("reports") or {}
+    reports = deepcopy(dossier.get("reports") or {})
+    if agent=="manny":
+        from app.agents.elmer import latest_assessment
+        latest=latest_assessment(dossier)
+        if latest is not None: reports["elmer"]=latest
     supplied = (dossier.get("specialist_inputs") or {}).get(agent) or {}
     if not isinstance(supplied, dict):
         raise WorkflowError("specialist inputs must be a mapping")
@@ -207,6 +211,8 @@ def prepare_in_transaction(conn, *, run_id, dossier_key, agent):
     _require_enabled()
     if agent not in AGENT_SPECS:
         raise WorkflowError("unknown downstream agent")
+    if agent in ("yoseph","deborah"):
+        raise WorkflowError("shared advisers use consultation threads, not pipeline intake")
     run_id = UUID(str(run_id))
     source, did = _load(conn, run_id, dossier_key, agent)
     prior = (source.payload.get("dossier",{}).get("reports") or {}).get(agent)

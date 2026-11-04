@@ -181,8 +181,8 @@ def test_postgresql_suite_orchestration_is_bounded(monkeypatch):
             return demo.advance_in_transaction(conn,run_key=kwargs["run_key"],expected_sequence=kwargs["expected_sequence"])
     monkeypatch.setattr(demo,"service",local_service)
     result=demo.run_suite("demo-handoff-suite")
-    assert result["result"]=="PASS" and result["scenarios"]==15
-    assert sum(r["verified_receipts"] for r in result["results"])==195
+    assert result["result"]=="PASS" and result["scenarios"]==len(demo.STAGES)+1
+    assert sum(r["verified_receipts"] for r in result["results"])==len(demo.STAGES)**2-1
 
 
 def test_initializer_uses_explicit_demo_migration_configuration(monkeypatch):
@@ -270,9 +270,9 @@ def test_real_service_wrapper_audit_and_atomic_rollback(monkeypatch,audit_fails)
         assert db==before
     else:
         result=demo.run_suite("demo-handoff-wrapper")
-        assert result["result"]=="PASS" and result["scenarios"]==15
+        assert result["result"]=="PASS" and result["scenarios"]==len(demo.STAGES)+1
         events=db["audit_events"]
-        assert len(events)==225
+        assert len(events)==(len(demo.STAGES)+1)**2
         assert all(e["run_id"].startswith("demo-handoff-wrapper") for e in events)
         assert all(json.loads(e["details"])["synthetic"] for e in events)
 

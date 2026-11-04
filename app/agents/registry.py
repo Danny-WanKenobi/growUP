@@ -27,8 +27,8 @@ SPECS = (
          "Visual campaign design and contact-channel research"), "app.uriel"),
     AgentSpec("priscilla", "Priscilla", "Lead Conversion Tracking", ("uriel",),
         (),
-        "Durable lead tracking and controlled inbound-conversation backup to Simeon; no prospecting or signing authority.",
-        ("Live provider activation, phone/chat transport and actual response delivery",
+        "Lead conversion tracking only; no human conversation ownership, drafting, transport or delivery.",
+        ("Human communications are outside Priscilla's role",
          "Richer property timeline UI and authenticated provider reconciliation"), "app.priscilla"),
     AgentSpec("nicole", "Nicole", "Regulatory, Permitting, and Licensing",
         ("raphael", "onesimus"), ("jurisdiction", "proposed_use", "official_requirements"),
@@ -58,12 +58,15 @@ SPECS = (
         ("jurisdiction", "legal_question", "governing_documents"),
         "Legal issue register and document-review intake; no assertion of legal compliance or enforceability.",
         ("Current-law research and legal reasoning with authoritative citations", "Legal opinions, filings and representation")),
-    AgentSpec("manny", "Manny", "Owner Agent and Asset Manager", ("michael",),
+    AgentSpec("manny", "Manny", "Owner Agent and Asset Manager", ("michael","elmer"),
         ("asset_ownership", "operating_mandate", "asset_obligations"),
         "Asset/obligation intake and owner-exception brief; represents software coordination, not the human owner.",
         ("Verified asset register, performance monitoring and maintenance lifecycle", "Delegated transaction authority and asset transfers")),
 )
+ADVISER_IDS = ('yoseph','deborah')
+PIPELINE_IDS = ('gabriel','raphael','onesimus','michael','uriel','priscilla','nicole','theresia_keys','simeon','solomon','elmer','manny')
 AGENT_SPECS = {spec.id: spec for spec in SPECS}
+PIPELINE_SPECS = {key:spec for key,spec in AGENT_SPECS.items() if key not in ADVISER_IDS}
 NEW_AGENT_ROLES = {spec.id: f"{spec.name} {spec.role}" for spec in SPECS[2:]}
 
 HANDOFF_CONTRACT = (
@@ -73,6 +76,7 @@ HANDOFF_CONTRACT = (
     "Use app.dossier_reports.append_agent_report_in_transaction and the existing immutable snapshot store.",
     "Use app.custody_db.issue_receipt_in_transaction for forward/return/review; never manufacture a receipt.",
     "A forward transfer names the latest version; evidence gaps may return upstream or request human_review.",
+    "Every pipeline agent may use app.agent_consultations for two-way Yoseph/Deborah review without custody transfer or permission override.",
     "Preparation, handoff, legal permission and external execution are distinct; no report grants execution authority.",
 )
 
@@ -83,7 +87,8 @@ def describe_agents():
         "normal_operation": "Autonomous internal preparation within configured backend permissions; owner queue for unresolved exceptions and sensitive actions.",
         "workers_started": False, "external_execution_enabled": False,
         "handoff_contract": list(HANDOFF_CONTRACT),
-        "agents": [dict(asdict(spec), version=1, capability="preliminary_intake_and_report",
-                        live_property_handoff_proven=False, entrypoint="app.agents.stages.prepare_audited",
+        "pipeline": list(PIPELINE_IDS), "shared_advisers": list(ADVISER_IDS),
+        "agents": [dict(asdict(spec), participation="shared_adviser" if spec.id in ADVISER_IDS else "pipeline", version=1, capability="preliminary_intake_and_report",
+                        live_property_handoff_proven=False, entrypoint="app.agent_consultations.exchange_audited" if spec.id in ADVISER_IDS else "app.agents.stages.prepare_audited",
                         input_source="current canonical stored dossier only") for spec in SPECS],
     }

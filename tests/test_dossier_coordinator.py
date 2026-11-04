@@ -325,10 +325,55 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
             with ThreadPoolExecutor(max_workers=2) as pool:
                 intakes=list(pool.map(account,range(2)))
             assert sum(bool(r.get('replayed')) for r in intakes)==1
-            assert all(r['status']=='elmer_accounting_review' for r in intakes)
+            assert all(r['status']=='delivered_to_manny' for r in intakes)
             with get_connection() as conn:
                 assert latest_version_in_transaction(conn,did).version==4
-                assert verify_chain_in_transaction(conn,did)==initial_receipts+1
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+2
+                original_accounting=get_record_in_transaction(conn,rid,'dossier_version',key).payload['dossier']['reports']['elmer']
+                parent_digest=get_record_in_transaction(conn,rid,'dossier_version',key).digest
+            correction_inputs={'principal':'pg-test','run_id':rid,'dossier_key':key,'operation_id':'pg-correction-one',
+                'expected_digest':parent_digest,'action':'reconcile','correction':{'reason':'New disposable invoice evidence',
+                'inputs':{'transactions':{'value':{'property_id':str(prop['id']),'coverage':'reported_records','entries':[
+                    {'id':'invoice-1','kind':'expense','amount_usd':'25.00','currency':'USD','occurred_on':'2026-11-03','evidence_ref':'pg-test:invoice'}]},
+                    'evidence_refs':['pg-test:invoice']}}}}
+            correction_append=dossier_reports.append_elmer_correction_in_transaction
+            def interrupt_correction(*args,**kwargs):
+                correction_append(*args,**kwargs)
+                raise KeyboardInterrupt('interrupted after accounting correction snapshot')
+            monkeypatch.setattr(dossier_reports,'append_elmer_correction_in_transaction',interrupt_correction)
+            with pytest.raises(KeyboardInterrupt): elmer_intake.prepare_audited(**correction_inputs)
+            monkeypatch.setattr(dossier_reports,'append_elmer_correction_in_transaction',correction_append)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==4
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+2
+            barrier=Barrier(2)
+            def correct(_):
+                barrier.wait(timeout=10)
+                return elmer_intake.prepare_audited(**correction_inputs)
+            with ThreadPoolExecutor(max_workers=2) as pool: corrections=list(pool.map(correct,range(2)))
+            assert sum(bool(r.get('replayed')) for r in corrections)==1
+            with get_connection() as conn:
+                current=get_record_in_transaction(conn,rid,'dossier_version',key)
+                assert current.payload['dossier']['reports']['elmer']==original_accounting
+                assert len(current.payload['dossier']['elmer_assessments'])==1
+                assert latest_version_in_transaction(conn,did).version==5
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+4
+            from app import agent_consultations
+            advisory={'principal':'pg-test','run_id':rid,'dossier_key':key,'thread_id':'pg-legal','requester':'manny','adviser':'deborah',
+                'expected_sequence':0,'message':{'speaker':'manny','text':'Review retained accounting evidence.',
+                'recommendation':'needs_evidence','evidence_refs':['pg-test:invoice']}}
+            barrier=Barrier(2)
+            def consult(_):
+                barrier.wait(timeout=10)
+                return agent_consultations.exchange_audited(**advisory)
+            with ThreadPoolExecutor(max_workers=2) as pool: reviews=list(pool.map(consult,range(2)))
+            assert sum(bool(r.get('replayed')) for r in reviews)==1
+            agent_consultations.exchange_audited(**{**advisory,'expected_sequence':1,
+                'message':{'speaker':'deborah','text':'More evidence required; not a legal opinion.',
+                'recommendation':'hold','evidence_refs':['pg-test:invoice']}})
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==5
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+4
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 

@@ -49,7 +49,7 @@ def test_separate_cost_buckets_and_partial_commitment_arithmetic(monkeypatch):
         parent=source(conn,rid); inherited=deepcopy(parent.payload['dossier']['reports'])
         args={'principal':'owner','run_id':rid,'dossier_key':'main','operation_id':'one','expected_digest':parent.digest}
         result=elmer_intake.prepare_in_transaction(conn,**args)
-        assert result['current_holder']=='elmer' and result['status']=='elmer_accounting_review'
+        assert result['current_holder']=='manny' and result['status']=='delivered_to_manny'
         assert elmer_intake.prepare_in_transaction(conn,**args)['replayed']
         with pytest.raises(WorkflowError,match='replay conflict'):
             elmer_intake.prepare_in_transaction(conn,**{**args,'principal':'foreign'})
@@ -61,7 +61,7 @@ def test_separate_cost_buckets_and_partial_commitment_arithmetic(monkeypatch):
         from app.custody_db import verify_chain_in_transaction,current_custody_in_transaction
         did=dossier_id_for_property(parent.payload['property_id'])
         verify_chain_in_transaction(conn,did)
-        assert current_custody_in_transaction(conn,did)['holder']=='elmer'
+        assert current_custody_in_transaction(conn,did)['holder']=='manny'
 
 
 def test_unknown_transactions_are_not_zero_and_gaps_return(monkeypatch):
@@ -130,3 +130,33 @@ def test_invalid_period_does_not_produce_zero_reported_expenses(monkeypatch):
         dossier['specialist_inputs']['elmer']['accounting_period']['value']['start']='invalid'
         result=assess(payload['property_id'],dossier)
         assert result['reported_actual_expenses']['total_usd'] is None
+
+
+def test_linked_corrections_preserve_original_and_return_to_manny(monkeypatch):
+    conn,rid=accounting_fixture(monkeypatch,[transaction('e1','expense','100')])
+    with scope(conn,KEY):
+        parent=source(conn,rid)
+        first=elmer_intake.prepare_in_transaction(conn,principal='owner',run_id=rid,dossier_key='main',operation_id='initial',expected_digest=parent.digest)
+        original=deepcopy(source(conn,rid).payload['dossier']['reports']['elmer'])
+        prop=source(conn,rid).payload['property_id']
+        inputs={'principal':'owner','run_id':rid,'dossier_key':'main','operation_id':'correct-1',
+            'expected_digest':source(conn,rid).digest,'correction':{'reason':'Correct retained invoice amount',
+            'inputs':{'transactions':{'value':{'property_id':prop,'coverage':'reported_records',
+                'entries':[transaction('e1','expense','75')]},'evidence_refs':['demo:corrected-invoice']}}}}
+        corrected=elmer_intake.reconcile_in_transaction(conn,**inputs)
+        assert corrected['current_holder']=='manny'
+        assert corrected['assessment']['accounting_assessment']['reported_actual_expenses']['total_usd']=='75.00'
+        assert corrected['assessment']['parent_assessment_digest']==original['digest']
+        assert source(conn,rid).payload['dossier']['reports']['elmer']==original
+        assert elmer_intake.reconcile_in_transaction(conn,**inputs)['replayed']
+        with pytest.raises(WorkflowError,match='replay conflict'):
+            elmer_intake.reconcile_in_transaction(conn,**{**inputs,'principal':'foreign'})
+        second={**inputs,'operation_id':'correct-2','expected_digest':source(conn,rid).digest,
+            'correction':{'reason':'Invalid replacement must remain unknown',
+                'inputs':{'transactions':{'value':{'property_id':prop,'coverage':'reported_records','entries':[transaction('e1','expense','NaN')]},'evidence_refs':['demo:invalid']}}}}
+        bad=elmer_intake.reconcile_in_transaction(conn,**second)
+        assert bad['current_holder']=='elmer' and bad['assessment']['missing']
+        with pytest.raises(WorkflowError,match='gaps or exceptions'):
+            elmer_intake.reconcile_in_transaction(conn,principal='owner',run_id=rid,dossier_key='main',operation_id='finish-invalid',
+                expected_digest=source(conn,rid).digest,action='complete')
+        assert len(source(conn,rid).payload['dossier']['elmer_assessments'])==2

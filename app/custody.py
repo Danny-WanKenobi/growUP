@@ -43,15 +43,8 @@ RECEIPT_KINDS = ("forward", "return", "review")
 # Canonical forward pipeline order. Returns move against it; human
 # review stands outside it (escalate with kind="review", route back
 # with kind="return").
-_PIPELINE_ORDER = {
-    "gabriel": 0,
-    "raphael": 1,
-    "onesimus": 2,
-    "michael": 3,
-    "uriel": 4,
-    "priscilla": 5,
-    **{agent: index for index, agent in enumerate(NEW_AGENT_ROLES, start=6)},
-}
+from app.agents.registry import PIPELINE_IDS
+_PIPELINE_ORDER = {agent:index for index,agent in enumerate(PIPELINE_IDS)}
 
 # Receipt pipeline versions. Stored rows keep the version they were
 # written under so historical agent names retain their original
@@ -306,6 +299,8 @@ def check_handoff_routing(kind: str, from_agent: str, to_agent: str) -> None:
         raise CustodyError(f"unknown receipt kind: {kind!r}")
     if from_agent not in AGENTS or to_agent not in AGENTS:
         raise CustodyError("unknown handoff agent")
+    if "yoseph" in (from_agent,to_agent) or "deborah" in (from_agent,to_agent):
+        raise CustodyError("shared advisers do not participate in dossier custody")
     if from_agent == to_agent:
         raise CustodyError("handoff requires two distinct agents")
     if kind == "review":

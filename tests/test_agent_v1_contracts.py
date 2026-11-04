@@ -20,8 +20,10 @@ def test_roster_is_registered_without_workers_or_execution_grants():
         assert AgentId(name).value == name
         assert interpret_custody_agent("canonical-1", name)["agent"] == name
         # Pure route validation only; no receipt or synthetic dossier created.
-        check_handoff_routing("review", name, "human_review")
-        check_handoff_routing("return", name, "gabriel")
+        if name not in ("yoseph","deborah"): check_handoff_routing("review", name, "human_review")
+        else:
+            with pytest.raises(CustodyError,match="shared advisers"): check_handoff_routing("review",name,"human_review")
+        if name not in ("yoseph","deborah"): check_handoff_routing("return", name, "gabriel")
     assert interpret_custody_agent("mvp-1", "michael")["meaning"].startswith("Outreach")
     with pytest.raises(CustodyError):
         check_handoff_routing("forward", "manny", "gabriel")
@@ -53,7 +55,7 @@ def test_manny_is_active_and_dan_remains_historical_only():
     assert "dan" not in AGENT_SPECS and "dan" not in NEW_AGENT_ROLES
     assert AgentId("dan").value == "dan"  # Read existing audit history.
     assert "historical name" in interpret_custody_agent("canonical-1", "dan")["meaning"]
-    check_handoff_routing("forward", "deborah", "manny")
-    check_handoff_routing("return", "manny", "deborah")
+    check_handoff_routing("forward", "elmer", "manny")
+    check_handoff_routing("return", "manny", "elmer")
     with pytest.raises(CustodyError, match="unknown handoff agent"):
-        check_handoff_routing("forward", "deborah", "dan")
+        check_handoff_routing("forward", "elmer", "dan")

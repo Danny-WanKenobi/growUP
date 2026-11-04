@@ -61,6 +61,7 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_resend_poll",
         "inspect_solomon_project",
         "preview_elmer_intake",
+        "inspect_consultation",
         "inspect_handoff_demo",
         "preview_retained_assessment",
     }
@@ -72,9 +73,13 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "coordinate_dossier",
         "record_solomon_project",
         "prepare_elmer_intake",
+        "reconcile_elmer",
+        "complete_elmer_intake",
+        "consult_adviser",
         "import_campaign_tracking",
         "enroll_resend_message",
         "control_communications",
+        "dispatch_simeon",
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
@@ -263,10 +268,22 @@ def preview_intent(
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
             "effects":"append-only evidence event with correlation and replay checks; no outbound action",
             "cost_bounds":{"provider_calls":0,"outreach":0}}
+    if intent == 'consult_adviser':
+        return {'operations':['one internal two-way adviser message'],'inputs':{k:v for k,v in args.items() if not k.startswith('_')},
+            'effects':'versioned advisory thread and exceptional owner task; no custody or approval override',
+            'cost_bounds':{'provider_calls':0,'outreach':0}}
+    if intent == 'dispatch_simeon':
+        return {'operations':['at most four parallel Simeon inbound draft workers'],'inputs':{k:v for k,v in args.items() if not k.startswith('_')},
+            'effects':'bounded response leases, neutral acknowledgment drafts and release; no delivery or new provider budget',
+            'cost_bounds':{'workers_maximum':4,'provider_calls':0,'outreach':0}}
+    if intent in ('reconcile_elmer','complete_elmer_intake'):
+        return {'operations':['linked accounting correction or completion to Manny'],'inputs':{k:v for k,v in args.items() if not k.startswith('_')},
+            'effects':'preserve original report; append correction/snapshot if requested, return or forward canonical custody, queue exceptions',
+            'cost_bounds':{'provider_calls':0,'outreach':0}}
     if intent == "prepare_elmer_intake":
         return {"operations":["one canonical Solomon-to-Elmer accounting intake"],
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
-            "effects":"append report and snapshot; hold Elmer review or return missing evidence to Solomon; no payments",
+            "effects":"append report and snapshot; forward completed work to Manny, hold accounting exceptions or return missing evidence to Solomon; no payments",
             "cost_bounds":{"provider_calls":0,"outreach":0}}
     if intent == "record_solomon_project":
         _solomon_event(args)
@@ -926,10 +943,15 @@ def _execute_real(
             return inspect_poll(conn,args.get("authorization_id"))
         from app.communications import inspect
         return inspect(conn,args.get("package_entry"))
+    if intent == "dispatch_simeon":
+        from app.communications import dispatch_pending
+        try: packages=json.loads(str(args.get('packages_json') or ''))
+        except ValueError: raise WondrueError('packages_json must contain existing package IDs') from None
+        return dispatch_pending(principal=str(capability_ctx.get('principal') or ''),package_entries=packages,request_id=args.get('request_id'))
     if intent == "control_communications":
         from app.communications import audited
         return audited(principal=str(capability_ctx.get('principal') or ''),
-            **{name:args.get(name) for name in ("package_entry","action","request_id","expected_revision","lease_id","text")},
+            **{name:args.get(name) for name in ("package_entry","action","request_id","expected_revision","lease_id","text","worker_id")},
             actor=args.get("actor","simeon"))
     if intent == "inspect_campaign_tracking":
         if conn is None:
@@ -947,6 +969,26 @@ def _execute_real(
             package_entry=args.get('package_entry'),provider=args.get('provider'),provider_event_id=args.get('provider_event_id'),
             message_id=args.get('message_id'),status=args.get('status'),occurred_at=args.get('occurred_at'),
             evidence_refs=[args.get('evidence_ref')],simulated=args.get('simulated',False))
+    if intent in ("consult_adviser","inspect_consultation"):
+        from app import agent_consultations
+        inputs={key:args.get(key) for key in ('run_id','dossier_key','thread_id')}
+        inputs['dossier_key']=inputs['dossier_key'] or 'main'
+        if intent=='inspect_consultation':
+            if conn is None: raise WondrueError('consultation inspection requires database')
+            return agent_consultations.inspect_in_transaction(conn,**inputs)
+        try: message=json.loads(str(args.get('message_json') or ''))
+        except ValueError: raise WondrueError('message_json must contain advisory message') from None
+        return agent_consultations.exchange_audited(principal=str(capability_ctx.get('principal') or ''),**inputs,
+            requester=args.get('requester'),adviser=args.get('adviser'),expected_sequence=args.get('expected_sequence'),message=message)
+    if intent in ("reconcile_elmer","complete_elmer_intake"):
+        from app import elmer_intake
+        correction=None
+        if intent=='reconcile_elmer':
+            try: correction=json.loads(str(args.get('correction_json') or ''))
+            except ValueError: raise WondrueError('correction_json must contain accounting replacement inputs') from None
+        return elmer_intake.prepare_audited(principal=str(capability_ctx.get('principal') or ''),
+            run_id=args.get('run_id'),dossier_key=str(args.get('dossier_key') or 'main'),operation_id=args.get('operation_id'),
+            expected_digest=args.get('expected_digest'),action='reconcile' if intent=='reconcile_elmer' else 'complete',correction=correction)
     if intent in ("prepare_elmer_intake", "preview_elmer_intake"):
         from app import elmer_intake
         inputs={"run_id":args.get("run_id"),"dossier_key":str(args.get("dossier_key") or "main")}
@@ -1389,12 +1431,12 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
-    if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
+    if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
         if target != "real" or use_live:
             raise WondrueError("internal tracking/coordinator requires real target with live inference disabled")
         args["_coordinator_principal"] = principal
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
-                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project","preview_elmer_intake"):
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project","preview_elmer_intake","inspect_consultation"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1451,7 +1493,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")

@@ -50,42 +50,36 @@ def test_only_inbound_drafts_and_uriel_is_never_responder(monkeypatch):
         action(conn,package,'claim',router.inspect(conn,package)['revision'],actor='uriel')
 
 
-def test_backup_takeover_fences_previous_owner_and_drafts_stay_local(monkeypatch):
+def test_only_simeon_workers_can_reclaim_and_old_lease_is_fenced(monkeypatch):
     conn,package,mid,enrollment,metadata=setup(monkeypatch)
     received=receive(conn,package,mid,enrollment,metadata)
     primary=action(conn,package,'claim',received['revision'])
-    with pytest.raises(WorkflowError,match='active'):
-        action(conn,package,'takeover',primary['revision'],actor='priscilla')
+    for actor in ('priscilla','uriel'):
+        with pytest.raises(WorkflowError,match='Only Simeon'):
+            action(conn,package,'takeover',primary['revision'],actor=actor)
     later=NOW+timedelta(minutes=6)
-    backup=router.control(conn,package_entry=package,action='takeover',request_id='backup',
-        expected_revision=primary['revision'],principal='owner',actor='priscilla',now=later)
+    replacement=router.control(conn,package_entry=package,action='claim',request_id='replacement',
+        expected_revision=primary['revision'],principal='owner',now=later)
     with pytest.raises(WorkflowError,match='lease'):
-        router.control(conn,package_entry=package,action='draft',request_id='stale',expected_revision=backup['revision'],
-            principal='owner',actor='simeon',lease_id=primary['lease']['id'],text='old draft',now=later)
-    result=router.control(conn,package_entry=package,action='draft',request_id='draft',expected_revision=backup['revision'],
-        principal='owner',actor='priscilla',lease_id=backup['lease']['id'],text='Draft acknowledgement only.',now=later)
-    view=router.inspect(conn,package)
-    assert view['latest_draft']['status']=='draft_only' and not view['latest_draft']['send_enabled']
-    assert view['latest_draft']['current_context']
-    changed={**metadata,'text':'Another question'}
-    receive(conn,package,str(uuid4()),enrollment,changed)
-    assert not router.inspect(conn,package)['latest_draft']['current_context']
+        router.control(conn,package_entry=package,action='draft',request_id='stale',expected_revision=replacement['revision'],
+            principal='owner',lease_id=primary['lease']['id'],text='old draft',now=later)
+    router.control(conn,package_entry=package,action='draft',request_id='new',expected_revision=replacement['revision'],
+        principal='owner',lease_id=replacement['lease']['id'],text='Draft only.',now=later)
+    assert router.inspect(conn,package)['latest_draft']['current_context']
+    assert router.inspect(conn,package)['owner']=='simeon'
 
 
-def test_unavailable_takeover_stop_monotonic_and_command_idempotency(monkeypatch):
+def test_no_backup_actions_stop_monotonic_and_idempotency(monkeypatch):
     conn,package,mid,enrollment,metadata=setup(monkeypatch)
     result=action(conn,package,'initialize',0)
-    with pytest.raises(WorkflowError,match='takeover'):
-        action(conn,package,'takeover',result['revision'],actor='priscilla')
-    result=action(conn,package,'mark_simeon_unavailable',result['revision'])
-    result=action(conn,package,'takeover',result['revision'],actor='priscilla')
+    for retired in ('takeover','mark_simeon_unavailable','return_to_simeon'):
+        with pytest.raises(WorkflowError,match='retired'): action(conn,package,retired,result['revision'])
     args=dict(package_entry=package,action='stop',request_id='stop',expected_revision=result['revision'],principal='owner',now=NOW)
-    first=router.control(conn,**args); before=deepcopy(conn._db)
+    first=router.control(conn,**args);before=deepcopy(conn._db)
     assert router.control(conn,**args)['replayed'] and conn._db==before
     with pytest.raises(WorkflowError): action(conn,package,'pause',first['revision'])
     receive(conn,package,mid,enrollment,metadata)
     assert router.inspect(conn,package)['campaign_status']=='stopped'
-    with pytest.raises(WorkflowError): action(conn,package,'resume_campaign',router.inspect(conn,package)['revision'])
 
 
 def test_metadata_can_be_enriched_without_duplicate_inbound_or_overwrite(monkeypatch):
@@ -148,15 +142,40 @@ def test_live_router_concurrent_claims_and_durable_drafts(monkeypatch):
         view=router.inspect(conn,package)
         assert view['owner']=='simeon' and view['campaign_status']=='paused'
         assert view['latest_draft']['text']==args['text'] and not view['latest_draft']['send_enabled']
-        assert 'id' not in view['lease']
+        release_revision=view['revision']
+    router.audited(principal='pg-test',package_entry=package,action='release',request_id='pg-release-'+uuid4().hex,
+        expected_revision=release_revision,lease_id=won['lease']['id'])
+    with get_connection() as conn:
+        packages=[str(p) for p in _live_seed_packages(conn,4)]
+        for package in packages:
+            router.receive(conn,package_entry=package,provider_message_id=str(uuid4()),enrollment=enrollment,
+                metadata=metadata,authentication='resend_authenticated_api',received_at=datetime.now(timezone.utc))
+        conn.commit()
+    dispatched=router.dispatch_pending(principal='pg-test',package_entries=packages,request_id='pg-dispatch-'+uuid4().hex[:12])
+    assert all(row['status']=='draft_prepared' for row in dispatched['results'])
+    assert dispatched['provider_calls']==dispatched['external_actions']==0
+
+    assert 'id' not in view['lease']
 
 
-def test_backup_can_take_unclaimed_inbound_after_bounded_wait(monkeypatch):
+def test_bounded_parallel_slots_queue_fifo_and_release(monkeypatch):
     conn,package,mid,enrollment,metadata=setup(monkeypatch)
     received=receive(conn,package,mid,enrollment,metadata)
-    result=router.control(conn,package_entry=package,action='takeover',request_id='unclaimed-timeout',
-        expected_revision=received['revision'],principal='owner',actor='priscilla',now=NOW+timedelta(minutes=6))
-    assert result['owner']=='priscilla' and result['epoch']==1
+    claims=[]
+    for i in range(router.MAX_SIMEON_WORKERS):
+        pkg=package if i==0 else str(uuid4())
+        rev=received['revision'] if i==0 else receive(conn,pkg,str(uuid4()),enrollment,metadata)['revision']
+        claims.append((pkg,action(conn,pkg,'claim',rev)))
+    assert len({c['lease']['worker_id'] for _,c in claims})==4
+    extra=str(uuid4());rev=receive(conn,extra,str(uuid4()),enrollment,metadata)['revision']
+    with pytest.raises(WorkflowError,match='capacity'): action(conn,extra,'claim',rev)
+    pkg,claim=claims[0]
+    second_mid=str(uuid4());receive(conn,pkg,second_mid,enrollment,metadata)
+    drafted=action(conn,pkg,'draft',router.inspect(conn,pkg)['revision'],lease_id=claim['lease']['id'],text='First message draft')
+    assert router.inspect(conn,pkg)['latest_draft']['in_reply_to']==mid
+    released=action(conn,pkg,'release',drafted['revision'],lease_id=claim['lease']['id'])
+    assert router.inspect(conn,pkg)['pending_message_ids']==[second_mid]
+    assert action(conn,extra,'claim',rev)['lease']['worker_id']==claim['lease']['worker_id']
 
 
 def test_existing_campaign_suppression_is_inherited(monkeypatch):
@@ -166,3 +185,19 @@ def test_existing_campaign_suppression_is_inherited(monkeypatch):
     result=action(conn,package,'initialize',0)
     assert result['campaign_status']=='stopped'
     with pytest.raises(WorkflowError): action(conn,package,'resume_campaign',result['revision'])
+
+
+def test_legacy_backup_is_readable_but_cannot_act_and_pending_queue_stays_empty(monkeypatch):
+    conn,package,mid,enrollment,metadata=setup(monkeypatch)
+    received=receive(conn,package,mid,enrollment,metadata)
+    run,row,state=router.campaign(conn,package)
+    state.update(owner='priscilla',lease={'id':'old','actor':'priscilla','expires_at':(NOW+timedelta(minutes=5)).isoformat()})
+    router.write(conn,run.run_id,'conversation',state,row)
+    view=router.inspect(conn,package)
+    assert view['owner']=='simeon' and view['historical_owner']=='priscilla'
+    claim=action(conn,package,'claim',received['revision'])
+    draft=action(conn,package,'draft',claim['revision'],lease_id=claim['lease']['id'],text='Draft only')
+    release=action(conn,package,'release',draft['revision'],lease_id=claim['lease']['id'])
+    assert router.inspect(conn,package)['pending_message_ids']==[]
+    next_claim=action(conn,package,'claim',release['revision'])
+    assert next_claim['lease']['message_id'] is None

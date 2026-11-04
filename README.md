@@ -7,8 +7,9 @@ Uriel must prepare and preserve the campaign before releasing the dossier to
 Priscilla. Delivery and reply observations update Priscilla asynchronously;
 advancement must not wait indefinitely for an owner reply or fabricate interest.
 The existing custody policy permits downstream skips; this required sequence
-must therefore be enforced by the upcoming stage coordinator, not inferred from
-custody ordering alone. These continuous workers are not yet implemented.
+is enforced by the existing bounded coordinator, not inferred from custody
+ordering alone. Additional downstream accounting uses the explicit intake and
+correction services below. No continuous scheduler is installed.
 
 “Archive before release” means preserving the complete enhanced dossier in an
 immutable, digest-verified snapshot before issuing its custody receipt, within
@@ -30,11 +31,13 @@ mail delivery from simulated property outreach and genuine owner engagement.
 The owner approved fictional test records to prove the canonical handoff system
 without waiting for a real property to qualify. This is a permanent, explicitly
 isolated demonstration facility, not an exception that lets synthetic evidence
-enter the real pipeline. All fourteen operational roles share **one** demo
+enter the real pipeline. The twelve pipeline roles share **one** demo
 database and the same canonical custody implementation:
 
 Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole →
-Theresia Keys → Simeon → Solomon → Elmer → Yoseph → Deborah → Manny.
+Theresia Keys → Simeon → Solomon → Elmer → Manny.
+
+Yoseph and Deborah are shared advisers outside custody and stage order.
 
 `app/handoff_demo.py` generates one fully labeled GO scenario and a distinct
 missing-input NO-GO scenario for every checkpoint. Successful reports are attached
@@ -45,14 +48,14 @@ agent at a time** through the intervening stages to Gabriel, preserving its reas
 and the enhanced dossier. The Manny NO-GO case proves the entire reverse route.
 Gabriel's own NO-GO has no upstream recipient and terminates at Gabriel.
 
-The fixture suite has **15 scenarios**, **195 verified receipts** in total:
-13 forward receipts for the all-GO case, plus the forward/return paths for all
-14 rejection cases. IDs, stored records, reports, decisions, viewer responses and
+The current fixture suite has **13 scenarios**, **143 receipts** across its paths:
+11 forward receipts for the all-GO case, plus forward/return paths for all
+12 rejection cases. Historical 15-scenario proofs below retain their original scope. IDs, stored records, reports, decisions, viewer responses and
 exports are explicitly synthetic. Fictional sources use `fiction.example` and
 are never fetched. The isolated fixture registry never modifies the production
 source registry. Raphael reuses the shared verification/evaluation policy over
 fictional fixture evidence; Onesimus and Michael reuse their deterministic
-calculations. The ten version-one downstream roles reuse their implemented
+calculations. The eight downstream pipeline roles reuse their implemented
 report/intake checks. Their GO means **synthetic intake acceptance**, not a permit,
 legal opinion, signed contract, financing approval, insurance coverage, actual
 lead conversion, construction authorization or asset ownership.
@@ -176,7 +179,7 @@ commands require `target: "demo"`, `use_live: false`:
 
 Ask-mode approval tokens bind the operator and exact stored arguments; reader mode
 cannot mutate. The CLI also supports `init`, `start`, `advance --sequence N`,
-`inspect`, bounded `run`, and the 15-scenario `suite`, all through the same isolated
+`inspect`, bounded `run`, and the current 13-scenario `suite`, all through the same isolated
 service. No additional scheduler, GUADE worker or discovery engine is introduced.
 The older in-memory `app/demo.py` remains compatible and is not mistaken for this
 persistent PostgreSQL proof.
@@ -184,7 +187,7 @@ persistent PostgreSQL proof.
 ### Checks and scope of evidence
 
 Windows offline checks exercise the **actual canonical DAO/report functions**
-against a disposable SQL test double, including all 15 scenarios, exact reverse
+against a disposable SQL test double, including the configured pipeline scenarios, exact reverse
 routing, immutable-copy preservation, replay, sequence limits, wrong DB/role
 refusal, signing-key scope restoration, tamper rejection and authenticated viewer
 commands. The durable PostgreSQL proof is a separate owner-run acceptance step.
@@ -242,16 +245,16 @@ implementations remain the package/event authorities.
 | Priscilla / `priscilla` | Tracking intake; existing append-only events and separately labeled actual/simulated metrics, readable by Wondrue | Inbound webhooks, reply correlation, richer bounced/replied/interested states and full property timeline UI |
 | Nicole / `nicole` | Jurisdiction, proposed-use and official-requirement intake checklist | Current permit/code/license research, authenticated jurisdiction adapters, applications and submissions |
 | Theresia Keys / `theresia_keys` | Ownership/lien, finance-term and contract-preparation checklist | Title/lien verification, underwriting rules, final instruments and signing |
-| Simeon / `simeon` | Consent, terms, signing-authority and closing-conditions checklist | Negotiations, closing channels, verified power of attorney and execution |
-| Solomon / `solomon` | Preconstruction design, permit, workforce/safety and budget prerequisites | Contractor/robot procurement, scheduling, site work, supervision and maintenance |
-| Elmer / `elmer` | Period, transaction, entity/jurisdiction and reconciliation intake | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
-| Yoseph / `yoseph` | Risk, policy and coverage-requirement intake | Carrier quotes, policy interpretation, coverage validation, binding and claims |
-| Deborah / `deborah` | Legal-question, jurisdiction and governing-document issue register | Current-law research, supported legal opinions, filings and representation |
+| Simeon / `simeon` | Closing-readiness assessment and up to four bounded inbound draft workers | Negotiations, closing channels, verified power of attorney and execution |
+| Solomon / `solomon` | Preconstruction assessment, durable progress/change/inspection log and cost intake to Elmer | Contractor/robot procurement, scheduling, site work, supervision and maintenance |
+| Elmer / `elmer` | Separated cost buckets, linked corrections, exceptions and completed accounting handoff to Manny | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
+| Yoseph / `yoseph` — shared adviser, outside pipeline | Durable two-way insurance/liability consultation and disagreement queue | Carrier quotes, policy interpretation, coverage validation, binding and claims |
+| Deborah / `deborah` — shared adviser, outside pipeline | Durable two-way legal-evidence consultation and disagreement queue | Current-law research, supported legal opinions, filings and representation |
 | Manny / `manny` | Ownership, operating-mandate and asset-obligation intake | Verified asset register, performance/maintenance automation and delegated transactions |
 
 ### Canonical handoff contract from the outset
 
-Every role definition includes the same operational instructions: keep the
+Every pipeline role definition includes the same operational instructions: keep the
 existing property UUID/dossier identity; load the latest inherited full dossier;
 verify its digest, custody chain and current holder; append only the role's report
 to a new full version; create the normal immutable snapshot; use the existing
@@ -605,7 +608,7 @@ The agents share a common property record and coordinated workflow rather than o
 
 **MVP scope:** the coordinated MVP implements the full six-stage pipeline plus the Wondrue cockpit. Gabriel assembles evidence-backed dossiers; Raphael performs deterministic authorization over persisted dossier versions (preliminary simulation scoping only); Onesimus evaluates two passive-Kratky engineering configurations; Michael owns all financial arithmetic and feasibility verdicts; Uriel prepares genuine campaign packages (no sender exists); Priscilla tracks conversion events with simulated and actual evidence strictly separated. Wondrue enforces read-only / ask / full access modes server-side. Dossiers move between agents under shared operational custody (append-only versions, immutable snapshots, authenticated receipts); a resumable 36-cell pilot ledger tracks the 144-dossier target. No outreach execution exists.
 
-**Long-term capabilities (planned, not implemented):** Nicole — Permits & Licenses; Theresia Key — Underwriting; Simeon — Deal Coordination/Closing; Solomon — Construction Coordination; Gabriella — Vacant-Lot Discovery; Elmer — Accounting; Yoseph — Insurance & Liability; Deborah — Legal; Manny — Owner/Asset Management. These names reserve future responsibilities only: no placeholder agents exist, and the implemented canonical roles stay Michael (finance), Uriel (outreach), and Priscilla (conversion tracking). Future execution agents follow the same boundary as outreach — demo dispatch is labeled simulation only, and live mode alone grants no spending, sending, contract, filing, or construction authority.
+**Current downstream scope:** Nicole, Theresia Keys, Simeon, Solomon, Elmer and Manny have the preliminary assessment/intake capabilities documented above and in the current implementation sections below. Yoseph and Deborah are shared advisers outside the dossier pipeline; their supplied consultation records are not independently researched legal or coverage opinions. Gabriella remains deferred. Michael owns finance, Uriel outreach preparation, and Priscilla conversion tracking only. Simulation remains labeled, and live mode alone grants no spending, sending, contract, filing or construction authority.
 
 **Successor processing (bounded, implemented):** admitted DCAD or Census evidence is assessed on the same property, dossier, and custody lineage: the successor run references its parent, replays retained evidence without a new acquisition, appends the next custody version under an enrolled authorizer, and routes a fresh Raphael decision. Identical retries replay; original history is never rewritten and pilot counts replay without new credit. Census successors apply county-only attribution with the ordinary fail-closed category verdict. Further successor sources remain planned, not built.
 
@@ -5255,7 +5258,7 @@ exception routes and shared report sealing, plus existing GO/NO-GO custody scena
 
 Communications responsibilities are now explicit: Uriel prepares outbound
 campaigns and never owns inbound conversations; Simeon owns **inbound only**;
-Priscilla tracks outcomes and is a controlled inbound backup. Neither responder
+Priscilla tracks conversion outcomes only and has no human-response role. Simeon
 can initiate prospecting through this router. No delivery, closing/signing,
 phone/chat service, mail fulfillment or campaign scheduler is implemented here.
 Reply drafts require an actual retained inbound message and remain draft_only,
@@ -5272,13 +5275,16 @@ Pause commands. Existing Uriel campaign suppression is inherited as stopped. Cam
 not proof that a currently nonexistent mail sender was stopped. Delivery remains
 disabled even when campaign_status is active.
 
-Ownership starts with Simeon. A response lease lasts five minutes and carries a
-fencing epoch. Priscilla takeover requires no active lease plus unavailable
-Simeon (explicit 15-minute operator marker), an expired lease, or five minutes
-of unclaimed inbound waiting. New mail does not reset that initial waiting
-clock. Active work cannot be stolen. Old-owner/expired leases cannot produce
-drafts. Return-to-Simeon requires the current backup lease. Incoming-message
-changes or ownership changes mark earlier drafts stale. Original incoming text
+Ownership stays with Simeon. Five-minute response leases carry fencing epochs
+and one of four bounded `simeon:1`–`simeon:4` worker slots. Each conversation has
+one active responder; up to four conversations can be handled concurrently.
+Priscilla takeover and availability/return-to-backup actions are retired. Legacy
+assignments remain historical records; new control/receive operations fence old
+backup leases and restore effective Simeon ownership. Incoming messages are kept
+in a bounded FIFO queue (100 pending IDs per conversation). A draft binds the
+claimed message, so a newer arrival does not redirect an in-progress response.
+Expired workers cannot draft; retained draft recovery avoids recreating the same
+queued acknowledgment. Original incoming text
 is immutable; a metadata-only observation may append a later authenticated
 plain-text enrichment without overwriting history. Message bodies are untrusted
 data; this code never executes them, fetches embedded links, renders HTML or
@@ -5289,9 +5295,8 @@ Wondrue commands (real target, live model inference disabled):
 - inspect_communications: package_entry; read-only latest inbound, draft and
   ownership/campaign state. Lease identifiers are omitted from this view.
 - control_communications: package_entry, action, request_id, expected_revision;
-  optional actor (`simeon` default or `priscilla`), lease_id and text. Actions:
-  initialize, pause, stop, resume_campaign, mark_simeon_unavailable, claim,
-  takeover, draft, release, return_to_simeon. Resume refuses stopped campaigns
+  actor must be `simeon`; optional worker_id, lease_id and text. Actions:
+  initialize, pause, stop, resume_campaign, claim, draft, release. Resume refuses stopped campaigns
   or automatic marketing restart after an inbound response. Administrative
   controls use the existing authenticated operator grant, not separate agent
   credentials; actor is the role the operator directs, not a new identity proof.
@@ -5370,7 +5375,7 @@ Offline checks:
  tests/test_resend_readiness.py tests/test_resend_tracking.py
  tests/test_campaign_tracking.py tests/test_wondrue_ops.py -q -p no:cacheprovider`
 (on one line). Tests inject fake provider transports: no live calls. They cover
-lease fencing/takeover, draft-only responses, immutable incoming text, stop/pause,
+lease fencing and bounded Simeon workers, draft-only responses, immutable incoming text, stop/pause,
 replay, request reservation before timeout, exhausted/reused authorizations,
 fixed GET paths, bounded/invalid responses, unlinked triage, skipped duplicate
 fetches and secret-free configuration checks. The PostgreSQL-gated router proof
@@ -5509,9 +5514,9 @@ Resend and agent-to-human communications remain deferred and inactive.
 `app/agents/elmer.py` now builds a preliminary property-bound cost assessment;
 `app/elmer_intake.py` connects a held Solomon dossier to that assessment through
 canonical custody. This is an explicit bounded intake operation, not a new
-scheduler or a coordinator-route rewrite. A complete report remains held with
-Elmer for accounting review; missing evidence returns the report-bearing dossier
-to Solomon. Nothing advances to Yoseph or authorizes purchasing, payment, tax
+scheduler or a coordinator-route rewrite. A complete report without current accounting exceptions forwards to
+Manny; accounting exceptions remain held with Elmer for review; missing evidence returns the report-bearing dossier
+to Solomon. Yoseph and Deborah are outside the pipeline. Nothing authorizes purchasing, payment, tax
 filing or construction. Existing reports and Solomon's project log are preserved.
 
 Four distinct USD buckets are retained: baseline estimate line items, pending
@@ -5548,8 +5553,8 @@ owner tasks and records its idempotency result. Missing inputs also issue the
 Elmer → Solomon return receipt. Same-operation/same-principal retries replay;
 conflicting reuse or changed evidence refuses. The existing emergency stop blocks
 new intakes. Interrupted transactions roll back receipts, reports and snapshots.
-An existing Elmer report requires explicit assessment reconciliation rather than
-silent overwrite. This milestone does not implement that later correction flow.
+An existing Elmer report uses the linked correction operation described below;
+its original report slot is never overwritten.
 
 Example intent overrides (replace placeholders from a stored preview):
 
@@ -5558,7 +5563,7 @@ Example intent overrides (replace placeholders from a stored preview):
 {"intent":"prepare_elmer_intake","args":{"run_id":"REPLACE_WITH_STORED_RUN_UUID","dossier_key":"main","operation_id":"accounting-intake-1","expected_digest":"REPLACE_WITH_PREVIEW_SOURCE_DOSSIER_DIGEST"}}
 ```
 
-Synthetic fixture contract is now `handoff-fixtures-9`, with an explicitly empty
+The previous synthetic fixture contract was `handoff-fixtures-9`, with an explicitly empty
 reported accounting period; versions 1–8 remain inspectable without advancing.
 Synthetic inputs and assessments stay labeled. Focused tests cover cost-bucket
 arithmetic, partial linked expenses, unknown/empty distinctions, invalid entries,
@@ -5567,3 +5572,90 @@ integration case also verifies interruption after accounting snapshot creation
 and concurrent intake retries. No schema migration, external service, Resend
 activation, bank feed or paid provider request is added. Communications and
 actual financial transactions remain inactive.
+
+
+#### Current accounting completion, shared advisers and Simeon worker model
+
+The current route is Gabriel → Raphael → Onesimus → Michael → Uriel → Priscilla
+→ Nicole → Theresia Keys → Simeon → Solomon → Elmer → Manny. Manny is the
+software Owner Agent; the human owner remains the approval authority. Yoseph
+(insurance/liability) and Deborah (legal) remain available shared capabilities
+outside this route. New custody receipts and pipeline report appends refuse
+these adviser roles. Their historical names, reports and receipts remain readable;
+no history or operational data is migrated or deleted. Fixture contract
+`handoff-fixtures-10` covers the twelve-stage route (13 GO/NO-GO scenarios).
+Older fixture versions remain inspectable but cannot advance under new rules.
+
+**Elmer corrections:** `reconcile_elmer` accepts run_id, dossier_key, operation_id,
+expected_digest and scalar correction_json. The JSON object has `reason` and
+`inputs` containing replacements for one or more of accounting_period,
+transactions or entity_and_tax_jurisdiction, using the existing property-bound
+wrappers. A replacement transactions set is the complete supplied period set,
+not an instruction to add the same invoice again. It can correct a record, add
+later evidence or replace invalid records. All prior evidence remains in prior
+assessments and snapshots. Effective corrected inputs carry forward to the next
+assessment, including unchanged fields from earlier corrections.
+
+Each correction appends to `dossier.elmer_assessments`, linking
+parent_assessment_digest, assessment_number, reason, source dossier digest and
+full corrected inputs. The original reports.elmer and original specialist inputs
+stay unchanged. Canonical version, immutable snapshot, receipts, exceptional
+owner tasks and operation result commit atomically. A held Manny dossier returns
+to Elmer for explicit reassessment; a returned Solomon dossier may forward for
+reassessment. Intact latest assessment lineage is checked; Manny's report consumes
+that latest assessment, not a superseded original. Unknown amounts, commitments,
+expenses, pending changes and estimates retain the earlier separation.
+
+Completed intake/corrections without current gaps or accounting exceptions
+forward to Manny. Gaps/exceptions in corrections stay with Elmer and queue owner
+review; initial intake gaps still return to Solomon. `complete_elmer_intake`
+(run_id, dossier_key, operation_id, expected_digest) releases an already-held,
+complete Elmer assessment, including an older held checkpoint. It refuses current
+gaps/exceptions. Prior owner tasks remain historical pending records; new evidence
+is not an automatic grant of legal, payment, tax or construction authority.
+Same-operation retries replay; changed principal/material or stale digest refuse.
+There is no bank reconciliation, verified payment or tax-law engine in this task.
+
+**Shared adviser access:** all pipeline agents, Wondrue, and the other adviser may
+call `app.agent_consultations.exchange_audited` immediately within backend grants.
+Wondrue `consult_adviser` accepts run_id, dossier_key, thread_id, requester,
+adviser (`yoseph`/`deborah`), expected_sequence and scalar message_json containing
+speaker, text, recommendation and evidence_refs. Speaker must be one of the two
+participants; the requester opens the thread. Recommendations are
+proceed_conditionally, needs_evidence or hold. Both sides can reply/follow up.
+`inspect_consultation` reads the thread using run_id/dossier_key/thread_id.
+Messages are versioned, sequence/principal-bound and idempotent, retaining their
+source dossier digest and prior record digest. Disagreement or changed source
+context queues owner review; aligned advice never overrides Raphael, custody,
+permissions or the human owner. This is a durable exchange of supplied advice,
+not a claim of independently researched law, verified coverage or new autonomous
+expert-model inference. No provider call or custody transfer occurs.
+
+**Priscilla:** lead conversion tracking only. She consumes normalized delivery,
+reply and interest observations, but cannot own, claim, draft, take over or send
+human conversations. Provider enrollment/polling remain outside her runtime;
+existing verified event adapters may still feed her metrics. Resend activation
+and actual human communications remain deferred.
+
+**Simeon force multiplication:** shared worker code and one globally locked
+four-slot pool, not independent agents, copied credentials or multiplied API
+budgets. `dispatch_simeon` takes scalar packages_json (one to four unique existing
+conversation package UUIDs) and request_id (at most 40 characters). It uses up to
+four concurrent internal workers, each claiming one conversation, preparing a
+neutral acknowledgment draft tied to its retained inbound message, then releasing
+its lease. No arbitrary tasks, new discovery, model calls, emails or external
+transports run. Overflow stays queued; expired claims can be recovered. Pool
+capacity and per-conversation fences apply across concurrent dispatch calls.
+Per-command request IDs prevent duplicate mutations; reusing a dispatch ID with
+changed revision/material is refused rather than creating another action. No
+continuous scheduler is installed. A future provider-enabled worker may reuse
+this bounded interface under separately configured limits.
+
+All new Wondrue mutations require Ask/Full mode, real stored-pipeline target and
+live inference disabled, with same-operator approval binding. Read-only refuses
+writes. DOSSIER_COORDINATOR_EMERGENCY_STOP blocks new accounting/advisory work
+and worker claims/drafts; stop, pause and lease release remain available. No new
+migration, provider budget, external action, deployment target or dependency is
+introduced. Local and Ubuntu gates cover linked corrections, owner handoff,
+adviser exclusion/history, two-way disagreement, stale context, retired Priscilla
+privileges, bounded workers, FIFO messages, concurrency and interruption rollback.

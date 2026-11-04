@@ -14,6 +14,8 @@ from app.workflow_db import WorkflowError, get_record_in_transaction, put_record
 
 
 def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, report):
+    if agent in ("yoseph","deborah"):
+        raise CustodyAuthError("shared advisers do not append pipeline reports; use consultations")
     if agent not in ("gabriel", "raphael", "onesimus", "michael", *AGENT_SPECS) or not isinstance(report, dict):
         raise CustodyAuthError("only a structured inspection/engineering/financial report can be appended")
     link_record = get_record_in_transaction(conn, run_id, "custody_link", dossier_key)
@@ -103,3 +105,29 @@ def append_solomon_tracking_in_transaction(conn, run_id, dossier_key, tracking):
     put_record_in_transaction(conn, run_id, kind='custody_link', record_key=dossier_key,
         version=link_record.version+1, payload=link, digest=digest_payload(link))
     return stored, version
+
+
+def append_elmer_correction_in_transaction(conn,run_id,dossier_key,report):
+    """Append a linked accounting assessment; inherited report slots are immutable."""
+    from app.agents.stages import _load
+    source,did=_load(conn,run_id,dossier_key,'elmer')
+    if report.get('source_dossier_digest')!=source.digest or report.get('digest')!=digest_payload({k:v for k,v in report.items() if k!='digest'}):
+        raise CustodyTamperError('accounting correction does not bind current dossier')
+    latest=latest_version_in_transaction(conn,did)
+    link_record=get_record_in_transaction(conn,run_id,'custody_link',dossier_key)
+    payload=deepcopy(source.payload)
+    history=payload['dossier'].setdefault('elmer_assessments',[])
+    if len(history)>=100: raise WorkflowError('accounting assessment history limit reached')
+    prior=history[-1] if history else payload['dossier']['reports']['elmer']
+    if report.get('parent_assessment_digest')!=prior.get('digest'): raise WorkflowError('accounting assessment parent mismatch')
+    history.append(deepcopy(report)); payload['version']=source.version+1
+    payload['digest']=digest_payload({k:v for k,v in payload.items() if k!='digest'})
+    stored=put_record_in_transaction(conn,run_id,kind='dossier_version',record_key=dossier_key,version=source.version+1,payload=payload,digest=payload['digest'])
+    custody_payload=deepcopy(latest.payload)
+    custody_payload.update(dossier=deepcopy(payload['dossier']),dossier_digest=stored.digest)
+    version=_append_version_in_transaction(conn,property_id=latest.property_id,payload=custody_payload,created_by='elmer',supersedes=latest.version,
+        amendment={'kind':'accounting_correction','parent_digest':latest.digest,'assessment_digest':report['digest'],'parent_assessment_digest':prior['digest']})
+    snapshot_in_transaction(conn,dossier_id=did,version=version.version)
+    link=deepcopy(link_record.payload);link['custody_version']=version.version
+    put_record_in_transaction(conn,run_id,kind='custody_link',record_key=dossier_key,version=link_record.version+1,payload=link,digest=digest_payload(link))
+    return stored,version
