@@ -327,7 +327,7 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
             assert sum(bool(r.get('replayed')) for r in intakes)==1
             assert all(r['status']=='delivered_to_manny' for r in intakes)
             with get_connection() as conn:
-                assert latest_version_in_transaction(conn,did).version==4
+                assert latest_version_in_transaction(conn,did).version==6
                 assert verify_chain_in_transaction(conn,did)==initial_receipts+2
                 original_accounting=get_record_in_transaction(conn,rid,'dossier_version',key).payload['dossier']['reports']['elmer']
                 parent_digest=get_record_in_transaction(conn,rid,'dossier_version',key).digest
@@ -344,7 +344,7 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
             with pytest.raises(KeyboardInterrupt): elmer_intake.prepare_audited(**correction_inputs)
             monkeypatch.setattr(dossier_reports,'append_elmer_correction_in_transaction',correction_append)
             with get_connection() as conn:
-                assert latest_version_in_transaction(conn,did).version==4
+                assert latest_version_in_transaction(conn,did).version==6
                 assert verify_chain_in_transaction(conn,did)==initial_receipts+2
             barrier=Barrier(2)
             def correct(_):
@@ -356,7 +356,7 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 current=get_record_in_transaction(conn,rid,'dossier_version',key)
                 assert current.payload['dossier']['reports']['elmer']==original_accounting
                 assert len(current.payload['dossier']['elmer_assessments'])==1
-                assert latest_version_in_transaction(conn,did).version==5
+                assert latest_version_in_transaction(conn,did).version==8
                 assert verify_chain_in_transaction(conn,did)==initial_receipts+4
             from app import agent_consultations
             advisory={'principal':'pg-test','run_id':rid,'dossier_key':key,'thread_id':'pg-legal','requester':'manny','adviser':'deborah',
@@ -372,7 +372,42 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 'message':{'speaker':'deborah','text':'More evidence required; not a legal opinion.',
                 'recommendation':'hold','evidence_refs':['pg-test:invoice']}})
             with get_connection() as conn:
-                assert latest_version_in_transaction(conn,did).version==5
+                assert latest_version_in_transaction(conn,did).version==8
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+4
+            from app import manny_review
+            with get_connection() as conn:
+                owner_view=manny_review.inspect_in_transaction(conn,run_id=rid,dossier_key=key)
+                assert owner_view['brief']['overview']['latest_accounting']['reported_actual_expenses']['total_usd']=='25.00'
+                queue=manny_review.queue_in_transaction(conn,run_id=rid,dossier_key=key)
+                task=next(t for t in queue['tasks'] if t['original_task'].get('adviser')=='deborah')
+                before_owner=get_record_in_transaction(conn,rid,'dossier_version',key)
+            owner_inputs={'principal':'pg-test','run_id':rid,'dossier_key':key,'operation_id':'pg-owner-review',
+                'expected_digest':before_owner.digest,'action':'resolve','operator_authorized':True,
+                'decision':{'task_key':task['record_key'],'expected_sequence':0,'disposition':'close_review',
+                    'note':'Administrative review only; no legal approval or external permission.',
+                    'evidence_refs':['task:'+task['task_digest']]}}
+            owner_append=dossier_reports.append_owner_material_in_transaction
+            def interrupt_owner(*args,**kwargs):
+                owner_append(*args,**kwargs)
+                raise KeyboardInterrupt('interrupted after owner decision snapshot')
+            monkeypatch.setattr(dossier_reports,'append_owner_material_in_transaction',interrupt_owner)
+            with pytest.raises(KeyboardInterrupt): manny_review.audited(**owner_inputs)
+            monkeypatch.setattr(dossier_reports,'append_owner_material_in_transaction',owner_append)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==8
+                assert get_record_in_transaction(conn,rid,'dossier_version',key).digest==before_owner.digest
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+4
+            barrier=Barrier(2)
+            def decide(_):
+                barrier.wait(timeout=10)
+                return manny_review.audited(**owner_inputs)
+            with ThreadPoolExecutor(max_workers=2) as pool: decisions=list(pool.map(decide,range(2)))
+            assert sum(bool(r.get('replayed')) for r in decisions)==1
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==10
+                view=manny_review.queue_in_transaction(conn,run_id=rid,dossier_key=key)
+                assert next(t for t in view['tasks'] if t['record_key']==task['record_key'])['review_status']=='closed_by_owner'
+                assert get_record_in_transaction(conn,rid,'owner_review_task',task['record_key']).payload['status']=='pending'
                 assert verify_chain_in_transaction(conn,did)==initial_receipts+4
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])

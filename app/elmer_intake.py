@@ -57,8 +57,15 @@ def prepare_in_transaction(conn, *, principal, run_id, dossier_key, operation_id
     if not ready:
         issue_receipt_in_transaction(conn,dossier_id=did,version=version.version,kind='return',
             from_agent='elmer',to_agent='solomon',issued_by=principal,note='Accounting evidence gaps; no records or expenditure invented.')
+    owner_package=None
+    if complete:
+        from app.manny_review import prepare_on_arrival_in_transaction
+        owner_package=prepare_on_arrival_in_transaction(conn,principal=principal,run_id=run_id,dossier_key=dossier_key,
+            assessment_digest=report['digest'],dossier_digest=stored.digest)
     result={'status':'delivered_to_manny' if complete else 'elmer_accounting_review' if ready else 'returned_to_solomon','current_holder':'manny' if complete else 'elmer' if ready else 'solomon',
         'report':report,'dossier_digest':stored.digest,'custody_version':version.version,'replayed':False,'external_actions':0}
+    if owner_package:
+        result.update(owner_brief_digest=owner_package['brief']['digest'],dossier_digest=owner_package['dossier_digest'],custody_version=owner_package['custody_version'])
     payload={'request':request,'result':result}
     put_record_in_transaction(conn,run_id,kind='research_artifact',record_key=key,version=1,payload=payload,digest=digest_payload(payload))
     return result
@@ -145,8 +152,15 @@ def reconcile_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,ex
     if complete:
         issue_receipt_in_transaction(conn,dossier_id=did,version=latest.version,kind='forward',from_agent='elmer',to_agent='manny',issued_by=principal,
             note='Accounting preparation complete; no legal, payment or tax authority granted.')
+    owner_package=None
+    if complete:
+        from app.manny_review import prepare_on_arrival_in_transaction
+        owner_package=prepare_on_arrival_in_transaction(conn,principal=principal,run_id=run_id,dossier_key=dossier_key,
+            assessment_digest=report['digest'],dossier_digest=stored.digest)
     result={'status':'delivered_to_manny' if complete else 'elmer_accounting_review','current_holder':'manny' if complete else 'elmer',
         'assessment':report,'dossier_digest':stored.digest,'custody_version':latest.version,'replayed':False,'external_actions':0}
+    if owner_package:
+        result.update(owner_brief_digest=owner_package['brief']['digest'],dossier_digest=owner_package['dossier_digest'],custody_version=owner_package['custody_version'])
     payload={'request':request,'result':result}
     put_record_in_transaction(conn,run_id,kind='research_artifact',record_key=key,version=1,payload=payload,digest=digest_payload(payload))
     return result

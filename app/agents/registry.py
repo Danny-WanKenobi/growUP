@@ -60,8 +60,8 @@ SPECS = (
         ("Current-law research and legal reasoning with authoritative citations", "Legal opinions, filings and representation")),
     AgentSpec("manny", "Manny", "Owner Agent and Asset Manager", ("michael","elmer"),
         ("asset_ownership", "operating_mandate", "asset_obligations"),
-        "Asset/obligation intake and owner-exception brief; represents software coordination, not the human owner.",
-        ("Verified asset register, performance monitoring and maintenance lifecycle", "Delegated transaction authority and asset transfers")),
+        "Consolidated source-linked owner overview and durable exception decisions; no signing, payment or external-action authority.",
+        ("Verified asset register, performance monitoring and maintenance lifecycle", "Delegated transaction authority and asset transfers"), "app.agents.manny"),
 )
 ADVISER_IDS = ('yoseph','deborah')
 PIPELINE_IDS = ('gabriel','raphael','onesimus','michael','uriel','priscilla','nicole','theresia_keys','simeon','solomon','elmer','manny')

@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = PIPELINE_IDS
-FIXTURE_VERSION = "handoff-fixtures-10"
+FIXTURE_VERSION = "handoff-fixtures-11"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", "handoff-fixtures-10", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -143,6 +143,9 @@ def _fixture(run_key, fail_at):
     inputs['elmer']['entity_and_tax_jurisdiction']['value']={'property_id':str(prop),
         'entity_name':'FICTIONAL demo entity','jurisdiction':'FICTIONAL Texas jurisdiction; not a tax determination'}
     inputs['elmer']['transactions']['value']={'property_id':str(prop),'coverage':'none_reported','entries':[]}
+    inputs['manny']['asset_ownership']['value']={'property_id':str(prop),'status':'claimed','note':'FICTIONAL claim, not verified ownership'}
+    inputs['manny']['operating_mandate']['value']={'property_id':str(prop),'scope':'review_only'}
+    inputs['manny']['asset_obligations']['value']={'property_id':str(prop),'coverage':'none_reported','entries':[]}
     if fail_at in AGENT_SPECS and AGENT_SPECS[fail_at].required_inputs:
         inputs[fail_at].pop(AGENT_SPECS[fail_at].required_inputs[0])
     return sealed(marked({"version":1,"property_id":str(prop),"artifact_refs":[],

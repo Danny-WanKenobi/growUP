@@ -250,7 +250,7 @@ implementations remain the package/event authorities.
 | Elmer / `elmer` | Separated cost buckets, linked corrections, exceptions and completed accounting handoff to Manny | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
 | Yoseph / `yoseph` — shared adviser, outside pipeline | Durable two-way insurance/liability consultation and disagreement queue | Carrier quotes, policy interpretation, coverage validation, binding and claims |
 | Deborah / `deborah` — shared adviser, outside pipeline | Durable two-way legal-evidence consultation and disagreement queue | Current-law research, supported legal opinions, filings and representation |
-| Manny / `manny` | Ownership, operating-mandate and asset-obligation intake | Verified asset register, performance/maintenance automation and delegated transactions |
+| Manny / `manny` | Consolidated source-linked owner brief, latest accounting view and durable administrative exception decisions | Verified asset register, performance/maintenance automation and delegated transactions |
 
 ### Canonical handoff contract from the outset
 
@@ -5583,7 +5583,7 @@ software Owner Agent; the human owner remains the approval authority. Yoseph
 outside this route. New custody receipts and pipeline report appends refuse
 these adviser roles. Their historical names, reports and receipts remain readable;
 no history or operational data is migrated or deleted. Fixture contract
-`handoff-fixtures-10` covers the twelve-stage route (13 GO/NO-GO scenarios).
+`handoff-fixtures-11` covers the twelve-stage route (13 GO/NO-GO scenarios), including property-bound owner review inputs.
 Older fixture versions remain inspectable but cannot advance under new rules.
 
 **Elmer corrections:** `reconcile_elmer` accepts run_id, dossier_key, operation_id,
@@ -5659,3 +5659,101 @@ migration, provider budget, external action, deployment target or dependency is
 introduced. Local and Ubuntu gates cover linked corrections, owner handoff,
 adviser exclusion/history, two-way disagreement, stale context, retired Priscilla
 privileges, bounded workers, FIFO messages, concurrency and interruption rollback.
+
+
+#### Manny: consolidated owner decision package and exception review
+
+`app/agents/manny.py` prepares an owner overview from retained pipeline reports;
+`app/manny_review.py` adds current custody, advisory threads and scoped exception
+state. Completed Elmer intake, correction or legacy completion now prepares the
+owner package **automatically in the same audited transaction** after handoff to
+Manny. An initial Manny report is appended when absent; existing reports are
+never overwritten. Preparation appends an immutable dossier version and snapshot
+with the brief. Manny remains the software Owner Agent, not the human owner,
+legal signatory or a source of execution authority.
+
+The brief contains stable run/dossier locators, a per-agent report manifest with digests/status/missing data,
+retained property-assessment facts and unknowns, separate engineering scenarios
+and financial forecasts, the latest linked Elmer assessment, Solomon project
+digest, current source custody and last transfer receipt, adviser-thread references, review counts and
+unresolved task keys. Numbers are copied from their deterministic source reports,
+not recomputed or added across alternatives. Forecasts, unverified expenses,
+claims and unknowns retain their scope. An ownership claim is never a verified
+title. The package always requests owner review rather than asserting investment,
+construction, payment, tax or legal approval.
+
+Manny's existing input wrappers now have property-bound values and evidence
+references: asset_ownership has status claimed/unknown; operating_mandate has
+scope review_only; asset_obligations has coverage reported/none_reported and up
+to 100 supplied entries (none_reported requires an empty list). These remain
+provided, unverified inputs. Missing records yield an honest incomplete brief,
+not invented facts. Synthetic contract handoff-fixtures-11 supplies explicitly
+fictional examples; older fixtures remain inspectable without advancing.
+
+`inspect_owner_brief` takes run_id/dossier_key and is read-only. It returns a fresh
+brief plus latest_retained_brief, separating the current view from the historical
+saved package. `prepare_owner_brief` takes run_id, dossier_key, operation_id and
+expected_digest from the fresh inspection to append a new saved package. It
+requires held Manny custody. Source custody/digest fields describe the input
+before append; the mutation result gives the new dossier digest/custody version.
+Preparing or refreshing a package cannot resolve an exception.
+
+`resolve_owner_exception` takes the same identifiers and scalar decision_json:
+
+```json
+{"task_key":"REPLACE_WITH_RETAINED_TASK_KEY","expected_sequence":0,"disposition":"close_review","note":"Owner completed administrative review; no property fact or permission changed.","evidence_refs":["task:REPLACE_WITH_TASK_DIGEST"]}
+```
+
+Dispositions are acknowledge, request_evidence, close_review, mark_duplicate and
+reopen. They map to acknowledged, evidence_requested, closed_by_owner,
+closed_as_duplicate and reopened review states. mark_duplicate additionally
+requires duplicate_of naming a different scoped primary task; duplicate cycles
+are refused. Every decision requires a note and retained references: task:DIGEST,
+dossier:DIGEST, report:DIGEST or advisory:DIGEST from this dossier's current
+inspection context. Unretained URLs are not accepted as resolution proof. These
+references establish traceability, not independent authenticity of their claims.
+
+Only the authenticated operator grant may record a disposition through an
+explicit intent override. Natural-language/model-proposed close commands refuse;
+trusted worker calls default to operator_authorized=false. Read-only refuses
+mutation, Ask approvals bind the principal, and real target/live inference off
+remain required. Possession of the operator credential is the existing single-
+owner access boundary; this is not a new physical-presence or signing system.
+The software owner brief and other agents cannot self-approve external actions.
+
+Original owner_review_task rows remain unchanged. A disposition appends a
+canonical owner_decisions entry, immutable snapshot, versioned resolution index,
+operation result and permanent audit. The resolution index must match the latest
+canonical decision, preventing a stale/forged index from restoring an older
+closed state. A fresh saved brief is appended in the same transaction after the
+decision. Current queue views expose review_status beside the original status;
+existing status=pending fields are retained for compatibility. Scoped briefs
+include only matching property/dossier tasks; unscoped legacy tasks are listed
+separately and cannot be closed against an assumed property.
+
+Review decisions bind the original task digest and an evidence-context digest.
+New reports, accounting corrections, source facts or advisory revisions require
+revalidation of earlier dispositions. Owner brief/decision presentation updates
+and Manny's own report are excluded from that evidence fingerprint, so refreshing
+a package does not reopen unchanged review items. Effective stale status is
+needs_revalidation; old decisions remain visible rather than rewritten. Closing
+review never changes Raphael facts, report missing inputs, policy gates, service
+settings or external-action permissions. Evidence gaps must still be addressed
+through the existing upstream evidence/correction paths.
+
+Shared dossier locking, expected source digests, per-task expected sequences and
+principal-bound operation IDs protect against stale writes, conflicting retries
+and concurrent duplicate decisions. Interruptions roll back decision, refreshed
+brief, snapshot, index and audit together. DOSSIER_COORDINATOR_EMERGENCY_STOP blocks
+new writes. Each owner_briefs/owner_decisions history is bounded to 100 entries
+per dossier; reaching a limit refuses without deleting history. Automated history
+rollover, asset operations, signatures, payments and outbound messages remain
+outside this milestone. No schema migration, new dependency, provider call,
+source acquisition, new scheduler or transport activation is introduced.
+
+Tests cover automatic arrival packages, immutable task/report history, latest
+accounting selection, closures/reopens, duplicate scope/cycles, stale evidence,
+unchanged presentation context, tampered resolution indexes and operator/model
+permission boundaries. The Ubuntu coordinator gate additionally tests forced
+interruption after an owner-decision snapshot and concurrent identical decisions
+against disposable PostgreSQL data; operational dossier history is untouched.

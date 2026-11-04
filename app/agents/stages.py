@@ -140,6 +140,15 @@ def build_report(agent, payload):
         result["status"] = "needs_evidence" if missing else "prepared_not_approved"
         result["next_steps"] = ["Obtain or resolve "+name for name in missing]
         result["next_steps"].append("Resolve closing exceptions through the existing owner queue; no signing or closing authority is granted.")
+    if agent == "manny":
+        from app.agents.manny import assess
+        result["owner_overview"]=assess(payload["property_id"],dossier)
+        for gap in result["owner_overview"]["missing"]:
+            if gap not in missing: missing.append(gap)
+        result["owner_review_requests"].extend({"requirement":gap,"reason":"Owner intake evidence is unresolved.",
+            "status":"pending","authority":"human_owner","grants_permission":False} for gap in result["owner_overview"]["missing"])
+        result["status"]="needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"]=["Review the consolidated source-linked owner brief; no execution authority is granted."]
     if agent == "elmer":
         from app.agents.elmer import assess
         result["accounting_assessment"]=assess(payload["property_id"],dossier)
@@ -249,12 +258,6 @@ def prepare_audited(*, principal, **inputs):
         event=event, mutate=lambda conn:prepare_in_transaction(conn, **inputs))
 
 
-def owner_queue_in_transaction(conn, *, run_id):
-    from app.workflow_db import list_records_in_transaction
-    rows = list_records_in_transaction(conn, UUID(str(run_id)), OWNER_TASK_KIND)
-    result = []
-    for row in rows:
-        if row.digest != digest_payload(row.payload):
-            raise WorkflowError("owner-review task failed integrity verification")
-        result.append({"record_key":row.record_key, **row.payload})
-    return {"tasks":result, "resolution_automation":"deferred; pending tasks never grant permissions"}
+def owner_queue_in_transaction(conn, *, run_id, dossier_key=None):
+    from app.manny_review import queue_in_transaction
+    return queue_in_transaction(conn,run_id=run_id,dossier_key=dossier_key)
