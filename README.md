@@ -4649,8 +4649,8 @@ pages were requested in these checks. Focused runner/coordinator regression:
 ## Durable per-dossier coordinator
 
 `app.dossier_coordinator` processes an existing stored dossier from its current
-Raphael/Onesimus/Michael/Uriel/Priscilla custody holder. It enforces forward
-Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole. Evidence gaps return
+Raphael/Onesimus/Michael/Uriel/Priscilla/Nicole custody holder. It enforces forward
+Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole → Theresia Keys. Evidence gaps return
 to the previous stage (Priscilla returns to Michael); processing then stops.
 It uses the existing policies, deterministic calculators, report appender,
 immutable snapshots, receipt issuer and permanent audit transaction. No discovery,
@@ -5003,9 +5003,8 @@ builder (`preview_agent_report`, `prepare_in_transaction` / `prepare_audited`).
 It consumes the retained dossier only: no discovery, current-law research,
 provider requests, permit applications or external actions. It uses the same
 property UUID, report digest, append-only dossier/snapshot services and owner
-review queue as the other agents. The durable coordinator still stops on delivery
-to Nicole; this change strengthens her report primitive, not the coordinator's
-route or a new unattended specialist worker.
+review queue as the other agents. The durable coordinator now processes Nicole and stops on delivery
+to Theresia Keys, using the route/version rules below. No unattended worker is installed.
 
 Nicole's `specialist_inputs` retain the existing value/evidence_refs wrappers:
 
@@ -5050,3 +5049,43 @@ Focused checks: `python -m pytest tests/test_nicole.py
 (on one command line). Checks cover property/jurisdiction binding, contradictory
 claims, missing/legacy input, source/date validation, approval-scope separation,
 report sealing and the existing isolated GO/NO-GO custody scenarios.
+
+
+#### Coordinator extension: Nicole to Theresia Keys
+
+The version-two coordinator processes Nicole with her shared regulatory report
+builder. One bounded step appends her structured report to the entire dossier,
+preserves an immutable snapshot, writes owner-review requests, issues the custody
+receipt, and advances its checkpoint in the existing atomic audited transaction.
+A complete preliminary intake forwards to `theresia_keys` and records
+`delivered_to_theresia_keys`; Theresia is the terminal recipient, not processed
+by this bounded coordinator. Nicole's report still grants no regulatory clearance.
+Missing, contradictory or denied evidence produces a `return` receipt to
+Priscilla, a retained needs-evidence report and owner tasks; it does not trigger
+search, provider calls, email, permit submissions or automatic report replacement.
+
+Priscilla-to-Nicole delivery now remains `running`, so Nicole can execute in the
+next bounded step. The five-step maximum per invocation is unchanged: a workflow
+starting at Raphael needs another invocation to process Nicole. There is no
+batch quota or wait for other properties. `coordinate_dossier` through Wondrue
+continues to enforce read-only / actor-bound Ask / server-granted Full access.
+
+**Existing version-one checkpoints do not silently advance.** Replaying an old
+sequence returns the retained result. To adopt the extended route, explicitly
+send action=`resume` with the checkpoint's current expected_sequence and original
+principal. Supported legacy states are running, stopped or delivered_to_nicole;
+current custody must still be in the processing route and the held dossier digest
+must agree. Resume appends a version-two checkpoint and consumes one sequence;
+it creates no report or receipt. Then use the returned sequence for the next
+step. Existing returned/owner-review states require reconciliation, not automatic
+upgrade. Stop remains available for legacy checkpoints. Old records and custody
+history remain immutable. No migration or operational dossier conversion runs
+at deployment.
+
+Focused tests cover Nicole forwarding, report snapshots, upstream gap returns,
+owner requests, replay, explicit legacy resume and unchanged custody during
+upgrade. The existing gated PostgreSQL interruption/concurrency test also runs
+with a Nicole-held disposable dossier: interruption after report/snapshot rolls
+back, then simultaneous same-sequence attempts commit exactly one report and
+receipt. All such proof records remain in `growup_mvp_gate`; no real operational
+candidate is promoted by the tests.
