@@ -126,6 +126,16 @@ def build_report(agent, payload):
         result["next_steps"] = ["Obtain or resolve "+name for name in missing]
         if not missing:
             result["next_steps"].append("Review the unsigned conditional preparation brief; no execution or financing approval is granted.")
+    if agent == "simeon":
+        from app.agents.simeon import assess
+        result["closing_assessment"] = assess(payload["property_id"], supplied, reports)
+        for gap in result["closing_assessment"]["missing"]:
+            if gap not in missing:
+                missing.append(gap)
+        result["owner_review_requests"].extend(result["closing_assessment"]["owner_review_requests"])
+        result["status"] = "needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"] = ["Obtain or resolve "+name for name in missing]
+        result["next_steps"].append("Resolve closing exceptions through the existing owner queue; no signing or closing authority is granted.")
     result["digest"] = digest_payload(result)
     return result
 

@@ -5196,3 +5196,56 @@ The gated PostgreSQL recovery/concurrency test now also starts with a disposable
 Theresia-held dossier: interruption after report/snapshot rolls back, and two
 same-sequence retries commit exactly one enhanced version and receipt. Gate-only
 fixtures do not establish a real property's financing or closing eligibility.
+
+
+### Simeon closing-readiness assessment and exception routing
+
+`app.agents.simeon.assess` now powers the existing Simeon specialist report,
+read-only preview and canonical report preparation/snapshot path. The coordinator
+continues to stop on delivery to Simeon; this task does not extend execution past
+him, start a worker or initiate a closing. No network clients, migrations or new
+custody system are introduced.
+
+The retained Theresia report must pass digest/property checks and contain a
+conditional_preparation_only assessment with no missing underwriting inputs.
+Simeon retains its report digest, exact proposed-terms digest, required parties
+and unresolved conditions. All three existing specialist-input value/evidence_refs
+wrappers now require structured property-bound records and HTTP(S) provenance
+without embedded credentials:
+
+- counterparty_consent: property_id, terms_digest and at most 100 party records.
+  Each names a party and role from Theresia's terms, status (`consented`, `declined`,
+  `unknown`), ISO record_date and source_url included in the retained evidence_refs.
+  Every required party must be represented exactly once. Missing, duplicate,
+  conflicting, declined or unknown consent remains an evidence gap.
+- approved_terms: property_id, the exact terms_digest, record_date and status
+  (`reviewed` or `approved_claimed`). The field name is historical; supplied
+  approval is never authenticated by its label.
+- signing_authority: property_id, principal, record_date and scope (`review_only`
+  or `signing_claimed`). A claimed power of attorney or caller-supplied
+  authenticated/approved flag never grants execution authority.
+
+Complete intake yields prepared_for_coordination_review inside the shared
+prepared_not_approved report. It never yields ready_to_close, deal_closed,
+consent_authenticated, terms_approval_authenticated or signing_authorized.
+Inherited conditions remain unresolved; caller assertions cannot mark them
+satisfied. No signature, disbursement, escrow instruction, title transfer,
+negotiation, provider call or legal determination occurs.
+
+Exception routes are recommendations, not extra custody transfers: evidence
+and version/identity gaps name `theresia_keys`, while inherited conditions and
+execution-authority checks name `human_review`. Each carries grants_permission=false.
+They persist through the existing owner-review queue when the report is prepared,
+with the enhanced full dossier and immutable snapshot preserved by the canonical
+services. Read-only preview writes nothing. Source/authority adapters, actual
+closing channels and authenticated signatures remain deferred.
+
+The isolated synthetic handoff contract is now handoff-fixtures-7 with explicitly
+fictional, terms-bound consent and review-only authority. Older v1–v6 fixtures
+remain inspectable, without advancement under the new contract. Synthetic GO
+means the implemented intake checks passed, not that a deal can close.
+Focused tests: `python -m pytest tests/test_simeon.py tests/test_agent_v1_contracts.py
+ tests/test_handoff_demo.py -q -p no:cacheprovider` (one line). They cover exact
+terms/property/party binding, refusals, unknown/duplicate/missing consent, source
+and date errors, report tampering, forged approval/POA claims, immutable conditions,
+exception routes and shared report sealing, plus existing GO/NO-GO custody scenarios.
