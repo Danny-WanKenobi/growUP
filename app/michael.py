@@ -559,3 +559,36 @@ def planning_cases(config_name, engineering, financial):
         result[name] = assessment
     return {'complete':all(case['complete'] for case in result.values()), 'cases':result,
             'missing':sorted({gap for case in result.values() for gap in case.get('missing',[])})}
+
+
+def operating_stress_cases(config_name,engineering,financial):
+    """Explicit independent downside assumptions; not forecasts or new market data."""
+    from copy import deepcopy
+    base=planning_cases(config_name,engineering,financial).get('cases',{}).get('base')
+    if not base or not base['complete']:
+        return {'complete':False,'missing':(base or {}).get('missing',['complete_explicit_financial_inputs']),'cases':{},'external_actions':0}
+    cases={}
+    for name,field,factor in (('crop_price_down_20pct','price_per_kg','0.8'),('electricity_doubles','electricity_usd_per_kwh','2'),('labor_rate_up_50pct','labor_usd_per_h','1.5')):
+        bundle=deepcopy(financial)
+        if field not in bundle or bundle[field].value is None:
+            cases[name]={'complete':False,'missing':[field]};continue
+        bundle[field]=bundle[field].model_copy(update={'value':bundle[field].value*Decimal(factor),'classification':'assumed',
+            'uncertainty':f'Explicit {factor} stress multiplier; not a forecast'})
+        result=assess(config_name,engineering,bundle)
+        cases[name]={'complete':result['complete'],'outputs':result['outputs'],'assumption':{field+'_multiplier':factor},'missing':result['missing']}
+    outputs=base['outputs'];revenue=Decimal(outputs['revenue_usd_per_year']);opex=Decimal(outputs['opex_usd_per_year']);capex=Decimal(outputs['capex_usd'])
+    for name,months in (('construction_delay_3_months',3),('conversion_space_unavailable_6_months',6)):
+        fraction=Decimal(12-months)/12
+        cases[name]={'complete':True,'assumption':{'nonproductive_months':months,'year_one_revenue_fraction':str(fraction),
+            'opex':'Full annual base opex retained conservatively; not an observed vacancy claim.'},
+            'outputs':{'year_one_revenue_usd':money_str(revenue*fraction),'year_one_opex_usd':money_str(opex),
+                'year_one_operating_net_usd':money_str(revenue*fraction-opex)},'missing':[]}
+    allowance=capex*Decimal('.10');stressed_capex=capex*Decimal('1.20')
+    cases['construction_and_tenant_relocation_allowances']={'complete':True,
+        'assumption':{'construction_capex_multiplier':'1.20','one_time_relocation_allowance_fraction_of_base_capex':'0.10',
+            'tenant_consent':'Unknown; an allowance does not establish relocation rights or an executable cost estimate.'},
+        'outputs':{'stressed_capex_usd':money_str(stressed_capex),'one_time_relocation_allowance_usd':money_str(allowance),
+            'year_one_cash_after_setup_usd':money_str(revenue-opex-stressed_capex-allowance)},'missing':[]}
+    return {'complete':all(c['complete'] for c in cases.values()),'cases':cases,'baseline_outputs':outputs,
+        'classification':'explicit_planning_stress','units':'USD unless specified; year one and annual run-rate are separate.',
+        'scope':'Independent alternatives, never summed. No financing, tax, construction approval or guaranteed return.','external_actions':0}

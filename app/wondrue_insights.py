@@ -70,7 +70,9 @@ def inbox(conn,*,as_of,offset=0):
     proposals=ws.review_list(conn,(offset//100)*30)
     retained,retained_more=latest_rows(conn,('research_artifact',),limit=30,offset=(offset//100)*30,prefixes=['retained-review'])
     retained_reviews=[dict(r['payload'],review_digest=r['digest']) for r in retained if _valid(r)]
-    return {'as_of':as_of,'items':items,'proposals':proposals,'retained_reviews':retained_reviews,'has_more':more or retained_more,'offset':offset,
+    workflows,workflow_more=latest_rows(conn,('research_artifact',),limit=30,offset=(offset//100)*30,prefixes=['refresh-workflow'])
+    refresh_workflows=[dict(r['payload'],review_digest=r['digest']) for r in workflows if _valid(r)]
+    return {'as_of':as_of,'items':items,'proposals':proposals,'retained_reviews':retained_reviews,'refresh_workflows':refresh_workflows,'has_more':more or retained_more or workflow_more,'offset':offset,
             'scope':'Bounded retained tasks, not a complete global count; source resolutions require the linked owner context.',
             'records_written':0,'provider_calls':0,'external_actions':0}
 

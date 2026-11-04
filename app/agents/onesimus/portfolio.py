@@ -77,3 +77,37 @@ def assess_room_finance(portfolio,raw_inputs):
         favorable_under_assumptions=not missing and Decimal(totals['operating_net_usd_per_year'])>0,
         scope='Sum room-specific planning allowances only. Shared overhead must be allocated once in supplied inputs; no capacity, occupancy, profit or financing verification.',
         shared_costs_allocation_verified=False)
+
+
+def engineering_sensitivities(report):
+    """Reuse the physical calculator; changed inputs stay explicit assumptions."""
+    from app.agents.onesimus.service import CONFIGS,TENANT_FLAGS
+    from app.agents.onesimus.engineering import calculate
+    result=[]
+    for config_name,alternative in (report.get('alternatives') or {}).items():
+        original=alternative.get('scenario') or {};inputs=original.get('inputs') or {}
+        if config_name not in CONFIGS:continue
+        for case,group,field,factor in (('wider_access','site','aisle_width_m',1.25),('lower_light_power','crop','light_w_per_m2',.8),
+            ('larger_water_reserve','crop','reservoir_l_per_site',1.2),('higher_labor_allowance','crop','labor_min_per_site_cycle',1.5),('two_tier_comparison',None,None,None)):
+            site={k:ClassifiedInput.model_validate(v) for k,v in (inputs.get('site') or {}).items()}
+            crop={k:ClassifiedInput.model_validate(v) for k,v in (inputs.get('crop') or {}).items()}
+            config=CONFIGS[config_name];change={}
+            if case=='two_tier_comparison':
+                if config_name!='rack3':continue
+                config=config.model_copy(update={'tiers':2});change={'tiers':{'from':3,'to':2,'classification':'assumed'}}
+            else:
+                values=site if group=='site' else crop;prior=values.get(field)
+                if prior is None or prior.value is None or prior.classification=='unknown':
+                    result.append({'config':config_name,'case':case,'complete':False,'missing':[field]});continue
+                values[field]=prior.model_copy(update={'value':prior.value*factor,'classification':'assumed','provenance':'Explicit sensitivity multiplier; baseline: '+prior.provenance})
+                change={field:{'from':prior.value,'to':values[field].value,'unit':prior.unit,'classification':'assumed'}}
+            try:
+                scenario=calculate(config,crop,site,tenant_consolidation=False,observed_occupancy='Retained occupancy unchanged; no relocation assertion.',
+                    tenant_flags=TENANT_FLAGS,calculation_version='onesimus-sensitivity-1')
+            except WorkflowError as exc:
+                result.append({'config':config_name,'case':case,'changes':change,'complete':False,'missing':['supported_sensitivity_inputs'],'reason':str(exc)})
+                continue
+            result.append({'config':config_name,'case':case,'changes':change,'complete':scenario['complete'],'missing':scenario['missing'],
+                'layout_status':scenario.get('layout_status'),'outputs':scenario.get('outputs'),'units':scenario.get('output_units')})
+    return {'cases':result,'classification':'conceptual_sensitivity','building_capacity_verified':False,'external_actions':0,
+        'scope':'Independent passive non-circulating Kratky layouts. No sum across alternatives; no safety, load, access, lighting adequacy or water-supply approval.'}

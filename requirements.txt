@@ -10,3 +10,6 @@ pytest>=8.0,<9
 # tzdata: IANA database for zoneinfo Asia/Jerusalem Sabbath evaluation
 # (app/sabbath.py) on hosts without system tzdata (e.g. Windows).
 tzdata>=2024.1
+
+# Bounded, isolated owner-document text extraction; no OCR or authentication.
+pypdf==6.21.4

@@ -490,6 +490,10 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         refs[agent] = {'report_digest':report['digest'],'sources':list(report.get('evidence_refs') or [])}
     if reports['raphael'].get('outcome') != 'authorized':
         raise UrielError('campaign requires preliminary Raphael authorization')
+    from app.linked_reassessments import stale_dependencies
+    stale=stale_dependencies(reports)
+    if any(a in stale for a in ('raphael','onesimus','michael')):
+        raise UrielError('campaign inputs contain stale inspection, engineering or financial reports')
     assessments = reports['michael'].get('assessments') or {}
     claims = []
     for name, assessment in sorted(assessments.items()):

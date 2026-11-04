@@ -100,6 +100,12 @@ def _build(agent, payload):
         report = build_report(agent, payload)
         eligible = not report['missing']
         reasons = report['missing']
+    if agent=='onesimus':
+        from app.agents.onesimus.portfolio import engineering_sensitivities
+        report['sensitivity_cases']=engineering_sensitivities(report)
+    if agent=='michael':
+        from app.michael import operating_stress_cases
+        report['operating_stress_cases']={name:operating_stress_cases(name,item.get('scenario') or item,financial_inputs_from_raw(inputs.get('financial') or {},scenario=name)) for name,item in (reports.get('onesimus',{}).get('alternatives') or {}).items()}
     report = {k: v for k, v in report.items() if k != 'digest'}
     report.update(agent=agent, source_dossier_digest=payload['digest'])
     return _sealed(report), eligible, list(reasons)

@@ -21,6 +21,23 @@ def _job(conn,rid,key):
     return row
 
 
+def candidate_for_reassessment(payload,target,inputs):
+    candidate=deepcopy(payload);dossier=effective_dossier(candidate['dossier']);candidate['dossier']=dossier
+    if 'correction' in inputs: raise WorkflowError('accounting correction only applies to Elmer')
+    updates=inputs.get('assessment_inputs')
+    if updates is not None:
+        allowed={'raphael':{'site'},'onesimus':{'crop','rooms'},'michael':{'financial','room_financial'}}
+        if target not in allowed or not isinstance(updates,dict) or not updates or set(updates)-allowed[target]: raise WorkflowError('assessment changes must belong to target agent')
+        dossier.setdefault('assessment_inputs',{}).update(deepcopy(updates))
+    if 'specialist_inputs' in inputs:
+        if target in ('gabriel','raphael','onesimus','michael') or not isinstance(inputs['specialist_inputs'],dict): raise WorkflowError('target does not accept specialist inputs')
+        dossier.setdefault('specialist_inputs',{})[target]=deepcopy(inputs['specialist_inputs'])
+    # The effective view is already resolved. Avoid resolving the history twice.
+    dossier.pop('agent_reassessments',None)
+    candidate['digest']=digest_payload({k:v for k,v in candidate.items() if k!='digest'})
+    return candidate
+
+
 def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expected_digest,action,inputs=None,operator_authorized=False):
     from app.mvp import _require_enabled
     from app.agents.registry import PIPELINE_IDS
@@ -37,7 +54,7 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
     if source.digest!=expected_digest: raise WorkflowError('source dossier changed; inspect again')
     if action=='dispatch':
         source,_=_load(conn,run_id,dossier_key,'manny')
-        if set(inputs)-{'task_key','target_agent'}: raise WorkflowError('unsupported dispatch input')
+        if set(inputs)-{'task_key','target_agent','evidence_links'}: raise WorkflowError('unsupported dispatch input')
         target=inputs.get('target_agent')
         if target not in PIPELINE_IDS[:-1]: raise WorkflowError('target must be a pipeline upstream agent')
         tasks=manny_review.queue_in_transaction(conn,run_id=run_id,dossier_key=dossier_key)['tasks']
@@ -45,7 +62,9 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
         if not task or task['review_status']!='evidence_requested': raise WorkflowError('current evidence-request decision required')
         job_key='owner-rework:'+digest_payload({'decision':task['latest_decision']['digest'],'target':target})
         if get_record_in_transaction(conn,run_id,'research_artifact',job_key): raise WorkflowError('evidence request already dispatched')
-        material=seal(dict(schema='owner-rework-1',job_key=job_key,task_key=task['record_key'],decision_digest=task['latest_decision']['digest'],target_agent=target,
+        from app.evidence_workbench import resolve_links
+        supporting=resolve_links(conn,run_id,dossier_key,inputs.get('evidence_links',[]))
+        material=seal(dict(supporting_evidence=supporting,schema='owner-rework-1',job_key=job_key,task_key=task['record_key'],decision_digest=task['latest_decision']['digest'],target_agent=target,
             source_dossier_digest=source.digest,requirement=task.get('requirement'),status='dispatched',external_actions=0))
         stored,version=append_owner_material_in_transaction(conn,run_id,dossier_key,section='owner_rework',material=material)
         receipt=issue_receipt_in_transaction(conn,dossier_id=did,version=version.version,kind='return',from_agent='manny',to_agent=target,issued_by=principal,note='Targeted evidence rework; original reports retained')
@@ -61,6 +80,10 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
             raise WorkflowError('rework canonical binding/principal mismatch')
         if source.payload['dossier']['owner_rework'][-1]['job_key']!=row.record_key: raise WorkflowError('rework job was superseded')
         source,_=_load(conn,run_id,dossier_key,target)
+        if job.get('supporting_evidence'):
+            from app.evidence_workbench import resolve_links
+            current_links=resolve_links(conn,run_id,dossier_key,[{k:v for k,v in e.items() if k in ('id','state_digest')} for e in job['supporting_evidence']])
+            if current_links!=job['supporting_evidence']:raise WorkflowError('supporting evidence changed; prepare a new review')
         if target=='elmer':
             if set(inputs)-{'job_key','correction'}: raise WorkflowError('Elmer requires linked accounting correction')
             from app.elmer_intake import reconcile_in_transaction
@@ -68,19 +91,7 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
             if outcome['current_holder']!='manny': raise WorkflowError('accounting remains incomplete; retain job for corrected inputs')
             report=outcome['assessment'];eligible=True;reasons=[]
         else:
-            candidate=deepcopy(source.payload);dossier=effective_dossier(candidate['dossier']);candidate['dossier']=dossier
-            if 'correction' in inputs: raise WorkflowError('accounting correction only applies to Elmer')
-            updates=inputs.get('assessment_inputs')
-            if updates is not None:
-                allowed={'raphael':{'site'},'onesimus':{'crop','rooms'},'michael':{'financial','room_financial'}}
-                if target not in allowed or not isinstance(updates,dict) or not updates or set(updates)-allowed[target]: raise WorkflowError('assessment changes must belong to target agent')
-                dossier.setdefault('assessment_inputs',{}).update(deepcopy(updates))
-            if 'specialist_inputs' in inputs:
-                if target in ('gabriel','raphael','onesimus','michael') or not isinstance(inputs['specialist_inputs'],dict): raise WorkflowError('target does not accept specialist inputs')
-                dossier.setdefault('specialist_inputs',{})[target]=deepcopy(inputs['specialist_inputs'])
-            # The effective view is already resolved. Avoid resolving the history twice.
-            dossier.pop('agent_reassessments',None)
-            candidate['digest']=digest_payload({k:v for k,v in candidate.items() if k!='digest'})
+            candidate=candidate_for_reassessment(source.payload,target,inputs);dossier=candidate['dossier']
             if target=='gabriel':
                 from app.agents.gabriel.persist import qualify_dossier
                 qualification=qualify_dossier(dossier)
@@ -91,7 +102,7 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
                 report,eligible,reasons=_build(target,candidate)
             prior=effective_reports(source.payload['dossier']).get(target)
             report=seal({**report,'source_dossier_digest':source.digest,'rework_input_digests':{a:r['digest'] for a,r in effective_reports(source.payload['dossier']).items() if a in PIPELINE_IDS[:PIPELINE_IDS.index(target)]}})
-            material=seal(dict(agent=target,report=report,parent_report_digest=(prior or {}).get('digest'),source_dossier_digest=source.digest,job_key=row.record_key,
+            material=seal(dict(supporting_evidence=job.get('supporting_evidence',[]),agent=target,report=report,parent_report_digest=(prior or {}).get('digest'),source_dossier_digest=source.digest,job_key=row.record_key,
                 assessment_inputs=dossier.get('assessment_inputs'),specialist_inputs=(dossier.get('specialist_inputs') or {}).get(target)))
             stored,version=append_reassessment_in_transaction(conn,run_id,dossier_key,material)
             issue_receipt_in_transaction(conn,dossier_id=did,version=version.version,kind='forward',from_agent=target,to_agent='manny',issued_by=principal,note='Linked reassessment returned for owner review; no permission granted')

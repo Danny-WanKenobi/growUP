@@ -141,6 +141,107 @@ reused. Rollback to the prior release hides these controls without deleting hist
 An approved retained review can be inspected after redeployment; never discard a
 partially committed review or replay a generic uncertain dispatch blindly.
 
+### Evidence-linked development and owner workflow
+
+The dossier Library now exposes **Engineering, finances & campaign readiness**,
+**Compare prior dossier version**, **Prepare downstream refresh**, **Link retained
+correspondence**, and **Inspect real-property operating gates**. Evidence review
+provides scope-based responsibility/rework suggestions, exact quoted text and
+measurement citations, append-only declared-metadata corrections/superseding
+links, and hold/reject/official-byte-comparison decisions. Contradictory and
+rejected originals remain retained; neither a declaration nor an administrative
+review authenticates a document. Superseding cycles and stale decision writes
+refuse. Original bytes and original metadata never change.
+
+Extraction uses pinned `pypdf==6.21.4` for PDF text, or UTF-8 TXT/CSV. Images and
+scanned PDFs require separately supplied transcription; there is no OCR. A
+credential-free child process applies 384 MiB memory and five CPU-second limits
+(Linux resource limits / Windows Job Object), an eight-second parent timeout,
+20 PDF pages, four-million-byte decoded content limits, 60,000 text characters,
+800 segments and 200 measurement candidates. Refusal preserves the original.
+This is resource isolation, not a malware scanner or a general execution sandbox.
+No source URL is fetched. PDF order can differ from visual order; the owner must
+review the quoted page/line or row before selecting a quantity.
+
+An explicit quantity selection may change only a supported Onesimus crop input
+or Michael financial rate, with the exact canonical unit and nonnegative finite
+value. It becomes an **assumption**, never verified capacity, identity, occupancy
+or category evidence. Human Review freezes the exact document/revision, extraction,
+admission decision and resulting assessment preview. Existing Manny rework,
+shared assessment and canonical custody services execute the approved linked
+reassessment; changed evidence or inputs require a new preview. Official-byte
+comparison reuses the existing authenticated collection/successor preview and
+cannot commit an admission or override the shared verification policy. Exact-byte
+comparison requires a compatible accepted document format; current DCAD HTML and
+Census JSON originals are not upload formats, so their claims cannot be authenticated
+by uploading a PDF rendering or transcription. Such copies remain unverified.
+
+The dependency refresh workflow freezes the exact current Manny-held dossier,
+retained input digest, application source revision digest and at most eight stale
+downstream agents. Owner approval is required. Each internal stage atomically
+records its evidence request, return to the responsible agent, linked reassessment,
+return to Manny and checkpoint. Interrupted transactions roll back; completed
+stages replay without repeating writes. Changed source, runtime or inputs refuse;
+evidence gaps stop the workflow. Elmer reuses retained classified accounting
+inputs; no new transaction or payment is invented. This is per-dossier refresh,
+not a discovery batch or an external-action executor.
+
+Onesimus compares wider access, lower lighting power, increased reservoir/labor
+allowances and two-tier racks with the existing passive Kratky calculator.
+Michael compares price reductions, increased electricity/labor, delays, space
+unavailability, construction overruns and explicit one-time relocation allowances.
+Scenarios are independent assumptions, not additive forecasts or verified
+building/tenant capacities. Unknown occupancy and maintenance costs stay missing.
+Uriel refuses stale upstream reports and preserves suppression; preparation never
+authorizes delivery. Retained authenticated Simeon/Solomon message excerpts can
+be explicitly proposed as dossier evidence, but transport authentication does not
+verify sender identity, ownership, consent or the sender’s claims.
+
+**Owner desk -> Portfolio** shows a bounded latest-20-record view prioritized by
+integrity issues, recorded overdue obligations, unresolved decisions and stable
+identity. It uses Manny’s existing obligation/exception registers; no speculative
+portfolio profit total or category preference is introduced.
+
+Private routes are in `app/routes/owner_development.py`: evidence lifecycle,
+extract/revise/admission/plan; analysis/input-fields, version-diff, dossier,
+portfolio, correspondence, real-proof; and refresh-workflow prepare/inspect/
+decision/advance. Existing server authorization, same-origin mutation checks,
+no-store responses and append-only workflow records apply. No migrations,
+provider enablement or new credentials are required. No public endpoints were added.
+
+Focused validation (no full suite):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_owner_milestones.py tests/test_owner_evidence.py tests/test_wondrue_workbench.py tests/test_owner_work.py tests/test_michael.py tests/test_onesimus.py tests/test_uriel_campaign_package.py tests/test_guided_demo_review.py -q -p no:cacheprovider
+node --check app/wondrue_assets/owner-tools.js
+```
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-owner-milestones.py
+```
+
+The PostgreSQL proof is development-only, restricted to `growup_mvp_gate` with
+external network blocked. It tests evidence-linked reassessment plus an injected
+interruption after canonical mutations but before the refresh checkpoint, rollback,
+ordered recovery and duplicate protection. Explicit test fixtures stay isolated. The final selected local run passed 108 tests
+with six integration skips; the dedicated PostgreSQL interruption/recovery proof
+passed separately. Browser QA on the isolated gate verified text citations, an
+exact financial-assumption preview, portfolio presentation and a 390px viewport
+without horizontal overflow. No full regression suite was run.
+
+**Real-property proof remains open:** a read-only search of development retained
+records found zero persisted verified category candidates. The real-proof view
+checks stored authorization/custody/downstream gaps; it does not execute a fresh
+end-to-end pipeline or certify a real property. Legitimate Raphael needs-evidence
+returns remain intact. A positive real-data operating proof requires authenticated
+category evidence before further authorized execution; synthetic fixtures cannot
+close that milestone.
+
+Implementation: `evidence_workbench`, `document_worker`, `refresh_workflow`,
+`owner_analysis`, `real_operating_proof`, `owner-tools.js`, with the existing
+owner rework, linked reassessment, canonical custody and calculator services.
+Rolling back hides new controls while retaining original evidence and all history.
+
 ### Owner evidence intake and attachments
 
 From **Library -> Inspect retained record -> Evidence & attachments**, select a
@@ -158,16 +259,16 @@ verification flag, collector marker or authentication override. Declared provena
 issuer, dates, filename and checksum do **not** authenticate the property claims.
 The existing Census/DCAD collector-only admission policies are unchanged. Uploads
 are not automatically parsed, admitted to verification, passed to an agent or used
-to change an assessment. Automatic evidence-to-rework routing remains a subsequent
-milestone. Acknowledging/closing the administrative task cannot authenticate a file.
+to change an assessment. Explicit evidence-to-rework previews and reviewed linked
+reassessment are now available from each document’s review tools. Acknowledging/closing the administrative task cannot authenticate a file.
 
 Original bytes, metadata and a bounded append-only index use the existing private
 workflow store. No public file directory, new storage dependency or schema migration
 is introduced. Each dossier can retain 20 files of at most **512 KiB** each. Allowed
 formats are PDF, PNG, JPEG and UTF-8 TXT/CSV; archives, HTML, executables, invalid
 UTF-8, path-like filenames and mismatched headers refuse. Header checks identify
-containers only: no malware scanning, PDF interpretation, OCR or safety certification
-is provided. Files are always authenticated **downloads**, never inline previews,
+containers only: no malware scanning, OCR or safety certification is provided. A separate resource-bounded
+PDF/TXT/CSV text extractor is available by explicit request; extracted claims remain unverified. Files are always authenticated **downloads**, never inline previews,
 with octet-stream, attachment disposition, no-store and nosniff headers. Reads verify
 both retained-record digests and the original byte checksum. Source URLs are stored
 as text and never fetched. Do not put credentials in a source URL; those refuse.
@@ -186,7 +287,8 @@ Implementation: `app/owner_evidence.py`, `app/routes/owner_evidence.py` and
 `app/wondrue_assets/evidence.js`, integrated with the existing workspace/inbox.
 Private endpoints: POST/GET `/wondrue/api/evidence`, metadata GET
 `/wondrue/api/evidence/{run_id}/{evidence_id}` and authenticated GET with
-`/download`. No hard-delete or metadata-edit endpoint is provided.
+`/download`. Original metadata has no overwrite or hard-delete endpoint; declared
+corrections append linked revision records through the lifecycle tools below.
 
 Focused checks (no full regression suite):
 

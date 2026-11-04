@@ -53,9 +53,11 @@ def _get(conn,review_id):
 def _save(conn,run,state,prior=None):return ws.write(conn,run.run_id,'retained-review',state,prior)
 
 
-def prepare(conn,review_id,ref,task_key,target,note):
+def prepare(conn,review_id,ref,task_key,target,note,changes=None,evidence_links=None):
     guard(conn)
     review_id=str(UUID(str(review_id)));request={'source':ref,'task_key':task_key,'target':target,'note':note}
+    if changes:request['changes']=changes
+    if evidence_links:request['evidence_links']=evidence_links
     key=PREFIX+review_id;lock(conn,key);old=get_run_by_key_in_transaction(conn,key)
     if old:
         row=ws.read(conn,old.run_id,'retained-review')
@@ -74,13 +76,15 @@ def prepare(conn,review_id,ref,task_key,target,note):
         raise WorkflowError('an unresolved task belonging to this dossier is required')
     from app.dossier_coordinator import _build
     from app.linked_reassessments import effective_dossier
-    candidate=deepcopy(source.payload);candidate['dossier']=effective_dossier(candidate['dossier'])
-    candidate['digest']=digest_payload({k:v for k,v in candidate.items() if k!='digest'})
+    from app.evidence_workbench import resolve_links,assumption_changes
+    supporting=resolve_links(conn,source.run_id,ref['key'],evidence_links or [])
+    updates=assumption_changes(conn,source,target,changes or [],supporting)
+    candidate=owner_work.candidate_for_reassessment(source.payload,target,{'assessment_inputs':updates} if updates else {})
     report,eligible,reasons=_build(target,candidate)
-    manifest={'version':'retained-review-1','request':request,'task_digest':task['task_digest'],
+    manifest={'supporting_evidence':supporting,'approved_assessment_inputs':updates,'version':'retained-review-2','request':request,'task_digest':task['task_digest'],
         'assessment_content_digest':digest_payload(_assessment_content(report)),
         'preview_assessment':_assessment_content(report),'preview_report':report,'expected_status':'reassessed' if eligible else 'needs_evidence',
-        'expected_reasons':reasons,'input_policy':'Retained effective inputs only; no caller facts, acquisition or authentication overrides.',
+        'expected_reasons':reasons,'input_policy':'Retained inputs plus explicitly previewed, citation-bound assumptions only; no authentication overrides.',
         'steps':['Record the evidence request','Return custody to the selected upstream agent',
                  'Append a linked retained-input reassessment and return the package to Manny'],
         'administrative_task_closure':False,'provider_calls':0,'external_actions':0,'grants_permission':False}
@@ -125,6 +129,9 @@ def advance(conn,review_id):
     if os.getenv('DOSSIER_COORDINATOR_EMERGENCY_STOP','0')=='1':raise WorkflowError('review is emergency-stopped')
     if m['digest']!=digest_payload({k:v for k,v in m.items() if k!='digest'}):raise WorkflowError('approval manifest corrupt')
     source,_=manny_review._locked(conn,UUID(ref['run_id']),ref['key']);guard(conn,source)
+    if m.get('supporting_evidence'):
+        from app.evidence_workbench import resolve_links
+        if resolve_links(conn,ref['run_id'],ref['key'],request.get('evidence_links',[]))!=m['supporting_evidence']:raise WorkflowError('supporting evidence changed; new review required')
     if source.digest!=state['expected_source_digest']:raise WorkflowError('source changed outside this approved step; reconcile before resuming')
     op='retained-'+state['id']
     if state['status']=='approved':
@@ -139,12 +146,12 @@ def advance(conn,review_id):
     elif state['status']=='requested':
         result=owner_work.mutate_in_transaction(conn,principal=PRINCIPAL,run_id=ref['run_id'],dossier_key=ref['key'],
             operation_id=op+'-dispatch',expected_digest=source.digest,action='dispatch',operator_authorized=True,
-            inputs={'task_key':request['task_key'],'target_agent':request['target']})
+            inputs={'task_key':request['task_key'],'target_agent':request['target'],**({'evidence_links':request['evidence_links']} if request.get('evidence_links') else {})})
         state.update(status='dispatched',job_key=result['job_key'])
     else:
         result=owner_work.mutate_in_transaction(conn,principal=PRINCIPAL,run_id=ref['run_id'],dossier_key=ref['key'],
             operation_id=op+'-reassess',expected_digest=source.digest,action='reassess',operator_authorized=True,
-            inputs={'job_key':state['job_key']})
+            inputs={'job_key':state['job_key'],**({'assessment_inputs':m['approved_assessment_inputs']} if m.get('approved_assessment_inputs') else {})})
         returned,_=_load(conn,UUID(ref['run_id']),ref['key']);report=returned.payload['dossier']['agent_reassessments'][-1]['report']
         if digest_payload(_assessment_content(report))!=m['assessment_content_digest'] or result['status']!=m['expected_status']:
             raise WorkflowError('assessment differs from approved preview; rolled back')

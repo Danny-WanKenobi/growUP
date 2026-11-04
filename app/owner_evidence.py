@@ -17,7 +17,7 @@ MAX_BYTES=512*1024
 MAX_FILES=20
 SCOPES=('identity','category','dimensions','occupancy','zoning','structural','electrical','water','financial','other')
 STATUS='owner_supplied_unverified'
-LIMITS='Retained untrusted attachment; not parsed, malware-scanned, source-authenticated or admitted to a verification policy. No claims, reports or custody were changed.'
+LIMITS='Retained untrusted attachment. Optional extraction and review are separately recorded and remain unverified. No malware-scan, source-authentication or canonical admission is implied.'
 
 
 def _source(conn,ref,current=False):
@@ -69,9 +69,7 @@ def _metadata(conn,rid,evidence_id):
     return row
 
 
-def intake(conn,*,evidence_id,source,filename,content_base64,issuer,source_url,document_date,obtained_on,claim_scope,note):
-    evidence_id=str(UUID(str(evidence_id)));rid=UUID(source['run_id'])
-    raw,mime=validate_document(filename,content_base64)
+def validate_provenance(issuer,source_url,document_date,obtained_on,claim_scope,note):
     issuer=ws._text(issuer,240,'declared issuer/source')
     note=ws._text(note,1000,'claim description')
     if not isinstance(claim_scope,list) or not 1<=len(claim_scope)<=8 or len(set(claim_scope))!=len(claim_scope) or any(s not in SCOPES for s in claim_scope):
@@ -87,6 +85,13 @@ def intake(conn,*,evidence_id,source,filename,content_base64,issuer,source_url,d
             if url.scheme not in ('https','http') or not url.hostname or url.username or url.password or url.fragment:raise ValueError()
             url.port
         except ValueError:raise WorkflowError('source URL must use HTTP(S), without credentials or fragment; it is retained, never fetched') from None
+    return issuer,note
+
+
+def intake(conn,*,evidence_id,source,filename,content_base64,issuer,source_url,document_date,obtained_on,claim_scope,note):
+    evidence_id=str(UUID(str(evidence_id)));rid=UUID(source['run_id'])
+    raw,mime=validate_document(filename,content_base64)
+    issuer,note=validate_provenance(issuer,source_url,document_date,obtained_on,claim_scope,note)
     sha=hashlib.sha256(raw).hexdigest()
     request={'source':source,'filename':filename,'declared_issuer':issuer,'source_url':source_url,
         'document_date':document_date,'obtained_on':obtained_on,'claim_scope':claim_scope,'note':note,'sha256':sha}

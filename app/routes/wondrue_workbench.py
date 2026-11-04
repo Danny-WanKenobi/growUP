@@ -83,6 +83,8 @@ class RetainedRequest(SourceRequest):
     task_key:str=Field(min_length=1,max_length=500)
     target:Literal['onesimus','michael','uriel','priscilla','nicole','theresia_keys','simeon','solomon']
     note:str=Field(min_length=1,max_length=1000)
+    evidence_links:list[dict]=Field(default_factory=list,max_length=8)
+    changes:list[dict]=Field(default_factory=list,max_length=8)
 
 
 def retained_call(action,**kwargs):
@@ -94,7 +96,7 @@ def retained_call(action,**kwargs):
 @router.post('/wondrue/api/retained-review')
 def prepare(body:RetainedRequest,request:Request):
     authorize(request,True)
-    return retained_call('prepare',review_id=body.id,ref=body.source.model_dump(mode='json'),task_key=body.task_key,target=body.target,note=body.note)
+    return retained_call('prepare',review_id=body.id,ref=body.source.model_dump(mode='json'),task_key=body.task_key,target=body.target,note=body.note,evidence_links=body.evidence_links,changes=body.changes)
 
 
 @router.get('/wondrue/api/retained-review/{review_id}')
