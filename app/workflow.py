@@ -43,6 +43,7 @@ KIND_CENSUS_REFUSAL = "census_refusal"
 RECORD_KINDS = frozenset(
     {
         KIND_OWNER_REVIEW_TASK,
+        "solomon_project_event",
         KIND_RESEARCH_ARTIFACT,
         KIND_DOSSIER_VERSION,
         KIND_QUALIFICATION,

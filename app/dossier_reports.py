@@ -78,3 +78,28 @@ def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, repo
     put_record_in_transaction(conn, run_id, kind="custody_link", record_key=dossier_key,
                               version=link_record.version+1, payload=link, digest=digest_payload(link))
     return stored, successor
+
+
+def append_solomon_tracking_in_transaction(conn, run_id, dossier_key, tracking):
+    """Append a held Solomon project state without replacing any agent report."""
+    from app.agents.stages import _load
+    source, did = _load(conn, run_id, dossier_key, 'solomon')
+    link_record = get_record_in_transaction(conn, run_id, 'custody_link', dossier_key)
+    latest = latest_version_in_transaction(conn, did)
+    payload = deepcopy(source.payload)
+    payload['version'] = source.version + 1
+    payload['dossier']['solomon_project'] = deepcopy(tracking)
+    payload['digest'] = digest_payload({k:v for k,v in payload.items() if k!='digest'})
+    stored = put_record_in_transaction(conn, run_id, kind='dossier_version', record_key=dossier_key,
+        version=source.version+1, payload=payload, digest=payload['digest'])
+    custody_payload = deepcopy(latest.payload)
+    custody_payload.update(dossier=deepcopy(payload['dossier']), dossier_digest=stored.digest)
+    version = _append_version_in_transaction(conn, property_id=latest.property_id, payload=custody_payload,
+        created_by='solomon', supersedes=latest.version,
+        amendment={'kind':'solomon_project_update','parent_digest':latest.digest,'tracking_digest':digest_payload(tracking)})
+    snapshot_in_transaction(conn, dossier_id=did, version=version.version)
+    link = deepcopy(link_record.payload)
+    link['custody_version'] = version.version
+    put_record_in_transaction(conn, run_id, kind='custody_link', record_key=dossier_key,
+        version=link_record.version+1, payload=link, digest=digest_payload(link))
+    return stored, version

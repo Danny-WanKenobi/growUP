@@ -266,6 +266,35 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
         with get_connection() as conn:
             assert latest_version_in_transaction(conn,did).version == 2
             assert verify_chain_in_transaction(conn,did) == initial_receipts+(0 if holder=='solomon' and not gap else 1)
+        if holder=='solomon' and not gap:
+            from app import solomon_project as project
+            from app import dossier_reports
+            event={'kind':'progress','phase':'survey','status':'reported_complete',
+                   'note':'Disposable PG reported observation','evidence_refs':['pg-test:observation']}
+            inputs={'principal':'pg-test','run_id':rid,'dossier_key':key,
+                    'event_id':'pg-observation-1','expected_sequence':0,'event':event}
+            append=dossier_reports.append_solomon_tracking_in_transaction
+            def interrupt_tracking(*args,**kwargs):
+                append(*args,**kwargs)
+                raise KeyboardInterrupt('interrupted after project snapshot')
+            monkeypatch.setattr(dossier_reports,'append_solomon_tracking_in_transaction',interrupt_tracking)
+            with pytest.raises(KeyboardInterrupt): project.record_audited(**inputs)
+            monkeypatch.setattr(dossier_reports,'append_solomon_tracking_in_transaction',append)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==2
+                assert not project.inspect_in_transaction(conn,run_id=rid,dossier_key=key)['project']
+            barrier=Barrier(2)
+            def track(_):
+                barrier.wait(timeout=10)
+                return project.record_audited(**inputs)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                updates=list(pool.map(track,range(2)))
+            assert sum(bool(r.get('replayed')) for r in updates)==1
+            assert all(r['project']['sequence']==1 for r in updates)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==3
+                assert verify_chain_in_transaction(conn,did)==initial_receipts
+                assert len(__import__('app.workflow_db',fromlist=['list_records_in_transaction']).list_records_in_transaction(conn,rid,project.KIND))==1
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 

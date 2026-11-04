@@ -162,6 +162,8 @@ INTENTS = frozenset(
         "inspect_agents",
         "preview_agent_report",
         "coordinate_dossier",
+        "record_solomon_project",
+        "inspect_solomon_project",
         "inspect_owner_queue",
         "inspect_lead_metrics",
         "inspect_campaign_tracking",

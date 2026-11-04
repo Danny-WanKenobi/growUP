@@ -5440,3 +5440,65 @@ checks cover the planning gate, missing inputs, arithmetic, fictional ranking,
 real/synthetic isolation, forward/return custody and legacy resume. Ubuntu gate
 checks additionally cover interrupted and concurrent Simeon/Solomon transitions.
 Actual specialist approval and real vendor communications remain unproven.
+
+
+#### Solomon: durable project observations, proposed changes and inspections
+
+`app/solomon_project.py` tracks a held planning-ready Solomon dossier after its
+initial report. It uses the existing workflow records, canonical dossier lock,
+version/snapshot services, owner queue and consequential audit transaction.
+It preserves the initial Solomon report and every inherited report. Each accepted
+observation appends one `solomon_project_event`, an enhanced dossier version and
+immutable snapshot; custody remains with Solomon and no transfer receipt is
+invented. No schema migration, scheduler, network service or transport is added.
+
+Supported observations are `progress` (`planned`, `blocked`, `reported_complete`),
+`inspection` (`pending`, `passed_claim`, `failed`) and `change_order` (`proposed`).
+Each requires a known phase, explanatory note and 1–10 evidence references.
+References retain provenance supplied by the operator; they are not automatically
+authenticated. Real observations are labeled `operator_reported_unverified`;
+isolated synthetic dossiers retain their synthetic classification. Reported
+completion and a passed claim do not certify physical completion or safety.
+
+Phase reports follow survey → design → permits → procurement → installation →
+inspection. A failed inspection blocks that phase and recorded downstream phase
+progress. Regressing an earlier phase also blocks recorded dependent progress.
+A new passed claim can be recorded, but it never resolves actual authorization or
+owner-review tasks automatically. Missing tasks stay pending for owner review.
+
+Changes carry a finite USD delta (at most two decimals, magnitude ≤ 1 trillion)
+and integer day delta (magnitude ≤ 3,650). At most 100 proposals are retained.
+Deterministic Decimal arithmetic shows baseline estimate plus all pending deltas;
+a negative projected total is refused. Schedule reporting sums proposed deltas
+only: no baseline duration, critical-path date or actual completion is invented.
+Proposals always remain `approval_status=pending`, `applied=false`. Changes and
+failed inspections create linked owner-review tasks. Neither changes nor
+observations authorize procurement, construction, spending or communications.
+
+Wondrue exposes `inspect_solomon_project` (read-only) and
+`record_solomon_project` (Ask/Full only; real pipeline target, live inference off).
+The latter accepts scalar args `run_id`, `dossier_key`, `event_id`,
+`expected_sequence` and `event_json` containing one validated JSON object. Example
+intent override (use a real stored run ID and current sequence; not a shell command):
+
+```json
+{"intent":"record_solomon_project","args":{"run_id":"REPLACE_WITH_STORED_RUN_UUID","dossier_key":"main","event_id":"survey-observation-1","expected_sequence":0,"event_json":"{\"kind\":\"progress\",\"phase\":\"survey\",\"status\":\"blocked\",\"note\":\"Awaiting site-access evidence\",\"evidence_refs\":[\"REPLACE_WITH_RETAINED_REFERENCE\"]}"}}
+```
+
+Inspection uses `{"intent":"inspect_solomon_project","args":{"run_id":
+"REPLACE_WITH_STORED_RUN_UUID","dossier_key":"main"}}`. Missing project state
+is returned as null, never invented. Ask previews perform no writes and approval
+is bound to the operator. Events bind the run/dossier, principal, event ID and
+expected sequence. An identical retry replays; conflicting event reuse and stale
+sequences refuse. The shared dossier lock serializes concurrent writers.
+`DOSSIER_COORDINATOR_EMERGENCY_STOP=1` prevents new updates (already-committed
+identical retries remain inspectable). Interruption rolls back the event, dossier,
+snapshot and queue task together. No background worker runs these commands.
+
+Focused local checks cover money validation, ordering, failed inspections,
+dependent regression, immutable report retention, replay/conflict, emergency stop
+and Wondrue permissions. The Ubuntu Solomon coordinator gate also tests a forced
+interruption after tracking snapshot creation and concurrent identical updates.
+Real site observation, independent inspection authentication, live progress
+feeds, change approval/application and actual construction remain deferred.
+Resend and agent-to-human communications remain deferred and inactive.
