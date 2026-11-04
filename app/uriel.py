@@ -532,6 +532,12 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         'must_not_claim':['Guaranteed returns or savings','Verified vacancy, ownership, structural safety or permitted agricultural use','A draft was sent, delivered or accepted'],
         'evidence_gaps':list(dict.fromkeys(gap for assessment in assessments.values() if isinstance(assessment,dict) for gap in assessment.get('evidence_requests',[]))),
         'suppression_preserved':bool(policy.get('suppressed')),'outbound_delivery_authorized':False}
+    from app.uriel_campaign import collateral
+    campaign['collateral'] = collateral(introduction)
+    campaign['data_provenance'] = 'synthetic' if dossier.get('synthetic') else 'inherited_evidence'
+    campaign['campaign_plan'] = {'day_offsets':[0,7,14,21], 'window':'one month',
+        'contact':'simeon@growup.securecodeusa.com', 'costs':'increasing collateral tiers; dollar costs unknown',
+        'status':'draft_not_scheduled'}
     campaign['campaign_id'] = 'campaign:'+digest_payload(campaign)
     return campaign
 

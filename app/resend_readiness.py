@@ -93,6 +93,7 @@ def inspect(environ=None):
         "tracking_enabled":enabled, "configuration_complete":not blockers, "blockers":blockers,
         "direct_mailbox_routing_enabled":env.get("RESEND_MAILBOX_ROUTING_ENABLED", "0")=="1",
         "direct_mailbox_delivery_implemented":False,
+        "receiving_read_api_key_installed":bool(env.get("RESEND_RECEIVING_API_KEY","")),
         "webhook_configuration_complete":not blockers, "polling_configuration_complete":not poll_blockers, "polling_blockers":poll_blockers,
         "public_reachability_verified":False, "live_provider_compatibility_verified":False,
         "provider_calls":0, "database_writes":0,

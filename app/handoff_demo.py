@@ -297,7 +297,7 @@ def advance_in_transaction(conn, *, run_key, expected_sequence):
         return inspect_in_transaction(conn,run_key=run_key)  # retry: no duplicate step
     if expected_sequence!=state["sequence"]:
         raise WorkflowError("sequence ahead of stored checkpoint")
-    if state["phase"] in ("complete_go","returned_to_gabriel"):
+    if state["phase"] in ("complete_go","returned_to_gabriel","campaign_rework"):
         return inspect_in_transaction(conn,run_key=run_key)
     if run.limits.get("fixture_version") != FIXTURE_VERSION:
         raise WorkflowError("historical fixture run is read-only; create a new Manny scenario")

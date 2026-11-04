@@ -126,6 +126,41 @@ def control(conn, *, conversation_id, action, principal, text=None, expected_rev
     return {**result, "revision": state["revision"], "external_actions": 0}
 
 
+def retain_content(conn, *, conversation_id, detail, response_digest):
+    """Enrich the same immutable inbound identity from authenticated API detail.
+
+    Never trust webhook text as retrieved provider content; preserve RFC Message-ID
+    separately from Resend's UUID for genuine reply threading.
+    """
+    from app.resend_tracking import address
+    mid = str(UUID(conversation_id))
+    lock(conn, 'direct-mail:' + mid)
+    run = get_run_by_key_in_transaction(conn, 'direct-mail:' + mid)
+    if run is None: raise WorkflowError('retained inbound required')
+    inbound = read(conn, run.run_id, 'inbound')
+    identity = inbound.payload['identity']
+    if (str(detail.get('id')) != mid or address(detail.get('from')) != identity['from']
+            or sorted(set(address(v) for v in detail.get('to', []))) != identity['to']
+            or (detail.get('subject') or '') != identity['subject']):
+        raise WorkflowError('retrieved content envelope mismatch')
+    text = detail.get('text')
+    message_id = detail.get('message_id')
+    if (not isinstance(text, str) or len(text) > 16000 or not isinstance(message_id, str)
+            or not 3 <= len(message_id) <= 998 or not message_id.startswith('<')
+            or not message_id.endswith('>') or any(c in message_id for c in '\r\n')):
+        raise WorkflowError('bounded text and RFC message identity required')
+    payload = {'provider_email_id':mid, 'message_id':message_id, 'text':text,
+               'response_digest':response_digest, 'authentication':'resend_authenticated_api',
+               'scope':'Untrusted sender content; no ownership, consent or agreement assertion.'}
+    prior = read(conn, run.run_id, 'content')
+    if prior:
+        if prior.payload['text'] != text or prior.payload['message_id'] != message_id:
+            raise WorkflowError('retained provider content changed')
+        return {'replayed':True}
+    write(conn, run.run_id, 'content', payload)
+    return {'replayed':False, 'message_id':message_id}
+
+
 def audited(principal, inputs):
     from app.observability.events import AgentEvent, AgentId, RetentionClass
     from app.observability.policy import OperationClass

@@ -6410,3 +6410,153 @@ fresh-connection persistence, concurrent duplicate intake, stale-write refusal,
 append-only drafts/rework notes, mailbox ownership, and atomic rollback when the
 audit insert fails. It retains fresh-UUID fixtures/audit history in the gate DB.
 An actual passing Ubuntu result is required before claiming this proof complete.
+
+### Uriel four-stage campaign and demo review ZIP
+
+`prepare_campaign` now includes evidence-linked collateral for four email drafts,
+three letters, two different flyers, one brochure and one business-card design.
+The four hypothetical bursts are day 0 (email), day 7 (email + letter), day 14
+(email + letter + flyer 1 + one card), and day 21 (final email + final letter +
+flyer 2 + two cards + brochure), within a one-month window. Cost tiers increase
+collateral scope; no printing/postage prices or guaranteed cost increases are
+invented. All material identifies `simeon@growup.securecodeusa.com` as the contact.
+Uriel does not field human replies. Simeon cannot initiate prospecting; Solomon
+has a two-way construction-correspondence role. Actual email transport for these
+roles remains unfinished and disabled.
+
+`app.uriel_campaign.demo_message(campaign, start_at=<aware datetime>,
+timezone_name=<IANA zone>)` validates the campaign digest and suppression state,
+then returns unsent MIME bytes, ZIP bytes and a chronological dated itinerary.
+It requires an explicit hypothetical start; the offline shared Sabbath guard
+adjusts blocked dates. Nothing is scheduled. The MIME recipient is pinned to
+`werenotrandom@protonmail.com`, From is `uriel@growup.securecodeusa.com`, and
+Reply-To is Simeon. There is no caller-supplied recipient override. The ZIP has
+11 collateral files plus itinerary JSON and a README; repeated physical cards
+use the same design. Collateral is plain UTF-8 text, not finished print artwork.
+Each email/letter/flyer/brochure retains the inherited financial qualifications.
+
+This prepares a demo review email only: `sent=False`, `scheduled=False`, zero
+provider calls. DEMO_MODE still simulates ordinary outreach. The sole-owner demo
+delivery exception must be implemented with recipient pinning, credentials,
+durable send accounting/idempotency and a bounded validation before any actual
+email can be claimed. A verified domain or prepared MIME file is not delivery.
+No physical mailing or printing is performed.
+
+Focused checks: `python -B -m pytest tests/test_uriel_campaign_package.py
+tests/test_campaign_tracking.py tests/test_uriel.py -q -p no:cacheprovider`.
+Tests inspect actual ZIP/MIME contents, all burst quantities/dates, contact
+information, distinct flyers, digest/suppression refusal and Sabbath adjustment.
+
+### Recipient-restricted demo delivery exception
+
+`app.uriel_demo_send` provides the real-email exception for owner review only.
+It requires `DEMO_MODE=yes`, a private `RESEND_API_KEY`, explicit
+`URIEL_DEMO_SEND_APPROVED=1` and an authorization identifier. Sender, recipient,
+Reply-To and ZIP filename are constructed internally; no CC/BCC, recipient
+parameter, scheduled send or arbitrary API URL is accepted. Ordinary demo
+campaigns remain simulated. Emergency stop and the shared Sabbath guard refuse
+new sends. Do not globally enable ordinary outreach for this exception.
+
+The ledger uses the existing dedicated `growup_handoff_demo` connection/role,
+workflow records, advisory locks and atomic permanent audit transactions. A
+campaign binding and consumed one-request claim commit BEFORE transmission.
+Concurrent/restarted calls cannot resend; a different authorization cannot
+reopen the same campaign. Claimed, refused or ambiguous attempts are never
+refunded automatically. The retained request/campaign/ZIP digests bind the exact
+material, and outcome records append. Do not delete ledger records to retry.
+Resend's Idempotency-Key is supplementary (provider retention is 24 hours);
+local claim retention blocks retries independently. No exactly-once delivery
+claim is made: a pre-transmission crash can consume the approval without sending.
+
+The fixed POST uses Resend's documented `/emails` API and base64 ZIP attachment,
+12-second HTTP timeouts, bounded responses, no redirects/proxies/retries.
+`provider_accepted` means API acceptance, NOT inbox delivery. Recipient receipt
+or later authenticated delivery evidence is still required. Missing credentials
+fail before the durable claim. Real messages are not counted as synthetic leads
+or evidence of a prospect's interest. No polling or inbound routing is activated.
+
+`deployment/prove-uriel-demo-send.py` is an owner-console helper for securecode-dev.
+It first runs one real isolated-PostgreSQL concurrency/claim-before-HTTP proof
+with a mocked transport and external networking blocked; then previews the
+existing stored Hudson Lantern synthetic run from 20261104T061029Z. No new
+property or dossier is created. The hypothetical start is November 5, 2026 at
+10:00 America/Chicago; this is an itinerary, not a scheduled campaign. `--send`
+then attempts the single approved real owner email under the fixed authorization
+`owner-uriel-demo-20261104-v1`. Keep that identifier when rerunning; do not create
+a new one after an ambiguous result. The service is not restarted or deployed.
+The helper loads private growup.env plus handoff-demo.env without printing secrets.
+
+Focused tests: `python -B -m pytest tests/test_uriel_demo_send.py
+ tests/test_uriel_campaign_package.py tests/test_campaign_tracking.py
+ tests/test_uriel.py -q -p no:cacheprovider`. Local HTTP tests use MockTransport;
+the isolated PostgreSQL proof requires `URIEL_DEMO_PG_PROOF=1` and dedicated demo
+credentials. Real delivery is pending private API configuration and proof output.
+Official API references: https://resend.com/docs/api-reference/emails/send-email
+and https://resend.com/docs/dashboard/emails/idempotency-keys.
+
+### Owner correspondence proof and conversation-linked campaign rework
+
+`app.correspondence_proof` exercises the shared direct-mailbox services with actual
+owner-only Resend transport. This is a bounded proof adapter, not a general live
+marketing sender or automatic callback activation. It uses the dedicated demo
+DB/role and the existing permanent audit transactions. The fixed authorization
+`owner-correspondence-20261104-v1` permits at most three POST sends and sixteen
+GET reads. Requests claim durable allowance before network access; cached responses
+are reused, ambiguous/refused attempts never retry automatically, and conflicting
+request bodies refuse. The only external recipient is werenotrandom@protonmail.com.
+No CC/BCC, third-party subcontractor contact, contract or procurement is performed.
+
+Keep `CORRESPONDENCE_PROOF_APPROVED=0` normally. The proof runs with a transient
+value of 1 and DEMO_MODE=yes; ordinary demo outreach remains simulated. Existing
+RESEND_API_KEY handles sending; RESEND_RECEIVING_API_KEY, when installed privately,
+is used for receiving API reads. Sending-only API permissions can refuse receiving
+access. No actual credential belongs in this repository or command output. Emergency
+stop and Jerusalem Sabbath guard block new proof requests. Status inspection reports
+only counters and credential-presence flags, never secret values or message bodies.
+
+Simeon requires a retained incoming owner message and authenticated retrieved plain
+text/RFC Message-ID before replying. The original Message-ID supplies In-Reply-To
+and References, and the subject uses Re:. Resend UUID and RFC email identity remain
+separate. A reply plan persists before transmission; accepted response receipts
+append and replay does not create another send. No unsolicited Simeon operation is
+available. Solomon may initiate the one fixed owner-only construction test and reply
+to its actual inbound response. Provider acceptance is not recipient delivery;
+delivery must be confirmed separately. No incoming text establishes ownership,
+consent, contract authority or genuine lead interest.
+
+`app.simeon_followup.return_in_transaction` requires an explicit authenticated
+principal, exact current dossier digest and Simeon custody, and a retained
+conversation/content record. It binds the conversation to one dossier by explicit
+principal decision, appends a linked reassessment preserving earlier reports,
+includes retained inbound content, reply plan, receipt, notes and record digests,
+creates the canonical immutable snapshot and return receipt to Uriel, and prepares
+an evidence-linked tailored campaign draft. Repeated operation IDs are idempotent;
+changed retries, changed dossiers, wrong holders and conflicting links refuse.
+No follow-up is sent or contact permission inferred. Prior suppression survives.
+
+The proof's cold-return action requires an accepted Simeon reply. It uses a NEW
+explicitly synthetic Hudson Lantern workflow, stops it at Simeon, then returns it
+to Uriel with a clearly simulated cold-lead reason. Actual elapsed inactivity is
+not fabricated. The existing demo viewer reflects phase campaign_rework/current
+holder Uriel and retains all prior custody history; generic forward advancement
+stops there. This is not an alteration to the previously completed Hudson run.
+
+CLI examples (private service environment, explicit proof approval required):
+`python -B -m app.correspondence_proof status`, `list --operation inbound-list-2`,
+`fetch --message-id <provider-uuid> --actor simeon`,
+`reply --message-id <provider-uuid> --actor simeon --text <bounded-reply>`,
+`solomon-introduction`, and `cold-return --message-id <provider-uuid>`.
+List retrieval is one page, owner/actor scoped, not a claim of complete inbox
+coverage. Use a new bounded read operation only to inspect newly arrived mail;
+never change a send's identity to retry an uncertain result.
+
+Focused checks: tests/test_correspondence_proof.py, tests/test_simeon_followup.py,
+tests/test_mailbox_routing.py, tests/test_uriel_demo_send.py. The PostgreSQL test
+`test_pg_conversations_and_canonical_followup_with_mock_transport` requires
+CORRESPONDENCE_PG_PROOF=1 plus dedicated demo credentials, uses mocked HTTP with
+external networking blocked, and verifies all three paths through real persistence,
+canonical snapshots/receipts and replay. Real correspondence proof is separate:
+initial receiving access returned HTTP 401; no live conversations are claimed
+complete until actual receive/send/receipt results are retained.
+
+Resend threading reference: https://resend.com/docs/dashboard/receiving/reply-to-emails
