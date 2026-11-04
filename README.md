@@ -244,6 +244,59 @@ Implementation: `evidence_workbench`, `document_worker`, `refresh_workflow`,
 owner rework, linked reassessment, canonical custody and calculator services.
 Rolling back hides new controls while retaining original evidence and all history.
 
+### Evidence validity and competing-claim review
+
+From an attachment’s **Extract, correct & route evidence** screen, open
+**Review validity dates & competing claims**. Explicit owner-declared rules support
+an inclusive valid-through date and/or reconfirmation after 1–3650 days, measured
+from the declared document date or obtained date. Server receipt time is never
+used as a substitute. Expired, due, future-dated, unknown-basis and metadata-changed
+rules block reuse in reviewed evidence-linked reassessment. Default is
+`not_configured`, not a claim of freshness; existing documents receive no invented
+expiration interval. Dates are assessed in UTC; read-only historical as-of views
+cannot override the current-date gate during reassessment.
+
+Rules append versions with exact metadata and previous-policy digests. Corrected
+metadata requires a fresh rule review. Current owner campaign-readiness inspection
+also displays these blockers. This does not rewrite historical reports, schedule
+recollection, retroactively refresh a report or independently activate a sender.
+The existing separate delivery guards and disabled external-action boundaries remain.
+
+A contradiction records two distinct retained documents, both metadata digests,
+both competing claims, scope and an explanation. The viewer shows both statements
+and exposes immutable decision history. Unresolved or subsequently changed document
+references block reuse. Owner explanations may reconcile **financial/other planning
+assumptions only**; identity, category, physical-capacity and regulatory conflicts
+cannot be cleared here. The owner can re-read corrected documents and append an
+updated comparison; every earlier statement remains retained. Neither reconciliation
+nor an expiration rule authenticates a source, erases a canonical conflict, grants
+Raphael authorization or confirms a factual claim. Critical conflicts still require
+properly authenticated evidence and the existing upstream verification path.
+
+New private routes: GET evidence/{run}/{id}/quality (optional read-only as_of),
+POST evidence/{run}/{id}/validity, POST evidence/{run}/conflicts and GET
+ evidence/{run}/conflicts/{id}/history under `/wondrue/api/`. They reuse owner/read
+permissions, same-origin mutation checks, no-store middleware and the append-only
+workflow store. No migration, timer, provider call or new credential is required.
+Implementation: `app/evidence_quality.py`, shared evidence-link/readiness guards,
+`app/routes/owner_development.py` and `app/wondrue_assets/owner-tools.js`.
+
+Focused checks: `tests/test_evidence_quality.py`, retained-review/workbench tests
+and `deployment/prove-owner-milestones.py`. The gate proof now also checks atomic
+contradiction/index rollback, durable decisions and expiration, with external network
+blocked and real operational records untouched. Validation: 34 selected local tests passed (two PG checks skipped locally); both
+PostgreSQL proofs passed separately on Ubuntu. The isolated browser verified an
+expired document is visibly blocked without granting authentication. No full
+regression suite was run.
+
+The real-evidence review additionally reprocessed the sole retained development
+DCAD account with the existing authenticated retained-assessment service. It contains
+both office and warehouse improvements; its current preview remains `needs_evidence`.
+A building/space-specific category binding or other sufficient authenticated evidence
+is still required. No new source retrieval or positive real-property end-to-end
+execution was performed; those two milestones remain open rather than being forced
+through with synthetic inputs or an arbitrary category selection.
+
 ### Owner evidence intake and attachments
 
 From **Library -> Inspect retained record -> Evidence & attachments**, select a

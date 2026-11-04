@@ -42,6 +42,11 @@ def campaign_readiness(conn,source):
     try:campaign=prepare_campaign(candidate)
     except UrielError as exc:campaign={'status':'needs_evidence','missing':[str(exc)]}
     blockers+=campaign.get('missing') or []
+    from app.owner_evidence import listing
+    from app.evidence_quality import inspect as inspect_quality
+    for attachment in listing(conn,source)['items']:
+        quality=inspect_quality(conn,source['run_id'],attachment['id'])
+        blockers+=['evidence:'+attachment['id']+':'+reason for reason in quality['blockers']]
     if campaign.get('status')=='suppressed' or campaign.get('suppression_preserved'):
         blockers.append('campaign_suppressed')
     old=(reports.get('uriel') or {}).get('campaign') or {}

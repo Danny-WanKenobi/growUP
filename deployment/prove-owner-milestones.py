@@ -15,9 +15,9 @@ def main():
     subprocess.run(['systemd-run','--wait','--pipe','--collect','--quiet','-p','User=growup','-p','Group=growup','-p','WorkingDirectory='+str(source),
         '-p','EnvironmentFile=/var/www/growup/shared/growup.env','-p','IPAddressDeny=any','-p','IPAddressAllow=localhost','-p','TimeoutStartSec=180',
         '/usr/bin/env','DATABASE_NAME=growup_mvp_gate','GROWUP_PG_INTEGRATION=1','MVP_WORKFLOW_ENABLED=1','DOSSIER_COORDINATOR_EMERGENCY_STOP=0',
-        'OBS_ENABLED=0','PYTHONDONTWRITEBYTECODE=1','PYTHONPATH='+str(source),str(python),'-B','-m','pytest','tests/test_owner_milestones.py',
+        'OBS_ENABLED=0','PYTHONDONTWRITEBYTECODE=1','PYTHONPATH='+str(source),str(python),'-B','-m','pytest','tests/test_owner_milestones.py','tests/test_evidence_quality.py',
         '-q','-p','no:cacheprovider','--tb=short','--maxfail=1','-k','test_pg_'],check=True)
-    print('PASS: real PostgreSQL evidence links, source-bound reassessment, interrupted refresh rollback and ordered recovery. No real-property authorization is claimed.')
+    print('PASS: real PostgreSQL evidence links, source-bound reassessment, interrupted refresh rollback and ordered recovery, validity rules and atomic contradiction history. No real-property authorization is claimed.')
 
 
 if __name__=='__main__':main()

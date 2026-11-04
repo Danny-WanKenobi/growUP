@@ -133,3 +133,58 @@ def decide_refresh(id:UUID,body:Decision,request:Request):
 @router.post('/wondrue/api/refresh-workflow/{id}/advance')
 def advance_refresh(id:UUID,request:Request):
     authorize(request,True);return safe_call('advance_refresh',lambda c:refresh.advance(c,id=id),True)
+
+# Evidence-quality decisions are private append-only planning records. They do
+# not change source authentication or Raphael's canonical verdict.
+class Validity(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_state_digest:str=Field(pattern='^[0-9a-f]{64}$')
+    expected_policy_digest:str|None=Field(None,pattern='^[0-9a-f]{64}$')
+    expires_on:date|None=None
+    reconfirm_after_days:int|None=Field(None,ge=1,le=3650,strict=True)
+    date_basis:Literal['document_date','obtained_on']
+    note:str=Field(min_length=1,max_length=1000)
+
+
+@router.get('/wondrue/api/evidence/{run_id}/{evidence_id}/quality')
+def evidence_quality(run_id:UUID,evidence_id:UUID,request:Request,as_of:date|None=None):
+    authorize(request)
+    from app.evidence_quality import inspect
+    return safe_call('evidence_quality',lambda c:inspect(c,run_id,evidence_id,as_of.isoformat() if as_of else None))
+
+
+@router.post('/wondrue/api/evidence/{run_id}/{evidence_id}/validity')
+def evidence_validity(run_id:UUID,evidence_id:UUID,body:Validity,request:Request):
+    authorize(request,True)
+    from app.evidence_quality import save_validity
+    return safe_call('evidence_validity',lambda c:save_validity(c,run_id=run_id,evidence_id=evidence_id,**body.model_dump(mode='json')),True)
+
+
+class ConflictReference(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    id:UUID
+    state_digest:str=Field(pattern='^[0-9a-f]{64}$')
+
+
+class Conflict(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    id:UUID
+    evidence_refs:list[ConflictReference]=Field(min_length=2,max_length=2)
+    claim_scope:str=Field(min_length=1,max_length=30)
+    claims:list[str]=Field(min_length=2,max_length=2)
+    disposition:Literal['unresolved','reconciled_for_planning']
+    note:str=Field(min_length=1,max_length=1000)
+    expected_digest:str|None=Field(None,pattern='^[0-9a-f]{64}$')
+
+
+@router.post('/wondrue/api/evidence/{run_id}/conflicts')
+def evidence_conflict(run_id:UUID,body:Conflict,request:Request):
+    authorize(request,True)
+    from app.evidence_quality import save_conflict
+    return safe_call('evidence_conflict',lambda c:save_conflict(c,run_id=run_id,**body.model_dump(mode='json')),True)
+
+@router.get('/wondrue/api/evidence/{run_id}/conflicts/{id}/history')
+def evidence_conflict_history(run_id:UUID,id:UUID,request:Request):
+    authorize(request)
+    from app.evidence_quality import conflict_history
+    return safe_call('conflict_history',lambda c:conflict_history(c,run_id,id))

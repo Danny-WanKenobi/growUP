@@ -167,9 +167,13 @@ def resolve_links(conn,run_id,dossier_key,links):
         if value['source']['key']!=dossier_key or value['state_digest']!=ref['state_digest']:raise WorkflowError('linked evidence changed or belongs to another dossier')
         admission=value.get('admission') or {}
         if admission.get('current') and admission.get('status')=='rejected_claim':raise WorkflowError('rejected evidence cannot support reassessment')
+        from app.evidence_quality import inspect as inspect_quality
+        quality=inspect_quality(conn,run_id,ref['id'])
+        if quality['blockers']:raise WorkflowError('evidence quality requires review: '+', '.join(quality['blockers']))
         resolved.append({'id':value['id'],'state_digest':value['state_digest'],'sha256':value['sha256'],
             'authentication_status':value['authentication_status'],'extraction_digest':(value.get('extraction') or {}).get('digest'),
             'admission_digest':admission.get('digest') if admission.get('current') else None})
+        if quality['validity_policy'] or quality['conflicts']:resolved[-1]['quality_digest']=quality['review_digest']
     return resolved
 
 
