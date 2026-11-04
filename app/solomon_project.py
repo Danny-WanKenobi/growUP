@@ -24,14 +24,14 @@ def validate_event(raw):
     if set(raw)-allowed: raise WorkflowError('unknown project event fields')
     event=deepcopy(raw)
     event['note']=_text(event.get('note'),'note')
-    if event.get('phase') not in dict(PHASES): raise WorkflowError('unknown project phase')
+    if not isinstance(event.get('phase'),str) or event['phase'] not in dict(PHASES): raise WorkflowError('unknown project phase')
     refs=event.get('evidence_refs')
     if not isinstance(refs,list) or not 1<=len(refs)<=10: raise WorkflowError('1-10 evidence references required')
     event['evidence_refs']=[_text(r,'evidence reference',500) for r in refs]
     kind=event.get('kind'); status=event.get('status')
     statuses={'progress':('planned','blocked','reported_complete'),
               'inspection':('pending','passed_claim','failed'), 'change_order':('proposed',)}
-    if kind not in statuses or status not in statuses[kind]: raise WorkflowError('invalid project event kind/status')
+    if not isinstance(kind,str) or kind not in statuses or status not in statuses[kind]: raise WorkflowError('invalid project event kind/status')
     if kind=='change_order':
         try:
             raw_cost=event.get('cost_delta_usd')

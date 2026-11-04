@@ -76,7 +76,7 @@ def test_dependencies_regression_emergency_and_negative_change(monkeypatch):
 
 
 @pytest.mark.parametrize('patch',[{'kind':'approve'},{'status':'verified_complete'},{'cost_delta_usd':'NaN'},
-    {'evidence_refs':[]},{'phase':'arbitrary'},{'construction_authorized':True}])
+    {'evidence_refs':[]},{'phase':'arbitrary'},{'construction_authorized':True},{'phase':[]},{'kind':{}}])
 def test_malformed_events_refuse(patch):
     with pytest.raises(WorkflowError): project.validate_event({**observation(),**patch})
 
