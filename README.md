@@ -6555,8 +6555,34 @@ tests/test_mailbox_routing.py, tests/test_uriel_demo_send.py. The PostgreSQL tes
 `test_pg_conversations_and_canonical_followup_with_mock_transport` requires
 CORRESPONDENCE_PG_PROOF=1 plus dedicated demo credentials, uses mocked HTTP with
 external networking blocked, and verifies all three paths through real persistence,
-canonical snapshots/receipts and replay. Real correspondence proof is separate:
-initial receiving access returned HTTP 401; no live conversations are claimed
-complete until actual receive/send/receipt results are retained.
+canonical snapshots/receipts and replay. The separate controlled real proof passed
+on November 4, 2026 after a receiving-read credential was installed: Simeon's
+actual inbound owner email received a threaded reply (Resend delivered status
+and owner-confirmed receipt); Solomon's introduction, incoming owner reply and
+threaded response all passed (outbound delivered status). Three actual sends and
+ten reads were consumed, including the initial refused credential check. Replaying
+both replies with HTTP forbidden made zero additional provider requests.
+
+The simulated cold-lead return used `demo-handoff-conversation-return-20261104`:
+version 10, nine verified canonical custody receipts, current holder Uriel,
+phase campaign_rework. Retained message content, reply plan, accepted/delivered
+receipt and notes are linked in the reassessment; all original reports and the
+previously completed Hudson dossier remain preserved. The tailored follow-up is
+unsent. Replaying this return creates no duplicate version or receipt. Actual
+inactivity, prospect interest, ownership or construction authorization was NOT
+asserted. Sanitized proof is retained privately on the dev VM at
+`/home/ubuntu/growup-correspondence-proof-20261104.json` (not a repository secret
+or public message archive). Operational databases received no test business data.
+
+The `delivery --actor <actor> --message-id <inbound-uuid> --operation <unique-read>`
+command checks the accepted reply with the separate authenticated read credential,
+validates its exact sender/recipient envelope, and appends delivery evidence to
+the reply receipt. For the fixed Solomon introduction, omit --message-id.
+Provider-delivered status establishes recipient-server delivery, not human reading
+or interest. Later delivery evidence does not invalidate reply deduplication.
+The proof's three-send allowance is now exhausted; no fourth message or automatic
+campaign is authorized by rerunning it. General inbound tracking, polling and
+ordinary demo outreach remain disabled/simulated. VPS callback activation was
+not part of this proof; real transport ran from the development service.
 
 Resend threading reference: https://resend.com/docs/dashboard/receiving/reply-to-emails

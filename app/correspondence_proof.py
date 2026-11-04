@@ -170,7 +170,8 @@ def reply(mid,actor,text):
         prior=read(conn,run.run_id,'reply-receipt')
         value={'provider_id':response['id'],'request_digest':digest_payload(body),
                'status':'provider_accepted','delivered':False,'authorization':AUTHORIZATION}
-        if prior and prior.payload!=value: raise WorkflowError('reply receipt conflict')
+        if prior and any(prior.payload.get(k)!=value[k] for k in ('provider_id','request_digest','authorization')):
+            raise WorkflowError('reply receipt conflict')
         if not prior: write(conn,run.run_id,'reply-receipt',value)
     transaction(cfg,'reply_receipt',receipt)
     return response
@@ -184,6 +185,42 @@ def solomon_introduction():
                'Please reply with a hypothetical scheduling question. This is not a proposal, procurement, '
                'contract, construction authorization or commitment. No real work is requested.'}
     return request(cfg,'solomon-introduction','POST','/emails',body)
+
+
+def delivery(actor, operation, mid=None):
+    """Retain authenticated recipient-server delivery evidence, not human reading."""
+    cfg=config(actor,receiving=True)
+    if mid is not None: mid=str(UUID(mid))
+    def lookup(conn):
+        if mid:
+            run=get_run_by_key_in_transaction(conn,'direct-mail:'+mid)
+            receipt=read(conn,run.run_id,'reply-receipt') if run else None
+            if not receipt: raise WorkflowError('retained accepted reply required')
+            return receipt.payload['provider_id']
+        if actor!='solomon': raise WorkflowError('Simeon cannot have an initial outbound')
+        ledger=get_run_by_key_in_transaction(conn,AUTHORIZATION)
+        accepted=read(conn,ledger.run_id,'request:solomon-introduction') if ledger else None
+        if not accepted or accepted.payload['status']!='provider_accepted': raise WorkflowError('accepted introduction required')
+        return accepted.payload['response']['id']
+    pid=transaction(cfg,'delivery_lookup',lookup)
+    observed=request(cfg,operation,'GET','/emails/'+str(UUID(pid)))
+    if (str(observed.get('id'))!=pid or address(observed.get('from'))!=actor+'@'+DOMAIN
+            or [address(v) for v in observed.get('to',[])]!=[DEMO_RECIPIENT]):
+        raise WorkflowError('delivery envelope mismatch')
+    status=observed.get('last_event')
+    if not isinstance(status,str): raise WorkflowError('provider delivery status unavailable')
+    if mid:
+        def retain(conn):
+            lock(conn,'direct-mail:'+mid)
+            run=get_run_by_key_in_transaction(conn,'direct-mail:'+mid)
+            row=read(conn,run.run_id,'reply-receipt')
+            value={**row.payload,'delivery_observation':{'last_event':status,
+                'evidence_digest':digest_payload(observed),'authentication':'resend_authenticated_api'},
+                'delivered':row.payload.get('delivered',False) or status=='delivered'}
+            if row.payload!=value: write(conn,run.run_id,'reply-receipt',value,row)
+        transaction(cfg,'delivery_observed',retain)
+    return {'actor':actor,'provider_id':pid,'last_event':status,
+            'delivered':status=='delivered','meaning':'Recipient-server delivery only; no human-read or interest assertion.'}
 
 
 def cold_return(mid):
@@ -223,7 +260,7 @@ def cold_return(mid):
 def main():
     import argparse
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['status','list','fetch','reply','solomon-introduction','cold-return'])
+    parser.add_argument('action',choices=['status','list','fetch','reply','delivery','solomon-introduction','cold-return'])
     parser.add_argument('--operation',default='inbound-list-1')
     parser.add_argument('--message-id')
     parser.add_argument('--actor',choices=ACTORS,default='simeon')
@@ -242,6 +279,7 @@ def main():
         elif args.action=='list': result=discover(args.operation)
         elif args.action=='fetch': result=fetch(args.message_id,args.actor)
         elif args.action=='reply': result=reply(args.message_id,args.actor,args.text)
+        elif args.action=='delivery': result=delivery(args.actor,args.operation,args.message_id)
         elif args.action=='cold-return': result=cold_return(args.message_id)
         else: result=solomon_introduction()
         print(json.dumps(result,indent=2))

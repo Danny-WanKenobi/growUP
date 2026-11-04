@@ -69,6 +69,23 @@ def test_send_and_read_limits_are_durable(environment):
     with pytest.raises(WorkflowError,match='allowance'): proof.reserve(environment,cfg,'read-17','GET','/emails/receiving',None)
 
 
+def test_delivery_evidence_preserves_reply_deduplication(environment,monkeypatch):
+    mid=str(uuid4()); pid=str(uuid4()); calls=[]
+    detail={'id':mid,'from':proof.DEMO_RECIPIENT,'to':['simeon@'+proof.DOMAIN],
+        'subject':'Delivery fixture','message_id':'<delivery@example.test>','text':'Question'}
+    def handle(req):
+        calls.append(req)
+        if req.method=='POST': return httpx.Response(200,json={'id':pid})
+        if str(req.url).endswith(mid): return httpx.Response(200,json=detail)
+        return httpx.Response(200,json={'id':pid,'from':'simeon@'+proof.DOMAIN,
+            'to':[proof.DEMO_RECIPIENT],'last_event':'delivered'})
+    monkeypatch.setattr(proof,'HTTP_CLIENT',lambda **kw:httpx.Client(transport=httpx.MockTransport(handle),**kw))
+    proof.fetch(mid,'simeon'); proof.reply(mid,'simeon','Reply')
+    assert proof.delivery('simeon','delivery-fixture',mid)['delivered']
+    assert proof.reply(mid,'simeon','Reply')['id']==pid
+    assert sum(req.method=='POST' for req in calls)==1
+
+
 @pytest.mark.skipif(__import__('os').getenv('CORRESPONDENCE_PG_PROOF')!='1',
     reason='Dedicated demo PostgreSQL proof explicitly disabled')
 def test_pg_conversations_and_canonical_followup_with_mock_transport(monkeypatch):
