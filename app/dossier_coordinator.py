@@ -11,8 +11,9 @@ from app.agents.stages import _load, build_report
 from app.custody_db import current_custody_in_transaction, issue_receipt_in_transaction
 from app.dossier_reports import append_agent_report_in_transaction
 
-ROUTE = ('gabriel', 'raphael', 'onesimus', 'michael', 'uriel', 'priscilla', 'nicole', 'theresia_keys')
-VERSION = 'dossier-coordinator-2'
+ROUTE = ('gabriel', 'raphael', 'onesimus', 'michael', 'uriel', 'priscilla', 'nicole', 'theresia_keys', 'simeon')
+VERSION = 'dossier-coordinator-3'
+PREVIOUS_VERSION = 'dossier-coordinator-2'
 LEGACY_VERSION = 'dossier-coordinator-1'
 
 
@@ -119,7 +120,7 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         raise WorkflowError('coordinator checkpoint integrity failure')
     state = deepcopy(record.payload) if record else {'version': VERSION, 'sequence': 0, 'status': 'running',
         'principal': principal, 'dossier_id': str(did), 'dossier_key': dossier_key}
-    if state['principal'] != principal or state['dossier_id'] != str(did) or state['version'] not in (LEGACY_VERSION, VERSION):
+    if state['principal'] != principal or state['dossier_id'] != str(did) or state['version'] not in (LEGACY_VERSION, PREVIOUS_VERSION, VERSION):
         raise WorkflowError('coordinator identity/configuration mismatch')
     if expected_sequence < state['sequence']:
         return {**state, 'replayed': True}
@@ -127,13 +128,13 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         raise WorkflowError('sequence ahead of coordinator checkpoint')
     holder = current_custody_in_transaction(conn, did)
     agent = holder['holder'] if holder else 'gabriel'
-    if state['version'] == LEGACY_VERSION and action != 'stop':
-        if (action != 'resume' or state['status'] not in ('running', 'stopped', 'delivered_to_nicole')
+    if state['version'] in (LEGACY_VERSION, PREVIOUS_VERSION) and action != 'stop':
+        if (action != 'resume' or state['status'] not in ('running', 'stopped', 'delivered_to_nicole', 'delivered_to_theresia_keys')
                 or agent not in ROUTE[1:-1] or state.get('dossier_digest', source.digest) != source.digest):
             raise WorkflowError('legacy coordinator requires explicit resume from its unchanged held dossier')
-        # Append a version-two checkpoint only on explicit operator resume. The
+        # Append the new route checkpoint only on explicit operator resume. The
         # existing checkpoint, reports and custody history are never rewritten.
-        state.update(version=VERSION, status='stopped', upgraded_from=LEGACY_VERSION)
+        state.update(version=VERSION, status='stopped', upgraded_from=state['version'])
     if action == 'stop':
         state['status'] = 'stopped'
     elif action == 'resume':
@@ -144,11 +145,11 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         return {**state, 'replayed': True}
     elif os.getenv('DOSSIER_COORDINATOR_EMERGENCY_STOP', '0') == '1':
         state['status'] = 'stopped'
-    elif agent == 'theresia_keys':
-        state['status'] = 'delivered_to_theresia_keys'
+    elif agent == 'simeon':
+        state['status'] = 'delivered_to_simeon'
     else:
         if agent not in ROUTE[1:-1]:
-            raise WorkflowError('coordinator requires current custody from Raphael through Nicole')
+            raise WorkflowError('coordinator requires current custody from Raphael through Theresia Keys')
         source, _ = _load(conn, run_id, dossier_key, agent)
         reports = source.payload.get('dossier', {}).get('reports') or {}
         if agent in reports:
@@ -196,7 +197,7 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
                 receipt = issue_receipt_in_transaction(conn, dossier_id=did, version=version.version,
                     kind='forward' if eligible else 'return', from_agent=agent, to_agent=target,
                     issued_by=principal, note=reason)
-                state.update(status=('delivered_to_theresia_keys' if target == 'theresia_keys' else 'running') if eligible else 'returned',
+                state.update(status=('delivered_to_simeon' if target == 'simeon' else 'running') if eligible else 'returned',
                     agent=agent, current_holder=target, reason=reason, receipt_id=str(receipt.receipt_id),
                     dossier_digest=stored.digest, custody_version=version.version)
     state['sequence'] += 1

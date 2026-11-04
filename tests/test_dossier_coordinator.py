@@ -74,7 +74,7 @@ def test_whole_route_and_upstream_gap(monkeypatch):
         assert all(row['snapshot_id'] for row in db['receipts'])
         result = coordinator.step_in_transaction(conn, run_id=rid, dossier_key='main', principal='owner', expected_sequence=5)
         assert result['current_holder'] == 'theresia_keys'
-        assert result['status'] == 'delivered_to_theresia_keys'
+        assert result['status'] == 'running'
         assert len(db['receipts']) == 7
         before = copy.deepcopy(db)
         replay = coordinator.step_in_transaction(conn, run_id=rid, dossier_key='main', principal='owner', expected_sequence=5)
@@ -83,6 +83,14 @@ def test_whole_route_and_upstream_gap(monkeypatch):
         from app.workflow_db import get_record_in_transaction
         dossier = get_record_in_transaction(conn,run.run_id,'dossier_version','main').payload['dossier']
         assert dossier['reports']['nicole']['regulatory_assessment']['regulatory_clearance'] is False
+        result = coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=6)
+        assert result['status']=='delivered_to_simeon' and result['current_holder']=='simeon'
+        assert len(db['receipts'])==8
+        dossier = get_record_in_transaction(conn,run.run_id,'dossier_version','main').payload['dossier']
+        assessment=dossier['reports']['theresia_keys']['underwriting_assessment']
+        assert assessment['status']=='conditional_preparation_only' and not assessment['contract_executable']
+        assert assessment['contract_preparation']['conditions_precedent']
+
 
 
 
@@ -132,7 +140,7 @@ def test_coordinator_approval_is_bound_to_operator(monkeypatch):
             intent_override=intent, approval_token=preview['approval_token'])
 
 @pytest.mark.skipif(__import__('os').getenv('GROWUP_PG_INTEGRATION') != '1', reason='PostgreSQL integration explicitly disabled')
-@pytest.mark.parametrize("holder", ["raphael", "nicole"] )
+@pytest.mark.parametrize("holder", ["raphael", "nicole", "theresia_keys"] )
 def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
@@ -169,6 +177,22 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 payload['digest'] = digest_payload(payload)
                 record = put_record_in_transaction(conn,rid,kind='dossier_version',record_key=key,
                     version=record.version+1,payload=payload,digest=payload['digest'])
+            if holder == 'theresia_keys':
+                from tests.test_theresia import inputs
+                _, supplied, reports = inputs()
+                for entry in supplied.values():
+                    entry['value']['property_id']=str(prop['id'])
+                for report in reports.values():
+                    report['property_id']=str(prop['id'])
+                    report.pop('digest')
+                    report['digest']=digest_payload(report)
+                payload=copy.deepcopy(record.payload)
+                payload['dossier']['specialist_inputs']={'theresia_keys':supplied}
+                payload['dossier']['reports']=reports
+                payload={k:v for k,v in payload.items() if k!='digest'}
+                payload['digest']=digest_payload(payload)
+                record=put_record_in_transaction(conn,rid,kind='dossier_version',record_key=key,
+                    version=record.version+1,payload=payload,digest=payload['digest'])
             version = create_version_in_transaction(conn, property_id=prop['id'], created_by='gabriel',
                 payload={'dossier':record.payload['dossier'],'dossier_digest':record.digest})
             did = version.dossier_id
@@ -200,7 +224,7 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _:attempt(),range(2)))
         assert sum(bool(r.get('replayed')) for r in results) == 1
-        assert all(r['status']==('returned' if holder=='raphael' else 'delivered_to_theresia_keys') and r['sequence']==1 for r in results)
+        assert all(r['status']=={'raphael':'returned','nicole':'running','theresia_keys':'delivered_to_simeon'}[holder] and r['sequence']==1 for r in results)
         with get_connection() as conn:
             assert latest_version_in_transaction(conn,did).version == 2
             assert verify_chain_in_transaction(conn,did) == initial_receipts+1
@@ -208,13 +232,13 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 
 
-def nicole_seed(monkeypatch, fail=False):
-    """Use the existing isolated synthetic pipeline to hand custody to Nicole."""
+def specialist_seed(monkeypatch, fail=False, agent="nicole"):
+    """Use the existing isolated synthetic pipeline to hand custody to the requested specialist."""
     conn=Conn(_new_db())
     with scope(conn,KEY):
         monkeypatch.setenv('MVP_WORKFLOW_ENABLED','1')
-        demo.start_in_transaction(conn,run_key='demo-handoff-nicole-coordinator',fail_at='nicole' if fail else None)
-        for sequence in range(6):
+        demo.start_in_transaction(conn,run_key='demo-handoff-nicole-coordinator',fail_at=agent if fail else None)
+        for sequence in range(demo.STAGES.index(agent)):
             demo.advance_in_transaction(conn,run_key='demo-handoff-nicole-coordinator',expected_sequence=sequence)
         run=demo._get(conn,'demo-handoff-nicole-coordinator')
     return conn,run.run_id
@@ -222,7 +246,7 @@ def nicole_seed(monkeypatch, fail=False):
 
 def test_nicole_gap_returns_to_priscilla_with_snapshot_and_owner_tasks(monkeypatch):
     from app.workflow_db import get_record_in_transaction,list_records_in_transaction
-    conn,rid=nicole_seed(monkeypatch,fail=True)
+    conn,rid=specialist_seed(monkeypatch,fail=True)
     with scope(conn,KEY):
         result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=0)
         assert result['status']=='returned' and result['current_holder']=='priscilla'
@@ -237,7 +261,7 @@ def test_legacy_nicole_checkpoint_needs_explicit_resume_and_preserves_replay(mon
     from app.workflow import digest_payload
     from app.workflow_db import get_record_in_transaction,put_record_in_transaction
     from app.custody import dossier_id_for_property
-    conn,rid=nicole_seed(monkeypatch)
+    conn,rid=specialist_seed(monkeypatch)
     with scope(conn,KEY):
         source=get_record_in_transaction(conn,rid,'dossier_version','main')
         legacy={'version':coordinator.LEGACY_VERSION,'sequence':5,'status':'delivered_to_nicole',
@@ -255,3 +279,41 @@ def test_legacy_nicole_checkpoint_needs_explicit_resume_and_preserves_replay(mon
         assert len(conn._db['receipts'])==len(before['receipts'])
         result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=6)
         assert result['current_holder']=='theresia_keys'
+
+
+def test_theresia_evidence_gap_returns_to_nicole_and_keeps_conditional_report(monkeypatch):
+    from app.workflow_db import get_record_in_transaction,list_records_in_transaction
+    conn,rid=specialist_seed(monkeypatch,fail=True,agent='theresia_keys')
+    with scope(conn,KEY):
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=0)
+        assert result['current_holder']=='nicole' and result['status']=='returned'
+        report=get_record_in_transaction(conn,rid,'dossier_version','main').payload['dossier']['reports']['theresia_keys']
+        assert report['status']=='needs_evidence' and not report['underwriting_assessment']['contract_executable']
+        assert report['underwriting_assessment']['contract_preparation']['conditions_precedent']
+        assert list_records_in_transaction(conn,rid,'owner_review_task')
+        assert conn._db['receipts'][-1]['snapshot_id']
+
+
+def test_version_two_theresia_delivery_needs_resume_without_moving_custody(monkeypatch):
+    from app.workflow import digest_payload
+    from app.workflow_db import get_record_in_transaction,put_record_in_transaction
+    from app.custody import dossier_id_for_property
+    conn,rid=specialist_seed(monkeypatch,agent='theresia_keys')
+    with scope(conn,KEY):
+        source=get_record_in_transaction(conn,rid,'dossier_version','main')
+        legacy={'version':coordinator.PREVIOUS_VERSION,'sequence':6,'status':'delivered_to_theresia_keys',
+            'principal':'owner','dossier_id':str(dossier_id_for_property(source.payload['property_id'])),
+            'dossier_key':'main','dossier_digest':source.digest}
+        put_record_in_transaction(conn,rid,kind='research_artifact',record_key='coordinator:main',version=1,payload=legacy,digest=digest_payload(legacy))
+        before=copy.deepcopy(conn._db)
+        with pytest.raises(WorkflowError,match='explicit resume'):
+            coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=6)
+        assert conn._db==before
+        resumed=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=6,action='resume')
+        assert resumed['version']==coordinator.VERSION and resumed['upgraded_from']==coordinator.PREVIOUS_VERSION
+        assert len(conn._db['receipts'])==len(before['receipts'])
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7)
+        assert result['current_holder']=='simeon'
+        before=copy.deepcopy(conn._db)
+        assert coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7)['replayed']
+        assert conn._db==before

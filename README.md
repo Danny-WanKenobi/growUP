@@ -4649,8 +4649,8 @@ pages were requested in these checks. Focused runner/coordinator regression:
 ## Durable per-dossier coordinator
 
 `app.dossier_coordinator` processes an existing stored dossier from its current
-Raphael/Onesimus/Michael/Uriel/Priscilla/Nicole custody holder. It enforces forward
-Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole → Theresia Keys. Evidence gaps return
+Raphael/Onesimus/Michael/Uriel/Priscilla/Nicole/Theresia Keys custody holder. It enforces forward
+Raphael → Onesimus → Michael → Uriel → Priscilla → Nicole → Theresia Keys → Simeon. Evidence gaps return
 to the previous stage (Priscilla returns to Michael); processing then stops.
 It uses the existing policies, deterministic calculators, report appender,
 immutable snapshots, receipt issuer and permanent audit transaction. No discovery,
@@ -5003,8 +5003,8 @@ builder (`preview_agent_report`, `prepare_in_transaction` / `prepare_audited`).
 It consumes the retained dossier only: no discovery, current-law research,
 provider requests, permit applications or external actions. It uses the same
 property UUID, report digest, append-only dossier/snapshot services and owner
-review queue as the other agents. The durable coordinator now processes Nicole and stops on delivery
-to Theresia Keys, using the route/version rules below. No unattended worker is installed.
+review queue as the other agents. The durable coordinator processes Nicole and Theresia Keys and stops on delivery
+to Simeon, using the current version-three route rules below. No unattended worker is installed.
 
 Nicole's `specialist_inputs` retain the existing value/evidence_refs wrappers:
 
@@ -5051,9 +5051,9 @@ claims, missing/legacy input, source/date validation, approval-scope separation,
 report sealing and the existing isolated GO/NO-GO custody scenarios.
 
 
-#### Coordinator extension: Nicole to Theresia Keys
+#### Coordinator extension: Nicole to Theresia Keys (version two, superseded below)
 
-The version-two coordinator processes Nicole with her shared regulatory report
+The historical version-two coordinator processed Nicole with her shared regulatory report
 builder. One bounded step appends her structured report to the entire dossier,
 preserves an immutable snapshot, writes owner-review requests, issues the custody
 receipt, and advances its checkpoint in the existing atomic audited transaction.
@@ -5098,9 +5098,9 @@ builder and canonical report preparation/snapshot path. It requires retained,
 digest-valid Michael and Nicole reports; Nicole must be ready for preliminary
 underwriting, which still does not establish regulatory clearance. No provider
 calls, title searches, lender decisions, legal instruments or signatures occur.
-The durable coordinator continues to stop on delivery to Theresia Keys; this
-upgrade strengthens her report primitive without starting an unattended worker
-or extending execution to Simeon.
+The current version-three coordinator executes this assessment and stops on
+delivery to Simeon, as described below. No unattended worker or closing actions
+are started.
 
 The existing value/evidence_refs wrappers now require property-bound structured
 inputs, with HTTP(S) source references retained as provided_unverified:
@@ -5151,3 +5151,48 @@ new contract. Tests use disposable records only. Focused checks:
 inspectable money arithmetic, funding gaps, zero debt, nonfinite/unsafe values,
 missing evidence, property/currency/report binding, weak cash flow, conditional
 scope, report sealing and existing GO/NO-GO custody scenarios.
+
+
+#### Current coordinator: execute Theresia and deliver to Simeon
+
+Version `dossier-coordinator-3` now runs Theresia's existing shared assessment in
+the execution path. It appends the complete conditional report to the canonical
+dossier, preserves the immutable snapshot, queues owner-review conditions,
+issues the forward/return custody receipt and records its checkpoint in the
+same audited transaction. Eligible means **conditional preparation only**:
+financing_approved, ownership_verified, contract_executable and signing_authority
+remain false. Conditions and Michael/Nicole report references remain in the
+handed-off dossier; a forwarding receipt grants no business or legal authority.
+
+An eligible Theresia assessment forwards to `simeon` and stops with status
+`delivered_to_simeon`. Missing underwriting evidence returns to `nicole` with the
+needs-evidence report, preserved snapshot and owner tasks; processing stops with
+`returned`. Independently appended reports still require explicit reconciliation.
+Simeon's closing stage is not executed here. No outreach, signatures, funds,
+provider calls, discovery, schema changes or operational candidate promotion is
+performed by this deployment or its tests.
+
+Delivery to Theresia now remains `running`; the next bounded step executes her
+assessment. The five-step cap per invocation, actor-bound Wondrue approvals,
+per-dossier lock, emergency stop and stale-sequence replay behavior are unchanged.
+Dossiers do not wait on a batch or other properties.
+
+Existing version-one **and version-two** checkpoints require explicit
+`coordinate_dossier` action=`resume`, using their current expected_sequence,
+original principal and unchanged held dossier. The supported legacy states are
+running, stopped, delivered_to_nicole and delivered_to_theresia_keys, with custody
+still in the processing route. Resume appends a version-three checkpoint,
+retains upgraded_from, consumes one sequence and moves no custody. Use the
+returned sequence for the subsequent step. Old-sequence replays remain read-only;
+Stop remains available; returned/owner-review states are not automatically reopened.
+No checkpoints, dossiers or historical receipts are rewritten or upgraded at deploy.
+
+Focused tests: `python -m pytest tests/test_dossier_coordinator.py
+ tests/test_theresia.py tests/test_wondrue_ops.py -q -p no:cacheprovider` (one line).
+The end-to-end isolated fixture traverses Raphael through Theresia to Simeon,
+retaining the conditional unsigned report. Separate tests cover Theresia's return
+to Nicole, owner tasks, legacy v2 resume and replay without duplicate receipts.
+The gated PostgreSQL recovery/concurrency test now also starts with a disposable
+Theresia-held dossier: interruption after report/snapshot rolls back, and two
+same-sequence retries commit exactly one enhanced version and receipt. Gate-only
+fixtures do not establish a real property's financing or closing eligibility.
