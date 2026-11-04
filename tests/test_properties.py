@@ -575,6 +575,9 @@ def test_migration_defines_estimated_verified_schema() -> None:
 def test_migrate_reports_not_configured(monkeypatch, capsys) -> None:
     import app.migrate as migrate
 
+    # Exercise the no-argument command, not pytest's process arguments.
+    monkeypatch.setattr(migrate.sys, "argv", ["app.migrate"])
+
     def _fail():
         raise DatabaseNotConfiguredError("database_not_configured")
 
