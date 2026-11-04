@@ -227,6 +227,7 @@ def test_real_gate_summary_does_not_confuse_reports_with_completed_handoff(monke
     monkeypatch.setattr(proof,'_load',lambda *a:(row,'TEST-dossier'))
     monkeypatch.setattr(proof,'guard',lambda *a:None)
     monkeypatch.setattr(proof,'evaluate_dossier',lambda *a:{'outcome':'authorized','basis':[]})
+    monkeypatch.setattr(proof,'effective_reports',lambda *a:reports)
     monkeypatch.setattr(proof,'verify_chain_in_transaction',lambda *a:2)
     monkeypatch.setattr(proof,'current_custody_in_transaction',lambda *a:{'holder':'simeon'})
     monkeypatch.setattr(proof,'stale_dependencies',lambda *a:{})
