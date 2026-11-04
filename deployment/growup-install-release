@@ -8,8 +8,17 @@ flock -n 9 || {
     echo 'Another Grow Up deployment is already running.' >&2
     exit 1
 }
-[[ "$#" -eq 1 ]] || { echo 'Expected one release name' >&2; exit 2; }
+[[ "$#" -ge 1 && "$#" -le 2 ]] || { echo 'Expected release and optional exact commit' >&2; exit 2; }
 RELEASE=$1
+COMMIT=${2:-}
+case "$(hostname -s)" in
+    securecode-dev) MODE=DEV_SERVER; PORT=8001; DATABASE=growup_dev ;;
+    srv1577410) MODE=LIVE_SERVER; PORT=8010; DATABASE=growup_prod ;;
+    *) echo 'Unknown deployment host; refusing.' >&2; exit 2 ;;
+esac
+[[ -z "$COMMIT" || "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || exit 2
+if [[ "$MODE" == LIVE_SERVER && -z "$COMMIT" ]]; then echo 'Live deployment needs exact commit.' >&2; exit 2; fi
+[[ -z "$COMMIT" || "$RELEASE" == *"_${COMMIT:0:7}" ]] || exit 2
 [[ "$RELEASE" =~ ^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{7}$ ]] || exit 2
 ROOT=/var/www/growup
 INCOMING="$ROOT/incoming"
@@ -19,6 +28,37 @@ CHECKSUM="$ARCHIVE.sha256"
 STAGED="$STAGING/$RELEASE.tar"
 INSTALLER=/usr/local/libexec/growup/remote-install-release.sh
 SERVICE=growup.service
+ENVFILE="$ROOT/shared/growup.env"
+CONFIGURATOR=/usr/local/libexec/growup/configure-server.py
+[[ -f "$CONFIGURATOR" && -O "$CONFIGURATOR" ]] || { echo 'Trusted configurator missing' >&2; exit 1; }
+CHECKPOINT="$ROOT/deploy-backups/$RELEASE"
+[[ ! -e "$CHECKPOINT" ]] || { echo 'Checkpoint already exists' >&2; exit 1; }
+install -d -o root -g root -m 700 "$ROOT/deploy-backups" "$CHECKPOINT"
+cp -p "$ENVFILE" "$CHECKPOINT/growup.env"
+PREVIOUS=$(readlink -f "$ROOT/current" || true)
+printf '%s\n' "$PREVIOUS" > "$CHECKPOINT/previous-release"
+ACTIVATED=0
+rollback_failure() {
+    local code=${1:-$?}
+    trap - ERR INT TERM HUP
+    echo 'Deployment failed; restoring environment and prior active release.' >&2
+    cp -p "$CHECKPOINT/growup.env" "$ENVFILE"
+    if [[ "$ACTIVATED" == 1 && -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
+        ln -s "$PREVIOUS" "$ROOT/.rollback-$RELEASE"
+        mv -Tf "$ROOT/.rollback-$RELEASE" "$ROOT/current"
+        systemctl restart "$SERVICE" || true
+    fi
+    exit "$code"
+}
+trap 'rollback_failure $?' ERR
+trap 'rollback_failure 130' INT
+trap 'rollback_failure 143' TERM
+trap 'rollback_failure 129' HUP
+if [[ "$MODE" == LIVE_SERVER ]]; then
+    runuser -u postgres -- pg_dump --format=custom "$DATABASE" > "$CHECKPOINT/database.dump"
+    pg_restore --list "$CHECKPOINT/database.dump" > "$CHECKPOINT/database-contents.txt"
+    sha256sum "$CHECKPOINT/database.dump" > "$CHECKPOINT/database.dump.sha256"
+fi
 [[ -f "$ARCHIVE" && -f "$CHECKSUM" ]] || { echo 'Missing uploaded archive/checksum' >&2; exit 1; }
 [[ -f "$INSTALLER" && -O "$INSTALLER" ]] || { echo 'Trusted installer missing' >&2; exit 1; }
 # Root controls staging; growup can read staged archives only.
@@ -33,46 +73,38 @@ STAGED_HASH=$(sha256sum "$STAGED" | cut -d ' ' -f1)
 [[ "$STAGED_HASH" == "${EXPECTED:0:64}" ]] || { echo 'Staged archive checksum mismatch' >&2; exit 1; }
 trap 'rm -f "$STAGED"' EXIT
 runuser -u growup -- /bin/bash "$INSTALLER" "$RELEASE" "$STAGED"
-# Run pending PostgreSQL migrations with the NEW release's code before activation.
-# Never as root, never from /var/www/growup/current, never with release-derived config.
-# The env file is parsed by systemd (KEY=VALUE only), never sourced as shell code.
+# Prepare and validate the host-pinned profile before any activation.
 NEW_RELEASE="$ROOT/releases/$RELEASE"
 NEW_PYTHON="$NEW_RELEASE/.venv/bin/python"
-ENVFILE="$ROOT/shared/growup.env"
-[[ -d "$NEW_RELEASE" && -x "$NEW_PYTHON" && -f "$NEW_RELEASE/app/migrate.py" ]] || { echo 'Prepared release incomplete; cannot migrate' >&2; exit 1; }
-[[ -f "$ENVFILE" ]] || { echo 'Application environment missing' >&2; exit 1; }
-if ! systemd-run --wait --pipe --quiet --collect \
-    -p User=growup -p Group=growup \
-    -p WorkingDirectory="$NEW_RELEASE" \
-    -p EnvironmentFile="$ENVFILE" \
-    "$NEW_PYTHON" -m app.migrate; then
-    echo 'Database migration failed; release not activated.' >&2
-    exit 1
+[[ -x "$NEW_PYTHON" && -f "$NEW_RELEASE/app/migrate.py" ]] || exit 1
+/usr/bin/python3 "$CONFIGURATOR" --apply
+run_new() {
+    systemd-run --wait --pipe --quiet --collect -p User=growup -p Group=growup \
+      -p WorkingDirectory="$NEW_RELEASE" -p EnvironmentFile="$ENVFILE" \
+      /usr/bin/env PYTHONDONTWRITEBYTECODE=1 "$NEW_PYTHON" -B "$@"
+}
+run_new -c "from app.server_target import inspect; from app.config import get_database_config; p=inspect(); assert p['server_mode']=='$MODE' and not p['blockers'] and get_database_config().name=='$DATABASE', 'Server/database mismatch'"
+if [[ "$MODE" == LIVE_SERVER ]]; then
+    # Pending production SQL requires its own reviewed data-migration checkpoint.
+    run_new -m app.migrate --check
+else
+    run_new -m app.migrate
 fi
-PREVIOUS=$(readlink -f "$ROOT/current" || true)
+printf 'commit=%s\nserver_mode=%s\nport=%s\n' "$COMMIT" "$MODE" "$PORT" | runuser -u growup -- tee -a "$NEW_RELEASE/RELEASE-MANIFEST.txt" >/dev/null
 PENDING="$ROOT/.current-$RELEASE"
 ln -s "$ROOT/releases/$RELEASE" "$PENDING"
 mv -Tf "$PENDING" "$ROOT/current"
-rollback() {
-    echo 'Deployment failed; reverting active release.' >&2
-    if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
-        ln -s "$PREVIOUS" "$ROOT/.rollback-$RELEASE"
-        mv -Tf "$ROOT/.rollback-$RELEASE" "$ROOT/current"
-        systemctl restart "$SERVICE" || true
-    else
-        rm -f "$ROOT/current"
-        systemctl stop "$SERVICE" || true
-    fi
-}
-if ! systemctl restart "$SERVICE"; then rollback; exit 1; fi
+ACTIVATED=1
+systemctl restart "$SERVICE"
 HEALTHY=0
 for i in $(seq 1 15); do
-    if systemctl is-active --quiet "$SERVICE" && curl -fsS --max-time 2 http://127.0.0.1:8001/health >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$SERVICE" && curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && curl -fsS --max-time 3 "http://127.0.0.1:$PORT/ready" >/dev/null 2>&1; then
         HEALTHY=1; break
     fi
     sleep 2
 done
-if [[ "$HEALTHY" != 1 ]]; then rollback; exit 1; fi
-printf 'status=healthy\n' >> "$ROOT/releases/$RELEASE/RELEASE-MANIFEST.txt"
+[[ "$HEALTHY" == 1 ]] || { false; }
+trap - ERR INT TERM HUP
+printf 'status=healthy\n' | runuser -u growup -- tee -a "$ROOT/releases/$RELEASE/RELEASE-MANIFEST.txt" >/dev/null
 rm -f "$ARCHIVE" "$CHECKSUM"
 echo "SUCCESS: Grow Up release activated: $RELEASE"

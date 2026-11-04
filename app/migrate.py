@@ -25,6 +25,24 @@ from app.properties_db import get_connection
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 
+def pending_migrations(config: DatabaseConfig | None = None) -> list[str]:
+    """Read-only inventory; never creates the ledger or applies SQL."""
+    conn=get_connection() if config is None else get_connection(config)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute("SELECT to_regclass('public.schema_migrations') AS name")
+            row=cur.fetchone()
+            name=row['name'] if isinstance(row,dict) else row[0]
+            applied=set()
+            if name:
+                cur.execute('SELECT filename FROM schema_migrations')
+                applied={r['filename'] if isinstance(r,dict) else r[0] for r in cur.fetchall()}
+            return [p.name for p in _pending_migrations(applied)]
+    finally:
+        conn.rollback();conn.close()
+
+
 def _pending_migrations(applied: set[str]) -> list[Path]:
     files = sorted(MIGRATIONS_DIR.glob("*.sql"), key=lambda p: p.name)
     return [p for p in files if p.name not in applied]
@@ -77,6 +95,15 @@ def run_migrations(config: DatabaseConfig | None = None) -> list[str]:
 
 
 def main() -> int:
+    if sys.argv[1:]==['--check']:
+        import json
+        try: pending=pending_migrations()
+        except Exception:
+            print('error: migration inventory unavailable',file=sys.stderr);return 1
+        print(json.dumps({'pending':pending,'read_only':True}))
+        return 3 if pending else 0
+    if sys.argv[1:]:
+        print('usage: python -m app.migrate [--check]',file=sys.stderr);return 2
     try:
         applied = run_migrations()
     except DatabaseNotConfiguredError:

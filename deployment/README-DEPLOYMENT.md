@@ -1,97 +1,96 @@
-# Grow Up Ubuntu development deployment (draft)
+# Grow Up deployment: development VM and live VPS
 
-These scripts are **not yet configured for unattended use**. Nothing is executed by copying them.
+## Supported targets
 
-## Architecture
-- Windows: edit with Muse/VS Code; commit and push to public GitHub.
-- Ubuntu VM: separate `growup` Linux user, `/var/www/growup`, Python venv, `growup.service`, loopback port 8001.
-- PostgreSQL: existing instance; separate `growup_dev` database and `growup_app` login. Do not modify iiiBooks database.
-- Production deployment is deliberately disabled.
+| Launcher | SSH alias / expected host | Mode | Loopback port | Operational DB |
+| --- | --- | --- | --- | --- |
+| deploy-dev.ps1 | securecode-dev / securecode-dev | DEV_SERVER | 8001 | growup_dev |
+| deploy-live.ps1 | myvps / srv1577410 | LIVE_SERVER | 8010 | growup_prod |
 
-## Required manual prerequisites (after server inspection)
-1. Confirm SSH alias `securecode-dev` resolves to the intended VM; do not assume the old alias is correct.
-2. Verify installed Python, PostgreSQL version, existing ports/services, and free disk space.
-3. Create the dedicated Linux user `growup` and give it ownership of `/var/www/growup` only; do not change permissions or ownership of `/var/www` or any sibling application directory.
-4. Copy `remote-install-release.sh` to `/var/www/growup/deployment/remote-install-release.sh` and `setup-postgres.sh` to a temporary administrator-only location.
-5. Run `setup-postgres.sh` in dry-run mode; review, then use `--apply` to create separate DB/role.
-6. Store `DATABASE_URL` and future Meta API credentials in `/var/www/growup/shared/growup.env` with root-owned restricted permissions; never commit them.
-7. Install `growup.service` after inspecting template and allow only a narrowly scoped sudoers rule for restarting this specific service (if using `deploy-dev.ps1`).
-8. Once Muse creates `app/main.py`, `requirements.txt`, and `deployment/growup_server.py`, run a local smoke test first.
-9. Place deployment files under the project's `deployment/` directory, commit and push approved changes, then run `deploy-dev.ps1` from Windows.
+Both wrappers use deploy.ps1 and propagate failures. Hostname, branch main,
+exact origin/main SHA and at least 1 GiB free space are checked before upload.
+A read-only preview is `./deployment/deploy-live.ps1 -PlanOnly`. Use the matching
+launcher without PlanOnly to deploy. The archive contains committed GitHub HEAD
+only. Dirty files block deployment unless explicitly reviewed with
+`-AllowDirtyWorktree`; that option neither stages nor changes those files.
 
-## Important notes
-- `deploy-dev.ps1` packages exactly the committed GitHub `main` revision; it will refuse uncommitted changes or unpushed commits.
-- Installer assumes `GET /health` returns HTTP 2xx and `app.main:app` exists.
-- Service and database are **not installed** by the deploy script.
-- Rollback restores the previous application release when available; it does **not** roll back database migrations.
-- The existing Shorashim SSH helper was intentionally not reused: its verification function hardcodes `shorashim.service`.
-- No Nginx route is configured yet. Access should remain local or through SSH port forwarding until deliberately configured.
+The live launcher also compares SHA256 of the installed trusted controller,
+preparer and server configurator against the reviewed repository copies. Drift
+or missing tools stops deployment before upload. No automatic sudoers expansion
+or production host override is performed.
 
-## Migration before activation (OPS-2)
+## Trusted tools and one-time installation
 
-The deployment controller (`deployment/growup-install-release`, installed
-as `/usr/local/sbin/growup-install-release`) runs pending PostgreSQL
-migrations **before activation**, in this order:
-
-1. Validate the release name, archive, and checksum.
-2. Stage the archive and prepare the new release as `growup`.
-3. Execute `python -m app.migrate` in a transient unit via
-   `systemd-run --wait --pipe` with `User=growup`, `Group=growup`,
-   `WorkingDirectory=/var/www/growup/releases/<RELEASE>`,
-   `EnvironmentFile=/var/www/growup/shared/growup.env`, and the
-   **new** release's interpreter
-   (`/var/www/growup/releases/<RELEASE>/.venv/bin/python`).
-   systemd parses the env file as `KEY=VALUE` assignments; it is never
-   sourced as shell code. `--wait --pipe` propagates the migration
-   exit status, so any nonzero result aborts before activation.
-4. Abort with exit 1 if migrations fail — the previous release stays
-   active and the service is not restarted. No rollback is needed
-   because nothing was activated.
-5. Only after migrations succeed: activate the symlink, restart
-   `growup.service`, and verify health (existing rollback on failure).
-
-Migration output (`applied: <file>` or `up to date: no pending
-migrations`) appears in the deploy log before the activation message;
-its absence on a release carrying a new migration means the installed
-controller predates this fix.
-
-Migration compatibility rule: a migration executes while the **old**
-release is still serving, so every migration must be backward compatible
-with the running application (additive changes only — new tables,
-nullable columns; no renames, drops, or tightening constraints relied
-on by old code). The runner (`app/migrate.py`) applies all pending
-files in one transaction and records them in `schema_migrations`, so a
-failed run leaves the schema unchanged; reruns are safe. There are no
-automatic down-migrations: application rollback never reverts schema
-changes.
-
-Installing a reviewed controller update (privileged, manual — the live
-controller is outside Git, so editing the repository does not update it):
+Repository-managed tools are growup-install-release, remote-install-release.sh,
+configure-server.py and install-deployment-tools.py. The controller/preparer/
+configurator are root-installed under /usr/local; application code runs as growup.
+After deploying a release carrying these files, a local administrator can preview
+and apply the reviewed tool installation:
 
 ```bash
-# 1. From the deployed release, diff the reviewed source against live.
-diff -u /usr/local/sbin/growup-install-release \
-  /var/www/growup/current/deployment/growup-install-release
-# 2. Syntax-check the reviewed source (no execution).
-bash -n /var/www/growup/current/deployment/growup-install-release
-# 3. Install with root ownership and restrictive mode; verify.
-sudo install -o root -g root -m 755 \
-  /var/www/growup/current/deployment/growup-install-release \
-  /usr/local/sbin/growup-install-release
-ls -l /usr/local/sbin/growup-install-release
-sha256sum /usr/local/sbin/growup-install-release \
-  /var/www/growup/current/deployment/growup-install-release
-# 4. Confirm exit-status propagation on the host (no app involved):
-sudo systemd-run --wait --pipe --quiet --collect -p User=growup \
-  -- /bin/false; test $? -ne 0 && echo PROPAGATION_OK
-# 5. Verify on the next deploy: the log must show the migration step
-#    before "release activated", or "release not activated" with the
-#    previous release still live if migrations fail.
+sudo /usr/bin/python3 /var/www/growup/current/deployment/install-deployment-tools.py
+sudo /usr/bin/python3 /var/www/growup/current/deployment/install-deployment-tools.py --apply
 ```
 
-Rollback of a controller update: re-install the previous reviewed copy
-from the still-active release's `deployment/` directory and re-verify
-with `bash -n` and `diff`.
+The installer validates shell syntax, preserves tool backups, configures the
+host-pinned SERVER_MODE and callback URL without showing secrets, restarts only
+growup.service, and checks health/readiness. It does not enable Resend or spending.
+The private environment's owner and 0600 permissions are retained. Environment
+backups are root-private. On the dev VM this one-time step may require the owner's
+local sudo authentication; existing release deployment remains available meanwhile.
+For the initial VPS bootstrap, reviewed tool files can be transferred over SSH,
+hash-verified, backed up and root-installed before the first live launch.
+
+## Release lifecycle and rollback
+
+1. Verify target host and exact GitHub revision, upload git archive and SHA256.
+2. Root controller locks deployment, validates release/commit/checksum and stages
+   a root-controlled copy. Unknown hosts and unsafe archive members are refused.
+3. Live deployments create a private PostgreSQL custom-format backup plus an
+   inspected archive inventory and checksum. Preserve previous release and env.
+4. The growup preparer builds a new venv, installs existing requirements, runs
+   pip check and compilation, and records pip freeze/requirements checksum.
+   Requirements remain version ranges; the package inventory records what was
+   actually installed. Previous release environments are retained for rollback.
+5. Configure the host's explicit server profile. A transient systemd process uses
+   the new release interpreter and systemd-parsed private EnvironmentFile; no
+   environment file is sourced as shell code. Validate expected mode/database.
+6. Development applies pending migrations before activation. Live runs the new
+   `python -m app.migrate --check` read-only inventory and REFUSES pending SQL.
+   A production migration needs its own reviewed data/backup checkpoint; no
+   unreviewed production SQL is applied by this launcher.
+7. Atomically switch current, restart Grow Up, and require BOTH health and database
+   readiness on the correct server port. Record commit/mode/port/status in the
+   release manifest using the service account, not root writes into app files.
+8. Migration/check failure leaves the previous release active. Post-activation
+   failure restores the old symlink and environment and restarts it. INT/TERM/HUP
+   also invoke recovery. Database backups are never automatically restored and
+   application rollback does not undo schema changes. Uncertain interruption
+   should be inspected before retrying with a fresh release identifier.
+
+## Resend routing and activation
+
+See RESEND-LIVE-ROUTING-PLAN.md for the exact-path exception. The reviewed
+configure-resend-route.py supports preview and --apply on srv1577410 only. It
+backs up only the Grow Up Nginx site, changes only the exact POST callback path,
+validates nginx -t, reloads gracefully and restores the previous file on failure.
+Ordinary pages, docs, command/enrollment routes retain private-preview auth.
+
+No launcher registers a webhook, enables polling, changes provider keys or sends
+email. DEV_SERVER reports private callback unavailability gracefully. LIVE_SERVER
+routes the same signed callback service but remains disabled until the actual
+signing secret, receiving scope and enrollment are configured and separately
+activated. A disabled application JSON response is distinct from an Nginx login
+failure. Do not remove the general preview gate or replace root-domain mail MX.
+
+## Focused acceptance
+
+Windows: PowerShell syntax parser plus tests/test_deploy_migrations.py,
+tests/test_server_target.py and the focused Resend tests. Three Bash execution
+cases run on Ubuntu with mocked tools in temporary directories: success, migration
+refusal before activation, and health failure with release/environment recovery.
+They do not touch systemd, real databases or production configuration. No full
+regression is required for this deployment work.
 
 ## Shared /var/www layout
 Grow Up uses `/var/www/growup` as its own sibling of `iiibooks`, `hebrewgospels`, and `securecodeusa`. Do not recursively chown or chmod `/var/www`; create only the new `/var/www/growup` subtree after confirming the target does not exist.

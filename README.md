@@ -6301,3 +6301,23 @@ rollback checkpoint are in
 [deployment/RESEND-LIVE-ROUTING-PLAN.md](deployment/RESEND-LIVE-ROUTING-PLAN.md).
 That plan has not been applied. No callback has been registered and no VPS
 deployment, production migration or provider activation occurred in this task.
+
+
+## Finalized two-server deployment workflow
+
+Use `deployment/deploy-dev.ps1` for securecode-dev or
+`deployment/deploy-live.ps1` for the live VPS. Both use the shared deploy.ps1
+engine, check exact host/GitHub commit/free space, archive committed source only,
+and support read-only `-PlanOnly`. Explicit `-AllowDirtyWorktree` leaves unrelated
+working files untouched and excluded. Live installation verifies trusted tool
+hashes, creates a private database/configuration rollback checkpoint, refuses
+pending production migrations, configures LIVE_SERVER and verifies both health
+and readiness on port 8010. Development uses DEV_SERVER / port 8001.
+
+The repository now contains the formerly server-only release preparer. Dependency
+inventories and source hashes are retained per release. Environment changes are
+limited to the server profile/callback URL; provider enablement and keys are
+preserved. Callback routing setup is a separate exact-path, validated Nginx change,
+not a global preview-auth removal. No deployment registers a Resend webhook or
+sends email. See deployment/README-DEPLOYMENT.md for bootstrap, rollback, targeted
+proof and the remaining secret/receiving-domain activation prerequisites.
