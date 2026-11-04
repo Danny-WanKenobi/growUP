@@ -8,6 +8,21 @@ from app.michael import money_str
 from app.workflow import digest_payload
 
 
+def conversion_demo_brief(model):
+    from app.conversion_demo import validate
+    validate(model)
+    return {'agent':'theresia_keys','source_model_digest':model['digest'],'mode':'demo_only',
+        'owner_funded_proposal':{'document_type':'illustrative_unsigned_consulting_brief',
+            'project_budget_usd':model['owner_funded']['project_budget_usd'],
+            'proposed_consulting_fee_usd':model['owner_funded']['consulting_fee_proposed_usd'],
+            'scope':['Concept and feasibility review','Conversion support planning','Ongoing support only under separately agreed scope and fees'],
+            'conditions':['Agree fee milestones and deliverables','Confirm funding, property access and required professional reviews']},
+        'participation_proposal':{'document_type':'illustrative_nonbinding_project_structure',
+            'rights':model['participation']['rights_assumption'],'allocations':model['participation']['allocations'],
+            'conditions':['Define issuer and legally enforceable rights','Agree contribution values, control, losses and exit terms','Determine a lawful offering and transfer route','Evidence actual funding before proceeding']},
+        'contract_executable':False,'signing_authority':False,'ownership_rights_established':False}
+
+
 def assess(property_id, supplied, reports):
     missing, conditions, scenarios = [], [], {}
     def entry(name):

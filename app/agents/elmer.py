@@ -6,6 +6,21 @@ from uuid import UUID
 from app.workflow import digest_payload
 
 
+def conversion_demo_brief(model):
+    from app.conversion_demo import validate
+    validate(model)
+    return {'agent':'elmer','source_model_digest':model['digest'],'mode':'demo_only',
+        'consulting_fee_proposed_usd':model['owner_funded']['consulting_fee_proposed_usd'],
+        'actual_fee_income_verified_usd':None,'actual_capital_received_usd':None,
+        'classification_notes':['Proposed consulting fees are not earned or collected income.',
+            'Hypothetical investor capital is separate from operating revenue.',
+            'Proposed service/space contributions are not cash receipts.',
+            'Illustrative units do not establish Manny’s real property holdings.',
+            'Existing accounting history is unchanged; no simulation is posted to a ledger.'],
+        'allocation_balanced':sum(a['units'] for a in model['participation']['allocations'])==model['inputs']['total_units'],
+        'ledger_postings':0,'payments_authorized':False,'tax_treatment_determined':False}
+
+
 def _amount(value, signed=False):
     if isinstance(value,bool) or len(str(value))>40: raise ValueError('invalid amount')
     try: amount=Decimal(str(value))

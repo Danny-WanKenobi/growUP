@@ -7561,3 +7561,30 @@ send claims under DEMO_MODE. Greeting/FAQ matching ignores client signatures for
 classification while preserving the complete original message. A corrected draft
 appended version 2 and preserved the original review history. Existing demo drafts
 are not automatically released by a later switch to live delivery.
+# Demo: two conversion-funding choices
+
+The private `/wondrue/demo-tour` viewer includes **Simeon: conversion options**
+(typed command: `show conversion options`). It uses the already-retained,
+custody-checked synthetic Hudson Lantern dossier in `growup_handoff_demo`.
+No operational database fallback or source-report rewrite is permitted.
+
+This additional fictional assumption set compares owner-funded consulting
+with tokenized **project participation**, not ownership of a building deed.
+It is separate from retained Michael underwriting: an assumed $200,000
+project, $15,000 proposed consulting fee and $25,000 reserve; illustrative
+participation allocation is 30% owner, 20% Grow Up and 50% potential outside
+participants. At an invented $50 per unit, full subscription of 5,000 units
+would yield $250,000, leaving $200,000 after a $25,000 offering allowance and
+$25,000 reserve. Partial subscription leaves an explicit funding gap.
+These numbers are demonstration assumptions, not valuations or forecasts.
+
+Python computes all financial cases. Simeon supplies consultative wording,
+Theresia an unsigned conditional proposal and Elmer accounting distinctions.
+No tokens, actual holdings, funding, liquidity, profitability or successful
+owner rescue are established. There is no wallet, issuance, investor intake,
+fundraising, signing, email delivery or ledger posting in this feature.
+Original reports and custody history remain unchanged. Real tokenization
+and offering operations remain deferred.
+
+Focused checks: `python -m pytest tests/test_conversion_demo.py tests/test_demo_tour.py -q -p no:cacheprovider`;
+`node --check app/wondrue_assets/demo-tour.js`.

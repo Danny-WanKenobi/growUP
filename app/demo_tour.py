@@ -37,6 +37,7 @@ def inspect_in_transaction(conn):
     assert_database(conn);anchor=demo._get(conn,run_key(seed_cases()[0]['id']))
     record=read(conn,anchor.run_id,'showcase-tour-manifest')
     if record is None:raise WorkflowError('Prepare the isolated demo-tour package first; no operational fallback is permitted')
+    conversion_options=None
     for item in record.payload['cases']:
         run=demo._get(conn,item['run_key']);row=get_record_in_transaction(conn,run.run_id,'dossier_version','main')
         if row is None or row.digest!=item['digest'] or row.digest!=digest_payload({k:v for k,v in row.payload.items() if k!='digest'}):raise WorkflowError('A tour source changed; preserve it and rebuild the reviewed package')
@@ -45,9 +46,13 @@ def inspect_in_transaction(conn):
         did=dossier_id_for_property(item['property_id'])
         if verify_chain_in_transaction(conn,did)!=item['verified_receipts'] or (current_custody_in_transaction(conn,did) or {}).get('holder','gabriel')!=item['holder']:
             raise WorkflowError('Tour custody changed; inspect the retained chain before recording')
+        if item.get('scenario_id')=='hudson-sky':
+            from app.conversion_demo import build
+            conversion_options=build(row.payload)
     from app.demo_knowledge import library
     return demo.marked({'package_id':package_id(),'database':'growup_handoff_demo','chapters':[{'title':title,'text':text} for title,text in CHAPTERS],
         'cases':record.payload['cases'],'program':program(),'knowledge':library(),'manifest_digest':record.digest,
+        'conversion_options':conversion_options,
         'voice_scope':'Local browser voices preferred. Microphone requires a user gesture; optional browser recognition may transmit audio to its provider. No paid speech adapter.',
         'provider_calls':0,'operational_writes':0,'external_actions':0})
 

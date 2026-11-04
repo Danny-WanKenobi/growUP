@@ -6,6 +6,19 @@ from urllib.parse import urlsplit
 from app.workflow import digest_payload
 
 
+def conversion_demo_brief(model):
+    from app.conversion_demo import validate
+    validate(model)
+    return {'agent':'simeon','source_model_digest':model['digest'],'mode':'demo_only',
+        'opening':'If you can fund the conversion, we can explore a consulting-only role. If available cash is the obstacle, we can illustrate a separately structured project with other participants. Which option better fits your goals?',
+        'owner_funded':'You would fund the project and agree our consulting scope and fees. No ownership transfer is proposed in this example.',
+        'participation':'This fictional example allocates project participation units among the owner, Grow Up and potential outside participants. Proposed project interests are different from the building deed. Funding and liquidity are not assured.',
+        'funding_objection':'We can examine smaller phased work or a hypothetical participation structure. We cannot promise that investors will fund it or that a property will be rescued.',
+        'owner_control_objection':'We should establish exactly which rights you would retain or contribute before considering any allocation.',
+        'questions':['Which space could be considered, subject to consent?','What budget can you actually support?','What control and risk limits matter to you?'],
+        'reply_only':True,'commitment_made':False,'real_actions_enabled':False}
+
+
 def assess(property_id, supplied, reports):
     missing, exceptions = [], []
     def entry(name):
