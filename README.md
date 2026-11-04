@@ -5502,3 +5502,68 @@ interruption after tracking snapshot creation and concurrent identical updates.
 Real site observation, independent inspection authentication, live progress
 feeds, change approval/application and actual construction remain deferred.
 Resend and agent-to-human communications remain deferred and inactive.
+
+
+#### Solomon project costs → Elmer accounting intake
+
+`app/agents/elmer.py` now builds a preliminary property-bound cost assessment;
+`app/elmer_intake.py` connects a held Solomon dossier to that assessment through
+canonical custody. This is an explicit bounded intake operation, not a new
+scheduler or a coordinator-route rewrite. A complete report remains held with
+Elmer for accounting review; missing evidence returns the report-bearing dossier
+to Solomon. Nothing advances to Yoseph or authorizes purchasing, payment, tax
+filing or construction. Existing reports and Solomon's project log are preserved.
+
+Four distinct USD buckets are retained: baseline estimate line items, pending
+unapplied changes, reported commitments and reported incurred expenses. Pending
+changes are reconciled against the retained Solomon report/project digests and
+never become commitments or expenses automatically. Linked expenses reduce the
+reported unexpensed commitment balance; commitment totals and expense totals
+must not be added as independent spending. Excess expenses/commitments and
+proposals above the supplied planning limit create owner-review exceptions.
+These are preliminary supplied records, not verified payments, complete books,
+bank reconciliation, legally payable liabilities or calculated tax obligations.
+
+The existing `specialist_inputs.elmer` wrappers now require property-bound values
+and evidence references: `accounting_period` with ISO `start`/`end`,
+`entity_and_tax_jurisdiction` with `entity_name`/`jurisdiction`, and `transactions`
+with `coverage` (`reported_records` or `none_reported`) and up to 200 `entries`.
+Each entry has a unique `id`, `kind` (`commitment` or `expense`), positive finite
+`amount_usd` with at most two decimals, `currency=USD`, ISO `occurred_on` within
+the period, and an `evidence_ref`. An expense may name a retained commitment via
+`commitment_id`. Missing links, duplicate IDs, invalid money, mixed currency and
+out-of-period entries refuse transaction totals. Missing records yield unknown
+amounts. Explicit `none_reported` plus an empty list means zero **reported**
+records, not independently established zero spending. No payment event is
+invented from an invoice or expense. Entity/jurisdiction inputs do not establish
+ownership, legal status, tax treatment or tax liability.
+
+Wondrue `preview_elmer_intake` is read-only and takes `run_id`/`dossier_key`.
+`prepare_elmer_intake` additionally takes a unique `operation_id` and the
+`expected_digest` returned by preview. Both target the stored real pipeline;
+preparation requires Ask/Full mode with live inference disabled. Ask approval is
+operator-bound. The operation locks the canonical dossier and atomically issues
+the Solomon → Elmer receipt, appends the Elmer report/version/snapshot, creates
+owner tasks and records its idempotency result. Missing inputs also issue the
+Elmer → Solomon return receipt. Same-operation/same-principal retries replay;
+conflicting reuse or changed evidence refuses. The existing emergency stop blocks
+new intakes. Interrupted transactions roll back receipts, reports and snapshots.
+An existing Elmer report requires explicit assessment reconciliation rather than
+silent overwrite. This milestone does not implement that later correction flow.
+
+Example intent overrides (replace placeholders from a stored preview):
+
+```json
+{"intent":"preview_elmer_intake","args":{"run_id":"REPLACE_WITH_STORED_RUN_UUID","dossier_key":"main"}}
+{"intent":"prepare_elmer_intake","args":{"run_id":"REPLACE_WITH_STORED_RUN_UUID","dossier_key":"main","operation_id":"accounting-intake-1","expected_digest":"REPLACE_WITH_PREVIEW_SOURCE_DOSSIER_DIGEST"}}
+```
+
+Synthetic fixture contract is now `handoff-fixtures-9`, with an explicitly empty
+reported accounting period; versions 1–8 remain inspectable without advancing.
+Synthetic inputs and assessments stay labeled. Focused tests cover cost-bucket
+arithmetic, partial linked expenses, unknown/empty distinctions, invalid entries,
+canonical forward/return, actor-bound approvals and replay. The Ubuntu Solomon
+integration case also verifies interruption after accounting snapshot creation
+and concurrent intake retries. No schema migration, external service, Resend
+activation, bank feed or paid provider request is added. Communications and
+actual financial transactions remain inactive.

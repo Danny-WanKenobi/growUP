@@ -163,6 +163,8 @@ INTENTS = frozenset(
         "preview_agent_report",
         "coordinate_dossier",
         "record_solomon_project",
+        "prepare_elmer_intake",
+        "preview_elmer_intake",
         "inspect_solomon_project",
         "inspect_owner_queue",
         "inspect_lead_metrics",

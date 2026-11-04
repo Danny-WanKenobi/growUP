@@ -136,6 +136,17 @@ def build_report(agent, payload):
         result["status"] = "needs_evidence" if missing else "prepared_not_approved"
         result["next_steps"] = ["Obtain or resolve "+name for name in missing]
         result["next_steps"].append("Resolve closing exceptions through the existing owner queue; no signing or closing authority is granted.")
+    if agent == "elmer":
+        from app.agents.elmer import assess
+        result["accounting_assessment"]=assess(payload["property_id"],dossier)
+        if payload.get("synthetic") is True: result["accounting_assessment"]["classification"]="synthetic"
+        for gap in result["accounting_assessment"]["missing"]:
+            if gap not in missing: missing.append(gap)
+        result["owner_review_requests"].extend({"requirement":gap,"reason":gap,"status":"pending",
+            "authority":"human_owner","grants_permission":False} for gap in
+            result["accounting_assessment"]["missing"]+result["accounting_assessment"]["exceptions"])
+        result["status"]="needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"]=["Resolve "+name for name in missing]
     if agent == "solomon":
         from app.agents.solomon import assess
         result["preconstruction_assessment"] = assess(payload["property_id"], supplied, reports)

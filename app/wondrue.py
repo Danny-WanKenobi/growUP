@@ -60,6 +60,7 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_communications",
         "inspect_resend_poll",
         "inspect_solomon_project",
+        "preview_elmer_intake",
         "inspect_handoff_demo",
         "preview_retained_assessment",
     }
@@ -70,6 +71,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "release_engineering",
         "coordinate_dossier",
         "record_solomon_project",
+        "prepare_elmer_intake",
         "import_campaign_tracking",
         "enroll_resend_message",
         "control_communications",
@@ -260,6 +262,11 @@ def preview_intent(
         return {"operations":["import one operator-reported campaign observation"],
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
             "effects":"append-only evidence event with correlation and replay checks; no outbound action",
+            "cost_bounds":{"provider_calls":0,"outreach":0}}
+    if intent == "prepare_elmer_intake":
+        return {"operations":["one canonical Solomon-to-Elmer accounting intake"],
+            "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
+            "effects":"append report and snapshot; hold Elmer review or return missing evidence to Solomon; no payments",
             "cost_bounds":{"provider_calls":0,"outreach":0}}
     if intent == "record_solomon_project":
         _solomon_event(args)
@@ -940,6 +947,14 @@ def _execute_real(
             package_entry=args.get('package_entry'),provider=args.get('provider'),provider_event_id=args.get('provider_event_id'),
             message_id=args.get('message_id'),status=args.get('status'),occurred_at=args.get('occurred_at'),
             evidence_refs=[args.get('evidence_ref')],simulated=args.get('simulated',False))
+    if intent in ("prepare_elmer_intake", "preview_elmer_intake"):
+        from app import elmer_intake
+        inputs={"run_id":args.get("run_id"),"dossier_key":str(args.get("dossier_key") or "main")}
+        if intent=="preview_elmer_intake":
+            if conn is None: raise WondrueError("accounting preview requires database connection")
+            return elmer_intake.preview_in_transaction(conn,**inputs)
+        return elmer_intake.prepare_audited(principal=str(capability_ctx.get("principal") or ""),**inputs,
+            operation_id=args.get("operation_id"),expected_digest=args.get("expected_digest"))
     if intent in ("record_solomon_project", "inspect_solomon_project"):
         from app import solomon_project
         inputs={"run_id":args.get("run_id"),"dossier_key":str(args.get("dossier_key") or "main")}
@@ -1374,12 +1389,12 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
-    if intent in ("coordinate_dossier", "record_solomon_project", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
+    if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
         if target != "real" or use_live:
             raise WondrueError("internal tracking/coordinator requires real target with live inference disabled")
         args["_coordinator_principal"] = principal
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
-                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project"):
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project","preview_elmer_intake"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1436,7 +1451,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent in ("coordinate_dossier", "record_solomon_project", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")

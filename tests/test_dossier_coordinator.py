@@ -221,10 +221,18 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 for report in reports.values():
                     report.pop('digest'); report['digest']=digest_payload(report)
                 if holder=='solomon':
+                    reports['michael']={'agent':'michael','property_id':str(prop['id']),'scope':'Disposable accounting integration fixture'}
+                    reports['michael']['digest']=digest_payload(reports['michael'])
                     supplied['approved_design']['value']['engineering_report_digest']=reports['onesimus']['digest']
                     if gap: supplied.pop('approved_design')
                 payload=copy.deepcopy(record.payload)
                 payload['dossier']['specialist_inputs']={holder:supplied}
+                if holder=='solomon':
+                    def wrapper(value): return {'value':{'property_id':str(prop['id']),**value},'evidence_refs':['pg-test:accounting']}
+                    payload['dossier']['specialist_inputs']['elmer']={
+                        'accounting_period':wrapper({'start':'2026-11-01','end':'2026-11-30'}),
+                        'transactions':wrapper({'coverage':'none_reported','entries':[]}),
+                        'entity_and_tax_jurisdiction':wrapper({'entity_name':'Disposable PG entity','jurisdiction':'Texas fixture only'})}
                 payload['dossier']['reports']=reports
                 payload={k:v for k,v in payload.items() if k!='digest'}
                 payload['digest']=digest_payload(payload)
@@ -295,6 +303,32 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 assert latest_version_in_transaction(conn,did).version==3
                 assert verify_chain_in_transaction(conn,did)==initial_receipts
                 assert len(__import__('app.workflow_db',fromlist=['list_records_in_transaction']).list_records_in_transaction(conn,rid,project.KIND))==1
+            from app import elmer_intake
+            with get_connection() as conn:
+                expected=get_record_in_transaction(conn,rid,'dossier_version',key).digest
+            accounting_inputs={'principal':'pg-test','run_id':rid,'dossier_key':key,
+                'operation_id':'pg-accounting-one','expected_digest':expected}
+            original_report=dossier_reports.append_agent_report_in_transaction
+            def interrupted_accounting(*args,**kwargs):
+                original_report(*args,**kwargs)
+                raise KeyboardInterrupt('interrupted after accounting report and snapshot')
+            monkeypatch.setattr(dossier_reports,'append_agent_report_in_transaction',interrupted_accounting)
+            with pytest.raises(KeyboardInterrupt): elmer_intake.prepare_audited(**accounting_inputs)
+            monkeypatch.setattr(dossier_reports,'append_agent_report_in_transaction',original_report)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==3
+                assert verify_chain_in_transaction(conn,did)==initial_receipts
+            barrier=Barrier(2)
+            def account(_):
+                barrier.wait(timeout=10)
+                return elmer_intake.prepare_audited(**accounting_inputs)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                intakes=list(pool.map(account,range(2)))
+            assert sum(bool(r.get('replayed')) for r in intakes)==1
+            assert all(r['status']=='elmer_accounting_review' for r in intakes)
+            with get_connection() as conn:
+                assert latest_version_in_transaction(conn,did).version==4
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+1
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 
