@@ -32,6 +32,8 @@ def test_targeted_reassessment_preserves_original_and_returns_linked_package(mon
         dossier=source(conn,rid).payload['dossier']
         assert dossier['reports']==original and dossier['agent_reassessments'][-1]['agent']=='nicole'
         assert dossier['owner_briefs'][-1]['source_dossier_digest']
+        assert dossier['owner_briefs'][-1]['rework_history'][-1]['status']==result['status']
+        assert dossier['owner_briefs'][-1]['rework_history'][-1]['report_digest']==result['report_digest']
         before=deepcopy(conn._db)
         assert owner_work.mutate_in_transaction(conn,**args)['replayed'] and before==conn._db
         assert any(t['review_status']=='needs_revalidation' for t in scoped_tasks(conn,rid))

@@ -96,6 +96,7 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
     statuses={}
     for task in queue['tasks']: statuses[task['review_status']]=statuses.get(task['review_status'],0)+1
     unresolved=[r['record_key'] for r in queue['tasks'] if r['review_status'] not in ('closed_by_owner','closed_as_duplicate')]
+    from app.owner_work import rework_views_in_transaction
     brief={'version':'manny-owner-brief-1','run_id':str(run_id),'dossier_key':dossier_key,'property_id':source.payload['property_id'],'source_dossier_digest':source.digest,
         'evidence_context_digest':context,'overview':overview,'exceptions':queue['tasks'],'unscoped_task_keys':queue['unscoped_task_keys'],
         'exception_counts':statuses,'unresolved_task_keys':unresolved,'advisory_threads':advisory,
@@ -103,7 +104,7 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
             'last_transfer_receipt_id':holder.get('receipt_id') if holder else None,
             'integrity_scope':'Canonical snapshot/receipt integrity only; not verification of property claims.',
             'latest_version_digest':latest.digest,'scope':'source dossier before this package is appended'},
-        'rework_history':deepcopy(source.payload['dossier'].get('owner_rework') or []),
+        'rework_history':rework_views_in_transaction(conn,run_id,source.payload['dossier']),
         'vault_entries':deepcopy(source.payload['dossier'].get('owner_vault_entries') or []),
         'decision_package_status':'owner_review_required','business_approval':False,'external_actions':0,
         'synthetic':source.payload.get('synthetic') is True,

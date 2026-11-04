@@ -95,9 +95,10 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
                 assessment_inputs=dossier.get('assessment_inputs'),specialist_inputs=(dossier.get('specialist_inputs') or {}).get(target)))
             stored,version=append_reassessment_in_transaction(conn,run_id,dossier_key,material)
             issue_receipt_in_transaction(conn,dossier_id=did,version=version.version,kind='forward',from_agent=target,to_agent='manny',issued_by=principal,note='Linked reassessment returned for owner review; no permission granted')
-            manny_review.prepare_on_arrival_in_transaction(conn,principal=principal,run_id=run_id,dossier_key=dossier_key,assessment_digest=report['digest'],dossier_digest=stored.digest)
         job={**job,'status':'reassessed' if eligible else 'needs_evidence','report_digest':report['digest'],'reasons':reasons}
         put_record_in_transaction(conn,run_id,kind='research_artifact',record_key=row.record_key,version=row.version+1,payload=job,digest=digest_payload(job))
+        current,_=_load(conn,run_id,dossier_key,'manny')
+        manny_review.prepare_on_arrival_in_transaction(conn,principal=principal,run_id=run_id,dossier_key=dossier_key,assessment_digest=report['digest'],dossier_digest=current.digest)
         result=dict(job_key=row.record_key,status=job['status'],current_holder='manny',report_digest=report['digest'],dossier_digest=_load(conn,run_id,dossier_key)[0].digest)
     else:
         if inputs: raise WorkflowError('vault accepts no fact overrides')
@@ -157,6 +158,20 @@ def read_vault_in_transaction(conn,*,run_id,dossier_key):
         with conn.cursor() as cur:
             cur.execute('SELECT * FROM custody_snapshots_archive WHERE dossier_id=%(dossier)s AND version=%(version)s',dict(dossier=did,version=entry['custody_version']))
             row=cur.fetchone()
-        if not row or str(row['snapshot_id'])!=entry['snapshot_id'] or row['digest']!=entry['snapshot_digest'] or snapshot_digest(row['payload'])!=row['digest']: raise WorkflowError('vault copy integrity failure')
+        if not row or str(row['snapshot_id'])!=entry['snapshot_id'] or row['digest']!=entry['snapshot_digest'] or snapshot_digest(row['payload'])!=row['digest'] or row['payload'].get('dossier_digest')!=entry['source_dossier_digest']: raise WorkflowError('vault copy integrity failure')
         result.append(dict(entry=deepcopy(entry),payload=deepcopy(row['payload']),current_dossier_digest=source.digest))
     return dict(entries=result,records_written=0,external_actions=0)
+
+
+def rework_views_in_transaction(conn,run_id,dossier):
+    """Project the current linked outcome beside the immutable request manifest."""
+    views=[]
+    assessments=[e.get('report') or {} for e in dossier.get('agent_reassessments') or []]+list(dossier.get('elmer_assessments') or [])
+    digests={r.get('digest') for r in assessments}
+    for manifest in dossier.get('owner_rework') or []:
+        job=_job(conn,run_id,manifest['job_key']).payload
+        if manifest.get('digest')!=digest_payload({k:v for k,v in manifest.items() if k!='digest'}) or any(job.get(k)!=v for k,v in manifest.items() if k!='status'): raise WorkflowError('rework outcome canonical binding failure')
+        if job['status'] not in ('dispatched','reassessed','needs_evidence'): raise WorkflowError('unknown rework state')
+        if job['status']!='dispatched' and job.get('report_digest') not in digests: raise WorkflowError('rework outcome lacks retained assessment')
+        views.append(dict(request=deepcopy(manifest),status=job['status'],report_digest=job.get('report_digest'),reasons=deepcopy(job.get('reasons') or [])))
+    return views
