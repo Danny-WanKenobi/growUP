@@ -11,8 +11,9 @@ from app.agents.stages import _load, build_report
 from app.custody_db import current_custody_in_transaction, issue_receipt_in_transaction
 from app.dossier_reports import append_agent_report_in_transaction
 
-ROUTE = ('gabriel', 'raphael', 'onesimus', 'michael', 'uriel', 'priscilla', 'nicole', 'theresia_keys', 'simeon')
-VERSION = 'dossier-coordinator-3'
+ROUTE = ('gabriel', 'raphael', 'onesimus', 'michael', 'uriel', 'priscilla', 'nicole', 'theresia_keys', 'simeon', 'solomon')
+VERSION = 'dossier-coordinator-4'
+THIRD_VERSION = 'dossier-coordinator-3'
 PREVIOUS_VERSION = 'dossier-coordinator-2'
 LEGACY_VERSION = 'dossier-coordinator-1'
 
@@ -120,7 +121,7 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         raise WorkflowError('coordinator checkpoint integrity failure')
     state = deepcopy(record.payload) if record else {'version': VERSION, 'sequence': 0, 'status': 'running',
         'principal': principal, 'dossier_id': str(did), 'dossier_key': dossier_key}
-    if state['principal'] != principal or state['dossier_id'] != str(did) or state['version'] not in (LEGACY_VERSION, PREVIOUS_VERSION, VERSION):
+    if state['principal'] != principal or state['dossier_id'] != str(did) or state['version'] not in (LEGACY_VERSION, PREVIOUS_VERSION, THIRD_VERSION, VERSION):
         raise WorkflowError('coordinator identity/configuration mismatch')
     if expected_sequence < state['sequence']:
         return {**state, 'replayed': True}
@@ -128,9 +129,9 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         raise WorkflowError('sequence ahead of coordinator checkpoint')
     holder = current_custody_in_transaction(conn, did)
     agent = holder['holder'] if holder else 'gabriel'
-    if state['version'] in (LEGACY_VERSION, PREVIOUS_VERSION) and action != 'stop':
-        if (action != 'resume' or state['status'] not in ('running', 'stopped', 'delivered_to_nicole', 'delivered_to_theresia_keys')
-                or agent not in ROUTE[1:-1] or state.get('dossier_digest', source.digest) != source.digest):
+    if state['version'] in (LEGACY_VERSION, PREVIOUS_VERSION, THIRD_VERSION) and action != 'stop':
+        if (action != 'resume' or state['status'] not in ('running', 'stopped', 'delivered_to_nicole', 'delivered_to_theresia_keys', 'delivered_to_simeon')
+                or agent not in ROUTE[1:] or state.get('dossier_digest', source.digest) != source.digest):
             raise WorkflowError('legacy coordinator requires explicit resume from its unchanged held dossier')
         # Append the new route checkpoint only on explicit operator resume. The
         # existing checkpoint, reports and custody history are never rewritten.
@@ -145,11 +146,9 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
         return {**state, 'replayed': True}
     elif os.getenv('DOSSIER_COORDINATOR_EMERGENCY_STOP', '0') == '1':
         state['status'] = 'stopped'
-    elif agent == 'simeon':
-        state['status'] = 'delivered_to_simeon'
     else:
-        if agent not in ROUTE[1:-1]:
-            raise WorkflowError('coordinator requires current custody from Raphael through Theresia Keys')
+        if agent not in ROUTE[1:]:
+            raise WorkflowError('coordinator requires current custody from Raphael through Solomon')
         source, _ = _load(conn, run_id, dossier_key, agent)
         reports = source.payload.get('dossier', {}).get('reports') or {}
         if agent in reports:
@@ -192,14 +191,22 @@ def step_in_transaction(conn, *, run_id, dossier_key, principal, expected_sequen
                         'source_dossier_digest':source.digest,'report_digest':report['digest'],'grants_permission':False}
                     put_record_in_transaction(conn,run_id,kind='owner_review_task',
                         record_key='owner:'+digest_payload(task),version=1,payload=task,digest=digest_payload(task))
-                target = ROUTE[ROUTE.index(agent)+1] if eligible else ('michael' if agent == 'priscilla' else ROUTE[ROUTE.index(agent)-1])
                 reason = '; '.join(str(r) for r in reasons)[:450] or 'preliminary stage requirements satisfied'
-                receipt = issue_receipt_in_transaction(conn, dossier_id=did, version=version.version,
-                    kind='forward' if eligible else 'return', from_agent=agent, to_agent=target,
-                    issued_by=principal, note=reason)
-                state.update(status=('delivered_to_simeon' if target == 'simeon' else 'running') if eligible else 'returned',
-                    agent=agent, current_holder=target, reason=reason, receipt_id=str(receipt.receipt_id),
-                    dossier_digest=stored.digest, custody_version=version.version)
+                if agent == 'solomon' and eligible:
+                    # Hold the enhanced, snapshotted dossier for planning review.
+                    # Do not fabricate closing, release to construction, or advance to Elmer.
+                    state.update(status='solomon_planning_review',agent=agent,current_holder=agent,
+                        reason='Preconstruction planning only; closing and construction authority remain unresolved.',
+                        dossier_digest=stored.digest,custody_version=version.version)
+                else:
+                    target = ROUTE[ROUTE.index(agent)+1] if eligible else ('michael' if agent == 'priscilla' else ROUTE[ROUTE.index(agent)-1])
+                    if agent == 'simeon' and eligible:
+                        reason='Conditional preconstruction-planning handoff only; deal is not closed and construction is not authorized.'
+                    receipt = issue_receipt_in_transaction(conn, dossier_id=did, version=version.version,
+                        kind='forward' if eligible else 'return', from_agent=agent, to_agent=target,
+                        issued_by=principal, note=reason)
+                    state.update(status='running' if eligible else 'returned',agent=agent,current_holder=target,
+                        reason=reason,receipt_id=str(receipt.receipt_id),dossier_digest=stored.digest,custody_version=version.version)
     state['sequence'] += 1
     put_record_in_transaction(conn, run_id, kind='research_artifact', record_key=key,
         version=record.version+1 if record else 1, payload=state, digest=digest_payload(state))

@@ -136,6 +136,21 @@ def build_report(agent, payload):
         result["status"] = "needs_evidence" if missing else "prepared_not_approved"
         result["next_steps"] = ["Obtain or resolve "+name for name in missing]
         result["next_steps"].append("Resolve closing exceptions through the existing owner queue; no signing or closing authority is granted.")
+    if agent == "solomon":
+        from app.agents.solomon import assess
+        result["preconstruction_assessment"] = assess(payload["property_id"], supplied, reports)
+        for gap in result["preconstruction_assessment"]["missing"]:
+            if gap not in missing:
+                missing.append(gap)
+                result["owner_review_requests"].append({"requirement":gap,"reason":"Preconstruction evidence is unresolved.",
+                    "route":"simeon","status":"pending","authority":"human_owner","grants_permission":False})
+        result["owner_review_requests"].extend(result["preconstruction_assessment"]["owner_review_requests"])
+        result["status"] = "needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"] = ["Obtain or resolve "+name for name in missing]
+        result["next_steps"].append("Retain for planning review; no mobilization, procurement or construction is authorized.")
+        if payload.get("synthetic") is True and payload.get("domain")=="synthetic_handoff_demo":
+            from app.solomon_simulation import build_vendor_round
+            result["vendor_simulation"] = build_vendor_round(payload)
     result["digest"] = digest_payload(result)
     return result
 

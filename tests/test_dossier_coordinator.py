@@ -84,12 +84,22 @@ def test_whole_route_and_upstream_gap(monkeypatch):
         dossier = get_record_in_transaction(conn,run.run_id,'dossier_version','main').payload['dossier']
         assert dossier['reports']['nicole']['regulatory_assessment']['regulatory_clearance'] is False
         result = coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=6)
-        assert result['status']=='delivered_to_simeon' and result['current_holder']=='simeon'
+        assert result['status']=='running' and result['current_holder']=='simeon'
         assert len(db['receipts'])==8
         dossier = get_record_in_transaction(conn,run.run_id,'dossier_version','main').payload['dossier']
         assessment=dossier['reports']['theresia_keys']['underwriting_assessment']
         assert assessment['status']=='conditional_preparation_only' and not assessment['contract_executable']
         assert assessment['contract_preparation']['conditions_precedent']
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7)
+        assert result['current_holder']=='solomon' and result['status']=='running'
+        assert len(db['receipts'])==9
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=8)
+        assert result['current_holder']=='solomon' and result['status']=='solomon_planning_review'
+        assert len(db['receipts'])==9
+        report=get_record_in_transaction(conn,rid,'dossier_version','main').payload['dossier']['reports']['solomon']
+        assert not report['preconstruction_assessment']['construction_authorized']
+        assert report['vendor_simulation']['external_deliveries']==0
+
 
 
 
@@ -140,8 +150,8 @@ def test_coordinator_approval_is_bound_to_operator(monkeypatch):
             intent_override=intent, approval_token=preview['approval_token'])
 
 @pytest.mark.skipif(__import__('os').getenv('GROWUP_PG_INTEGRATION') != '1', reason='PostgreSQL integration explicitly disabled')
-@pytest.mark.parametrize("holder", ["raphael", "nicole", "theresia_keys"] )
-def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder):
+@pytest.mark.parametrize("holder,gap", [("raphael",True),("nicole",False),("theresia_keys",False),("simeon",False),("solomon",True),("solomon",False)])
+def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder, gap):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     from app.properties_db import create_property, get_connection
@@ -193,6 +203,33 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 payload['digest']=digest_payload(payload)
                 record=put_record_in_transaction(conn,rid,kind='dossier_version',record_key=key,
                     version=record.version+1,payload=payload,digest=payload['digest'])
+            if holder in ('simeon','solomon'):
+                if holder=='simeon':
+                    from tests.test_simeon import inputs
+                else:
+                    from tests.test_solomon import inputs
+                fixture_property,supplied,reports=inputs()
+                def rebind(value):
+                    if isinstance(value,dict): return {k:rebind(v) for k,v in value.items()}
+                    if isinstance(value,list): return [rebind(v) for v in value]
+                    return str(prop['id']) if value==fixture_property else value
+                supplied,reports=rebind(supplied),rebind(reports)
+                if holder=='simeon':
+                    terms=reports['theresia_keys']['underwriting_assessment']['contract_preparation']['terms']
+                    for name in ('counterparty_consent','approved_terms'):
+                        supplied[name]['value']['terms_digest']=digest_payload(terms)
+                for report in reports.values():
+                    report.pop('digest'); report['digest']=digest_payload(report)
+                if holder=='solomon':
+                    supplied['approved_design']['value']['engineering_report_digest']=reports['onesimus']['digest']
+                    if gap: supplied.pop('approved_design')
+                payload=copy.deepcopy(record.payload)
+                payload['dossier']['specialist_inputs']={holder:supplied}
+                payload['dossier']['reports']=reports
+                payload={k:v for k,v in payload.items() if k!='digest'}
+                payload['digest']=digest_payload(payload)
+                record=put_record_in_transaction(conn,rid,kind='dossier_version',record_key=key,
+                    version=record.version+1,payload=payload,digest=payload['digest'])
             version = create_version_in_transaction(conn, property_id=prop['id'], created_by='gabriel',
                 payload={'dossier':record.payload['dossier'],'dossier_digest':record.digest})
             did = version.dossier_id
@@ -224,10 +261,11 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _:attempt(),range(2)))
         assert sum(bool(r.get('replayed')) for r in results) == 1
-        assert all(r['status']=={'raphael':'returned','nicole':'running','theresia_keys':'delivered_to_simeon'}[holder] and r['sequence']==1 for r in results)
+        expected='returned' if holder=='raphael' or (holder=='solomon' and gap) else 'solomon_planning_review' if holder=='solomon' else 'running'
+        assert all(r['status']==expected and r['sequence']==1 for r in results)
         with get_connection() as conn:
             assert latest_version_in_transaction(conn,did).version == 2
-            assert verify_chain_in_transaction(conn,did) == initial_receipts+1
+            assert verify_chain_in_transaction(conn,did) == initial_receipts+(0 if holder=='solomon' and not gap else 1)
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 
@@ -317,3 +355,35 @@ def test_version_two_theresia_delivery_needs_resume_without_moving_custody(monke
         before=copy.deepcopy(conn._db)
         assert coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7)['replayed']
         assert conn._db==before
+
+
+def test_solomon_evidence_gap_returns_to_simeon_with_snapshot(monkeypatch):
+    from app.workflow_db import get_record_in_transaction,list_records_in_transaction
+    conn,rid=specialist_seed(monkeypatch,fail=True,agent='solomon')
+    with scope(conn,KEY):
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=0)
+        assert result['status']=='returned' and result['current_holder']=='simeon'
+        report=get_record_in_transaction(conn,rid,'dossier_version','main').payload['dossier']['reports']['solomon']
+        assert report['status']=='needs_evidence' and not report['preconstruction_assessment']['construction_authorized']
+        assert conn._db['receipts'][-1]['snapshot_id']
+        assert list_records_in_transaction(conn,rid,'owner_review_task')
+
+
+def test_version_three_simeon_requires_explicit_resume_before_planning(monkeypatch):
+    from app.workflow import digest_payload
+    from app.workflow_db import get_record_in_transaction,put_record_in_transaction
+    from app.custody import dossier_id_for_property
+    conn,rid=specialist_seed(monkeypatch,agent='simeon')
+    with scope(conn,KEY):
+        source=get_record_in_transaction(conn,rid,'dossier_version','main')
+        legacy={'version':coordinator.THIRD_VERSION,'sequence':7,'status':'delivered_to_simeon',
+            'principal':'owner','dossier_id':str(dossier_id_for_property(source.payload['property_id'])),
+            'dossier_key':'main','dossier_digest':source.digest}
+        put_record_in_transaction(conn,rid,kind='research_artifact',record_key='coordinator:main',version=1,payload=legacy,digest=digest_payload(legacy))
+        with pytest.raises(WorkflowError,match='explicit resume'):
+            coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7)
+        count=len(conn._db['receipts'])
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=7,action='resume')
+        assert len(conn._db['receipts'])==count and result['version']==coordinator.VERSION
+        result=coordinator.step_in_transaction(conn,run_id=rid,dossier_key='main',principal='owner',expected_sequence=8)
+        assert result['current_holder']=='solomon' and result['status']=='running'

@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = ("gabriel", "raphael", "onesimus", "michael", *AGENT_SPECS)
-FIXTURE_VERSION = "handoff-fixtures-7"
+FIXTURE_VERSION = "handoff-fixtures-8"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -132,6 +132,13 @@ def _fixture(run_key, fail_at):
         'status':'reviewed','record_date':'2026-11-03'}
     inputs['simeon']['signing_authority']['value'] = {'property_id':str(prop),
         'principal':'FICTIONAL owner','scope':'review_only','record_date':'2026-11-03'}
+    inputs['solomon']['approved_design']['value']={'property_id':str(prop),'scope':'preconstruction_planning',
+        'engineering_reference':'retained_onesimus_report'}
+    inputs['solomon']['permits']['value']={'property_id':str(prop),'status':'pending'}
+    inputs['solomon']['contractor_and_safety_plan']['value']={'property_id':str(prop),'coordinator':'FICTIONAL Solomon coordinator',
+        'site_access_plan':'FICTIONAL supervised planning only; no site entry','review_status':'pending'}
+    inputs['solomon']['construction_budget']['value']={'property_id':str(prop),'currency':'USD','limit_usd':'100000',
+        'line_items':[{'phase':'survey','estimated_cost_usd':'1000'},{'phase':'design','estimated_cost_usd':'2000'}]}
     if fail_at in AGENT_SPECS and AGENT_SPECS[fail_at].required_inputs:
         inputs[fail_at].pop(AGENT_SPECS[fail_at].required_inputs[0])
     return sealed(marked({"version":1,"property_id":str(prop),"artifact_refs":[],

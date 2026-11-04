@@ -5153,7 +5153,7 @@ missing evidence, property/currency/report binding, weak cash flow, conditional
 scope, report sealing and existing GO/NO-GO custody scenarios.
 
 
-#### Current coordinator: execute Theresia and deliver to Simeon
+#### Previous coordinator checkpoint: Theresia to Simeon (superseded by version 4)
 
 Version `dossier-coordinator-3` now runs Theresia's existing shared assessment in
 the execution path. It appends the complete conditional report to the canonical
@@ -5240,7 +5240,7 @@ with the enhanced full dossier and immutable snapshot preserved by the canonical
 services. Read-only preview writes nothing. Source/authority adapters, actual
 closing channels and authenticated signatures remain deferred.
 
-The isolated synthetic handoff contract is now handoff-fixtures-7 with explicitly
+The previous isolated synthetic handoff contract was handoff-fixtures-7 with explicitly
 fictional, terms-bound consent and review-only authority. Older v1–v6 fixtures
 remain inspectable, without advancement under the new contract. Synthetic GO
 means the implemented intake checks passed, not that a deal can close.
@@ -5391,3 +5391,52 @@ validation and the secret-free configuration preview reject it. Keep credentials
 blank and provider access disabled until the actual receiving domain is supplied
 and the bounded provider test is separately authorized. No public callback or
 VPS deployment is needed to continue offline development.
+
+
+#### Current coordinator: Simeon to Solomon and evidence-gap return
+
+`dossier-coordinator-4` executes Simeon's conditional closing assessment and
+forwards eligible dossiers to Solomon for preconstruction planning. This is
+not a closed deal, construction permission or signing authority. Solomon's
+assessment appends a sealed report and immutable snapshot using the canonical
+transaction and custody services. Missing Solomon inputs return custody to
+Simeon with the needs-evidence report and owner-review tasks. A complete plan
+stays held by Solomon with status `solomon_planning_review`; it does not forward
+to Elmer, commission work or create an extra transfer receipt.
+
+Solomon requires property-bound design, permit-status, coordination/safety and
+USD budget records with source references, plus intact Onesimus, Nicole and
+Simeon reports. The design binds to the retained Onesimus report. Supplied
+permit claims remain unverified. Six dependent planning phases, explicit budget
+line items, uncertainty and owner-review conditions are retained. Construction,
+site safety, authenticated permits, deal closing and signing remain unauthorized.
+The existing five-step invocation bound, locking, atomic recovery and stale-step
+replay apply. Version 1/2/3 checkpoints require explicit same-principal resume
+against unchanged held evidence, including legacy `delivered_to_simeon` states.
+
+`app/solomon_simulation.py` adds an isolated synthetic procurement exercise to
+the existing handoff demonstration, not to real operational dossiers. Fixture
+contract `handoff-fixtures-8` includes explicit planning inputs; versions 1–7
+remain inspectable but cannot advance under the new contract. Seven illustrative
+profiles reference Agility Robotics, Apptronik, Boston Dynamics, Figure,
+Sanctuary AI, Tesla and Unitree official product/company pages. This is neither
+an exhaustive list nor a verified construction shortlist. Each package retains
+its source URL, distinct inquiry, dossier digest, conditional scope, report
+references and synthetic budget. All counter-proposals, prices, durations and
+rubric inputs are fictional, not actual company responses or capabilities.
+
+The deterministic ranking uses 40% cost, 20% schedule, 20% scope and 20%
+supervision, with vendor-ID tie-breaking and budget/safety-plan eligibility.
+No eligible bid means no selected vendor or final package. The selected package
+is explicitly unsigned, nonbinding and without legal effect. Simulated email,
+phone and chat events are labeled; no transport is active. The recipient
+`werenotrandom@protonmail.com` appears on **unsent simulation drafts only**.
+Resend activation and agent-to-human communications remain deferred. No provider
+access, email, signature, procurement or physical construction is performed.
+
+Existing handoff-demo inspection exposes these retained report fields; no new
+public callback, credentials or delivery configuration is required. Focused
+checks cover the planning gate, missing inputs, arithmetic, fictional ranking,
+real/synthetic isolation, forward/return custody and legacy resume. Ubuntu gate
+checks additionally cover interrupted and concurrent Simeon/Solomon transitions.
+Actual specialist approval and real vendor communications remain unproven.
