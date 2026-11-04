@@ -57,12 +57,39 @@ def inspect(environ=None):
     if not sender_ready: blockers.append("Set RESEND_SENDER to the verified sending address")
     if inbox and not inbox_ready: blockers.append("Correct the optional RESEND_INBOX_ID UUID")
     if not enabled: blockers.append("Tracking remains disabled")
+    poll_blockers=[]
+    for variable in ('COMMUNICATIONS_ROUTER_ENABLED','RESEND_POLL_ENABLED','RESEND_POLL_ACCESS_APPROVED'):
+        if env.get(variable,'0')!='1': poll_blockers.append(variable+' remains disabled')
+    if not env.get('RESEND_API_KEY','').startswith('re_'): poll_blockers.append('Install the private Resend API credential')
+    if not env.get('RESEND_POLL_AUTHORIZATION_ID'): poll_blockers.append('Set the separately approved authorization ID')
+    try:
+        if not 1<=int(env.get('RESEND_POLL_REQUEST_ALLOWANCE','0'))<=4: raise ValueError()
+    except ValueError: poll_blockers.append('Set a separately approved request allowance between 1 and 4')
+    from app.communications import instant
+    try:
+        expiry=env.get('RESEND_POLL_APPROVAL_EXPIRES_AT','')
+        if not expiry or not 0<(instant(expiry)-instant()).total_seconds()<=3600: raise ValueError()
+    except (ValueError,TypeError): poll_blockers.append('Set an explicit approval expiry within one hour')
+    if not receiving_ready: poll_blockers.append('Set the actual receiving domain')
+    if not poll_blockers:
+        from app.resend_poll import configuration
+        from app.workflow_db import WorkflowError
+        try: configuration(env)
+        except (WorkflowError,ValueError,TypeError): poll_blockers.append('Polling configuration fails runtime validation')
+
     return {"mode":"configuration preview only", "callback_url_configured":valid_url,
         "callback_path":CALLBACK_PATH, "signing_secret_configured":secret_ready,
         "receiving_domain_configured":receiving_ready, "sender_configured":sender_ready, "inbox_id_configured":inbox_ready,
         "tracking_enabled":enabled, "configuration_complete":not blockers, "blockers":blockers,
+        "webhook_configuration_complete":not blockers, "polling_configuration_complete":not poll_blockers, "polling_blockers":poll_blockers,
         "public_reachability_verified":False, "live_provider_compatibility_verified":False,
         "provider_calls":0, "database_writes":0,
+        "communications_router_enabled":env.get("COMMUNICATIONS_ROUTER_ENABLED","0")=="1",
+        "polling_enabled":env.get("RESEND_POLL_ENABLED","0")=="1",
+        "polling_access_approved":env.get("RESEND_POLL_ACCESS_APPROVED","0")=="1",
+        "poll_api_key_installed":bool(env.get("RESEND_API_KEY","")),
+        "poll_request_allowance_configured":env.get("RESEND_POLL_REQUEST_ALLOWANCE","0")!="0",
+        "poll_mode_requires_public_callback":False,
         "note":"Placeholder configuration permits local signed-fixture testing; public callbacks remain unavailable."}
 
 

@@ -5249,3 +5249,135 @@ Focused tests: `python -m pytest tests/test_simeon.py tests/test_agent_v1_contra
 terms/property/party binding, refusals, unknown/duplicate/missing consent, source
 and date errors, report tampering, forged approval/POA claims, immutable conditions,
 exception routes and shared report sealing, plus existing GO/NO-GO custody scenarios.
+
+
+## Durable inbound communications router and receive-only Resend polling
+
+Communications responsibilities are now explicit: Uriel prepares outbound
+campaigns and never owns inbound conversations; Simeon owns **inbound only**;
+Priscilla tracks outcomes and is a controlled inbound backup. Neither responder
+can initiate prospecting through this router. No delivery, closing/signing,
+phone/chat service, mail fulfillment or campaign scheduler is implemented here.
+Reply drafts require an actual retained inbound message and remain draft_only,
+review_required and send_enabled=false. They do not change closing authority,
+property verification, engagement/interest or dossier custody.
+
+`app.communications` uses the existing workflow-run/append-only record store and
+permanent audit transaction, linked to the existing Uriel package. No new DB
+schema or parallel dossier store is added. A transaction lock serializes each
+campaign conversation. Request IDs bind exact command material and actor; revision
+checks reject stale operations. Incoming email pauses campaign preparation;
+Stop is irreversible for that campaign, including against later inbound mail or
+Pause commands. Existing Uriel campaign suppression is inherited as stopped. Campaign controls are a durable policy for future sending code,
+not proof that a currently nonexistent mail sender was stopped. Delivery remains
+disabled even when campaign_status is active.
+
+Ownership starts with Simeon. A response lease lasts five minutes and carries a
+fencing epoch. Priscilla takeover requires no active lease plus unavailable
+Simeon (explicit 15-minute operator marker), an expired lease, or five minutes
+of unclaimed inbound waiting. New mail does not reset that initial waiting
+clock. Active work cannot be stolen. Old-owner/expired leases cannot produce
+drafts. Return-to-Simeon requires the current backup lease. Incoming-message
+changes or ownership changes mark earlier drafts stale. Original incoming text
+is immutable; a metadata-only observation may append a later authenticated
+plain-text enrichment without overwriting history. Message bodies are untrusted
+data; this code never executes them, fetches embedded links, renders HTML or
+retrieves attachments. It does not infer consent, identity or interest.
+
+Wondrue commands (real target, live model inference disabled):
+
+- inspect_communications: package_entry; read-only latest inbound, draft and
+  ownership/campaign state. Lease identifiers are omitted from this view.
+- control_communications: package_entry, action, request_id, expected_revision;
+  optional actor (`simeon` default or `priscilla`), lease_id and text. Actions:
+  initialize, pause, stop, resume_campaign, mark_simeon_unavailable, claim,
+  takeover, draft, release, return_to_simeon. Resume refuses stopped campaigns
+  or automatic marketing restart after an inbound response. Administrative
+  controls use the existing authenticated operator grant, not separate agent
+  credentials; actor is the role the operator directs, not a new identity proof.
+  Read-only refuses mutations; Ask approvals remain principal-bound.
+- inspect_resend_poll: authorization_id; read-only request usage, listing coverage
+  and unlinked metadata assigned to Simeon triage. No API credential is shown.
+
+Native verified Resend callbacks can route received events through this same
+router when COMMUNICATIONS_ROUTER_ENABLED=1. Polling uses the **same** enrollment,
+Priscilla tracking and conversation path; it does not label API observations as
+signed webhooks. Authentication is retained as resend_authenticated_api instead
+of resend_svix_hmac_sha256. Unique enrolled Reply-To aliases and expected sender
+checks still apply. Unmatched mail remains uncorrelated; it does not acquire a
+property, become a lead or create a response draft automatically.
+
+### Offline-first polling configuration and limits
+
+All defaults in .env.example remain disabled/zero/blank:
+COMMUNICATIONS_ROUTER_ENABLED, RESEND_POLL_ENABLED, RESEND_POLL_ACCESS_APPROVED,
+RESEND_POLL_REQUEST_ALLOWANCE, RESEND_API_KEY, RESEND_POLL_AUTHORIZATION_ID and
+RESEND_POLL_APPROVAL_EXPIRES_AT. Actual provider access requires a **separately
+approved** authorization ID, explicit UTC expiry within one hour and an allowance
+of 1–4 requests. Reusing an authorization is refused, even after a crash. No job
+or timer is installed or started by deployment.
+
+After separately authorized private configuration, `python -B -m app.resend_poll`
+performs at most one authenticated GET to https://api.resend.com/emails/receiving,
+then up to three enrolled message GETs under /emails/receiving/<UUID>, within the
+same total allowance. There is no POST/send endpoint. Every request consumes
+allowance durably **before** transmission; uncertain/failed attempts are not
+refunded. HTTP client redirects, environment proxies and automatic retries are
+disabled. Responses are bounded to 256 KiB; I/O timeout is ten seconds with a
+12-second stream deadline checked between reads (not a strict process wall-clock
+guarantee). Request attempts, response digests and bounded outcomes are retained
+without API keys or raw provider error bodies. Limits count application requests,
+not dollars; provider pricing, balances and billable treatment are not verified.
+
+One provider list response is inspected, capped at 100 metadata records and scoped
+to RESEND_RECEIVING_DOMAIN. Exact enrollment and sender matches select detail
+reads. Unlinked or mismatched scoped mail is retained for Simeon/owner triage,
+without body retrieval or guessed correlation. Already retrieved messages are
+skipped on later authorizations; deferred IDs and has_more are reported. This
+bounded probe does **not** promise full mailbox coverage or implement automatic
+pagination. It uses the standard Received Emails API; Inbox-ID-specific polling,
+sent-message delivery-status polling, rate-limit retries and unattended scheduling
+remain deferred. Existing native Inbox webhook support is unchanged.
+
+### Configuration check and subsequent owner-controlled proof
+
+`python -B -m app.resend_readiness` now reports polling_blockers and
+polling_configuration_complete independently of webhook configuration. It makes
+no DNS/API/DB calls, installs nothing and prints no secrets. A plausible installed
+key is not a verified key. Public callback activation and VPS deployment remain
+deferred; private VM outbound HTTPS is sufficient for polling.
+
+Before a live proof, select the actual Resend receiving domain (including a
+Resend-managed account domain if desired). An Inbox UUID is not that domain.
+Keep existing root-domain MX records unchanged. Store the distinct Resend API
+key privately in the existing restricted service environment; never put it in
+Git, a command-line argument, chat or captured console output. Keep polling
+access disabled and allowance zero while preparing credentials. A signing
+secret/public callback is unnecessary for polling. Sender remains
+uriel@securecodeusa.com for later separately authorized outbound work; responders
+will not initiate campaigns.
+
+The next provider authorization should identify the exact receiving scope,
+expiry and request count; a first one-request list-only proof is possible with
+no emails sent and no message bodies fetched. It creates the approved internal
+request/triage ledger, not property qualification or delivery evidence. Further
+body reads and any real delivery require their own bounded authorization. An
+end-to-end correlated conversation requires an eligible enrolled campaign;
+missing prerequisites must not be replaced with invented operational property data.
+
+Offline checks:
+`python -m pytest tests/test_communications.py tests/test_resend_poll.py
+ tests/test_resend_readiness.py tests/test_resend_tracking.py
+ tests/test_campaign_tracking.py tests/test_wondrue_ops.py -q -p no:cacheprovider`
+(on one line). Tests inject fake provider transports: no live calls. They cover
+lease fencing/takeover, draft-only responses, immutable incoming text, stop/pause,
+replay, request reservation before timeout, exhausted/reused authorizations,
+fixed GET paths, bounded/invalid responses, unlinked triage, skipped duplicate
+fetches and secret-free configuration checks. The PostgreSQL-gated router proof
+uses only growup_mvp_gate, races response claims and checks durable draft replay.
+
+Provider contract references: [received-email list](https://resend.com/docs/api-reference/emails/list-received-emails),
+[received-email retrieval](https://resend.com/docs/api-reference/emails/retrieve-received-email).
+Live account compatibility and actual delivery remain unverified until separately
+authorized testing. Phone/chat adapters, automatic campaign delivery, human-queue
+resolution and actual signing/closing integrations are deferred.

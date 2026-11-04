@@ -57,6 +57,8 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_owner_queue",
         "inspect_lead_metrics",
         "inspect_campaign_tracking",
+        "inspect_communications",
+        "inspect_resend_poll",
         "inspect_handoff_demo",
         "preview_retained_assessment",
     }
@@ -68,6 +70,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "coordinate_dossier",
         "import_campaign_tracking",
         "enroll_resend_message",
+        "control_communications",
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
@@ -234,6 +237,11 @@ def preview_intent(
         return {"operations":["verify retained collector evidence and exact preview","append same-dossier reassessment","run Raphael/Onesimus/Michael only if authorized"],
                 "inputs":dict(args),"effects":"append versions, reports, snapshots and custody receipts; preserve original history; stop at Michael",
                 "cost_bounds":{"brave_attempts":0,"meta_calls":0,"source_requests":0,"outreach":0}}
+    if intent == "control_communications":
+        return {"operations":["one inbound-owner lease, draft, or campaign control"],
+            "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
+            "effects":"append-only routing state and draft; no provider access, delivery or signing",
+            "cost_bounds":{"provider_calls":0,"outreach":0}}
     if intent == "enroll_resend_message":
         return {"operations":["enroll one existing Resend send receipt against its exact campaign"],
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
@@ -889,6 +897,18 @@ def _execute_real(
 
     capability_ctx = dict(ctx or _capability_context())
 
+    if intent in ("inspect_communications", "inspect_resend_poll"):
+        if conn is None: raise WondrueError("communications inspection requires a database connection")
+        if intent == "inspect_resend_poll":
+            from app.resend_poll import inspect_poll
+            return inspect_poll(conn,args.get("authorization_id"))
+        from app.communications import inspect
+        return inspect(conn,args.get("package_entry"))
+    if intent == "control_communications":
+        from app.communications import audited
+        return audited(principal=str(capability_ctx.get('principal') or ''),
+            **{name:args.get(name) for name in ("package_entry","action","request_id","expected_revision","lease_id","text")},
+            actor=args.get("actor","simeon"))
     if intent == "inspect_campaign_tracking":
         if conn is None:
             raise WondrueError("campaign tracking requires a database connection")
@@ -1331,12 +1351,12 @@ def handle_command(
         )
     intent = str(intent_args["intent"])
     args = dict(intent_args["args"])
-    if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message"):
+    if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
         if target != "real" or use_live:
             raise WondrueError("internal tracking/coordinator requires real target with live inference disabled")
         args["_coordinator_principal"] = principal
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
-                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking"):
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1393,7 +1413,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message") and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")

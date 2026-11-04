@@ -24,3 +24,17 @@ def test_callback_is_configuration_only_never_reachability_proof():
     result = inspect({"RESEND_PUBLIC_CALLBACK_URL":"https://hooks.securecodeusa.com/integrations/resend/webhook"})
     assert result["callback_url_configured"] and not result["public_reachability_verified"]
     assert not result["configuration_complete"]
+
+
+def test_receive_only_poll_configuration_needs_no_public_callback_or_webhook_secret():
+    from datetime import timedelta
+    from app.communications import instant
+    env={'COMMUNICATIONS_ROUTER_ENABLED':'1','RESEND_POLL_ENABLED':'1','RESEND_POLL_ACCESS_APPROVED':'1',
+        'RESEND_API_KEY':'re_offline_fake_never_live','RESEND_POLL_AUTHORIZATION_ID':'owner-bounded-test',
+        'RESEND_POLL_REQUEST_ALLOWANCE':'1','RESEND_POLL_APPROVAL_EXPIRES_AT':(instant()+timedelta(minutes=10)).isoformat(),
+        'RESEND_RECEIVING_DOMAIN':'test.resend.app'}
+    result=inspect(env)
+    assert result['polling_configuration_complete'] and not result['webhook_configuration_complete']
+    assert not result['poll_mode_requires_public_callback']
+    assert 're_offline_fake_never_live' not in json.dumps(result)
+    assert not result['live_provider_compatibility_verified']

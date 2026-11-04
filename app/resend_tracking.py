@@ -130,7 +130,9 @@ def enroll(conn, *, package_entry, campaign_id, email_id, reply_to, recipient, r
     return {"enrolled": True, "replayed": False, "email_id": email_id}
 
 
-def consume(conn, event, event_id, body_digest):
+def consume(conn, event, event_id, body_digest, *, authentication="resend_svix_hmac_sha256", route_conversation=False, poll_authorization_id=None):
+    if authentication not in ("resend_svix_hmac_sha256", "resend_authenticated_api"):
+        raise PriscillaError("unsupported Resend authentication")
     kind, data = event.get("type"), event.get("data")
     if not isinstance(data, dict):
         raise PriscillaError("invalid Resend event")
@@ -174,13 +176,21 @@ def consume(conn, event, event_id, body_digest):
         status = STATUSES[kind]
     # Repeated delivery callbacks share an outbound message ID. Different actual
     # inbound replies retain their provider email IDs in audit context, not counts.
-    return ingest_tracking_in_transaction(conn, package_entry=package, provider="resend",
+    result = ingest_tracking_in_transaction(conn, package_entry=package, provider="resend",
         provider_event_id=event_id, message_id=enrollment["email_id"], status=status,
         occurred_at=event.get("created_at"), evidence_refs=["https://resend.com/emails/"+email_id],
-        authentication="resend_svix_hmac_sha256", label="Resend observed "+status,
+        authentication=authentication, label="Resend observed "+status,
         authentication_context={"body_sha256": body_digest, "provider_email_id": email_id,
             "event_type": original_kind, "inbox_id": inbox_id, "enrollment_digest": digest_payload(enrollment),
+            "poll_authorization_id":poll_authorization_id,
+            "body_digest_scope":"raw signed webhook" if authentication=="resend_svix_hmac_sha256" else "API event projection; raw response digest retained in polling request ledger",
             "scope": "Provider event authenticated; reply sender field is not proof of owner identity or interest."})
+    if kind == "email.received" and (route_conversation or os.getenv("COMMUNICATIONS_ROUTER_ENABLED", "0") == "1"):
+        from app.communications import receive
+        result['conversation'] = receive(conn,package_entry=package,provider_message_id=email_id,
+            enrollment=enrollment,metadata=data,authentication=authentication)
+    return result
+
 
 
 def audited(action, principal, inputs):
