@@ -76,6 +76,61 @@ historical custody state of a pinned version.
 
 
 
+### Evidence-bound guided Human Review (synthetic proof)
+
+In **Hold for Human Review → Practice an evidence-bound review**, create a new,
+separate fictional practice dossier or reopen one of the 20 most recent saved
+cases. The existing handoff demo builder and canonical custody services bring the
+case to Manny; established catalogue records are not modified. This feature only
+uses `growup_handoff_demo` as `growup_demo`, under its existing separate HMAC scope.
+It never falls back to operational credentials, databases or signing keys. A server
+without that connector shows an unavailable message; no database is provisioned by
+a browser request. The normal operational executor's four-action allowlist is unchanged.
+
+The bounded story is a superseding **fictional** zoning note for Nicole. Choices:
+use a supplied fictional update, or keep the evidence unknown. Preparing a preview
+creates a review record, not a dossier correction or custody transfer. The screen
+shows exact before/after inputs, the complete immutable manifest, source version and
+digest, predicted assessment and explicit administrative-task handling. Approve,
+defer and reject require an owner note. Approval binds the exact preview and source;
+changed evidence, task or preview refuses. No arbitrary fact-editing form is exposed.
+
+After approval, three short transactions reuse `manny_review` and `owner_work`:
+record the evidence request; return custody to Nicole; append the linked assessment,
+return to Manny and conditionally close only the targeted administrative task.
+The actual assessment content must match the approved preview before commit. Closing
+an administrative task grants no factual verification, permit, professional approval
+or external permission. Other gaps and stale downstream dependencies remain visible.
+Original dossier versions, inherited reports, snapshots and receipts remain intact.
+The viewer links both original/current immutable versions and shows dated checkpoint,
+receipt and snapshot references (transfer version and latest dossier version are distinct).
+
+Each mutation and its checkpoint commit together under the canonical run lock.
+An interrupted step rolls back; approved unfinished work can be resumed explicitly.
+Concurrent resumptions serialize and cannot duplicate a committed step. A stale pending preview can be rejected and replaced without applying it. Completed
+reviews replay without additional dossier mutations; audited access attempts may still
+be recorded. There is no unattended worker. `DOSSIER_COORDINATOR_EMERGENCY_STOP=1`
+blocks mutations while allowing inspection. Discovery, models, outreach, contracts,
+payments and operational dossier writes are absent from this proof path.
+
+Focused proof: `sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-guided-demo-review.py`
+on the development VM, using its existing root-private `handoff-demo.env`. External
+network is blocked, only localhost PostgreSQL is allowed, and no migrations run.
+The proof covers both outcomes, exact approval, original-history preservation,
+canonical receipt verification, rollback after mutation/before checkpoint, and
+concurrent resume. Tests: `tests/test_guided_demo_review.py`, with the relevant
+`test_owner_work.py`, `test_manny_review.py` and cockpit tests. Browser checks exercise
+preview/approval/return, original-version inspection and mobile layout. README and
+code do not claim a real-property correction or real source authentication was proven.
+
+Verified checkpoint: nine focused local checks passed; the PostgreSQL proof passed
+both outcomes and interruption/concurrency checks with all network access except
+localhost blocked. Related owner-rework, owner-review and cockpit regressions passed.
+Browser proof completed approval → Nicole → Manny, inspected the preserved original,
+and verified the phone layout without horizontal overflow. No full regression run.
+
+
+
 ### Isolated Wondrue hypotheticals
 
 Sandbox execution defaults disabled. After deploying reviewed code on an approved

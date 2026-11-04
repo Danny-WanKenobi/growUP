@@ -55,7 +55,7 @@ def page():
 
 @router.get('/wondrue/assets/{name}')
 def asset(name:str):
-    if name not in ('shell.css','shell.js'):raise HTTPException(404)
+    if name not in ('shell.css','shell.js','guided-review.js'):raise HTTPException(404)
     return FileResponse(ASSETS/name,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
 
 
@@ -66,9 +66,12 @@ def status(request:Request):
     import os
     from app import wondrue_sandbox as sandbox
     active=sandbox.enabled()
+    from app.handoff_demo import configuration
+    try:configuration();guided_available=True
+    except ValueError:guided_available=False
     return {'grant':grant,'server':get_server_target().mode,'demo':os.getenv('DEMO_MODE','yes').lower()!='no',
             'sandbox_enabled':active,'sandbox_reason':'Isolated hypothetical database; no operational promotion, providers or messages.' if active else 'Execution is disabled until separate database/role isolation is proven.',
-            'review_actions':ws.REVIEW_ACTIONS,'provider_calls':0}
+            'review_actions':ws.REVIEW_ACTIONS,'guided_demo_review_available':guided_available,'provider_calls':0}
 
 
 @router.get('/wondrue/api/chats')
