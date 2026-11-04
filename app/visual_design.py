@@ -9,6 +9,7 @@ from html import escape
 import json
 import os
 import textwrap
+from xml.etree import ElementTree
 
 from app.workflow import digest_payload
 from app.workflow_db import WorkflowError
@@ -104,6 +105,31 @@ def validate_concepts(report):
     return report['conceptualizations']
 
 
+def validate_visual_package(package):
+    """Reject active SVG, path traversal and unbounded raster rendering inputs."""
+    drawings=package.get('concepts',[])
+    if len(drawings)!=3 or [d.get('id') for d in drawings]!=[f'onesimus-concept-{i}' for i in (1,2,3)]:
+        raise WorkflowError('three named retained visual concepts required')
+    tags={'svg','defs','linearGradient','stop','rect','g','text','path','ellipse'}
+    attrs={'width','height','viewBox','role','aria-label','id','x2','y2','stop-color','offset','x','y','rx','ry','cx','cy',
+           'fill','font-family','font-size','d','stroke','stroke-width','transform'}
+    for drawing in drawings:
+        svg=drawing.get('svg','');tiers=drawing.get('depicted_tiers')
+        if (drawing.get('renderer')!=VERSION or not isinstance(svg,str) or len(svg)>128_000
+                or drawing.get('sha256')!=sha256(svg.encode()).hexdigest()
+                or type(tiers) is not int or not 1<=tiers<=4 or '<!' in svg):
+            raise WorkflowError('campaign concept integrity or rendering bound failed')
+        try:tree=ElementTree.fromstring(svg)
+        except ElementTree.ParseError:raise WorkflowError('invalid concept SVG') from None
+        for node in tree.iter():
+            if node.tag.split('}')[-1] not in tags or set(node.attrib)-attrs:
+                raise WorkflowError('active or external SVG content refused')
+            if any('url(' in value and value!='url(#bg)' for value in node.attrib.values()):
+                raise WorkflowError('external SVG resources refused')
+    if len(package.get('source_photos',[]))>10:
+        raise WorkflowError('campaign photo count exceeds bound')
+
+
 def campaign_visuals(dossier, engineering, introduction):
     drawings = validate_concepts(engineering)
     photos=[]; unavailable=[]
@@ -170,10 +196,28 @@ def render_material(title, text, package, *, index=0, asset_prefix=None):
             '<footer>Discuss the evidence and next steps with Simeon: <a href="mailto:'+CONTACT+'">'+CONTACT+'</a></footer></main></body></html>')
 
 
+def collateral_artwork(assets, package):
+    """One shared preparation path for ordinary campaigns and demo ZIP export."""
+    validate_visual_package(package)
+    files={}
+    for index,item in enumerate(assets['emails'],1):
+        files[f'artwork/emails/email-{index}.html']=render_material(item['subject'],item['body'],package,index=index-1,asset_prefix='../')
+    for kind in ('letters','flyers'):
+        for index,text in enumerate(assets[kind],1):
+            title=('Room for a fresh possibility' if index==1 else 'A concept worth a closer look') if kind=='flyers' else 'An invitation to explore the possibilities'
+            files[f'artwork/{kind}/{kind[:-1]}-{index}.html']=render_material(title,text,package,index=index-1,asset_prefix='../')
+    for kind in ('brochure','business_card'):
+        title='From underused space to a growing possibility' if kind=='brochure' else 'Grow Up / business card'
+        files[f'artwork/{kind}.html']=render_material(title,assets[kind],package,asset_prefix='')
+    return files
+
+
 def raster_concept(drawing):
     """Mail-compatible original PNG interpretation; no remote image renderer."""
     from io import BytesIO
     from PIL import Image, ImageDraw, ImageFont
+    if type(drawing.get('depicted_tiers')) is not int or not 1<=drawing['depicted_tiers']<=4:
+        raise WorkflowError('bounded illustrated tier count required')
     canvas=Image.new('RGB',(1200,760),'#102c2c'); pen=ImageDraw.Draw(canvas)
     font=ImageFont.load_default(size=28); small=ImageFont.load_default(size=18)
     pen.text((50,35),'GROW UP / PASSIVE KRATKY CONVERSION STUDY',font=small,fill='#a6ce86')
@@ -213,11 +257,13 @@ def reuse_visuals(package, *, actor, text):
     """Simeon authors text and references retained art; no design/provider call."""
     if actor not in ('simeon','solomon') or not isinstance(text,str) or not text.strip():
         raise WorkflowError('specialist authored text and existing visual package required')
-    visual=(package.get('payload') or {}).get('campaign',{}).get('visual_package')
+    campaign=(package.get('payload') or {}).get('campaign',{})
+    visual=campaign.get('visual_package')
     if not visual:
         return {'status':'no_retained_visuals','design_requested':False,'provider_calls':0}
     return {'status':'reusing_retained_visuals', 'package_entry':str(package.get('entry_id','')),
             'visual_package_digest':digest_payload(visual), 'concept_sha256':[c['sha256'] for c in visual['concepts']],
+            'artwork_digest':digest_payload(campaign.get('artwork') or {}),
             'authored_text_digest':digest_payload({'text':text}), 'design_requested':False,'provider_calls':0}
 
 

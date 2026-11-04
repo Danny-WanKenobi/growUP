@@ -99,16 +99,11 @@ def demo_message(campaign, *, start_at, timezone_name):
     email_html = None
     inline_image = None
     if visual:
-        from app.visual_design import render_material, raster_concept, CONTACT as VISUAL_CONTACT
-        for index, item in enumerate(assets['emails'], 1):
-            visual_files[f'artwork/emails/email-{index}.html'] = render_material(item['subject'], item['body'], visual, index=index-1,asset_prefix='../').encode()
-        for kind in ('letters', 'flyers'):
-            for index, text in enumerate(assets[kind], 1):
-                title=('Room for a fresh possibility' if index==1 else 'A concept worth a closer look') if kind=='flyers' else 'An invitation to explore the possibilities'
-                visual_files[f'artwork/{kind}/{kind[:-1]}-{index}.html'] = render_material(title,text,visual,index=index-1,asset_prefix='../').encode()
-        for kind in ('brochure','business_card'):
-            title='From underused space to a growing possibility' if kind=='brochure' else 'Grow Up / business card'
-            visual_files[f'artwork/{kind}.html'] = render_material(title,assets[kind],visual,asset_prefix='').encode()
+        from app.visual_design import collateral_artwork, raster_concept, CONTACT as VISUAL_CONTACT
+        rendered=collateral_artwork(assets,visual)
+        if campaign.get('artwork') is not None and campaign['artwork'] != rendered:
+            raise ValueError('retained campaign artwork differs; explicit new preparation required')
+        visual_files.update({name:html.encode() for name,html in rendered.items()})
         for image in visual.get('source_photos',[]):
             from app.dossier_media import read_photo
             visual_files['artwork/media/'+image['sha256']+'.webp'] = read_photo(image)

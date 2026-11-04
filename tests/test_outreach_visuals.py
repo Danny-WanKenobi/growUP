@@ -16,7 +16,7 @@ import pytest
 from app import dossier_media as media
 from app.agents.onesimus.report import build_engineering_report
 from app.visual_design import (concepts, validate_concepts, campaign_visuals, render_material,
-                               reuse_visuals, canva_brief, raster_concept)
+                               reuse_visuals, canva_brief, raster_concept, collateral_artwork)
 from app.workflow import digest_payload
 from app.workflow_db import WorkflowError
 from app.uriel_campaign import collateral, demo_message
@@ -100,6 +100,8 @@ def test_illustrated_full_package_schedule_mime_and_simeon_reuse(tmp_path):
     text='Fictional Hudson Lantern Tower. Preliminary passive Kratky concept. No guaranteed returns.'
     visual=campaign_visuals({'synthetic':True},engineering(),text)
     campaign={'status':'draft_not_sent','data_provenance':'synthetic','collateral':collateral(text),'visual_package':visual}
+    campaign['artwork']=collateral_artwork(campaign['collateral'],visual)
+    assert len(campaign['artwork'])==11
     campaign['campaign_id']='campaign:'+digest_payload(campaign)
     args={'start_at':datetime.fromisoformat('2026-11-05T10:00:00-06:00'),'timezone_name':'America/Chicago'}
     prepared=demo_message(campaign,**args)
@@ -123,6 +125,36 @@ def test_illustrated_full_package_schedule_mime_and_simeon_reuse(tmp_path):
     result=reuse_visuals(package,actor='simeon',text='My own reply.')
     assert result['concept_sha256']==[c['sha256'] for c in visual['concepts']]
     assert not result['design_requested'] and result['provider_calls']==0
+
+
+def test_ordinary_uriel_preparation_persists_all_eleven_designs(monkeypatch):
+    from app import handoff_demo as demo
+    from app.handoff_demo_domain import scope
+    from tests.test_handoff_demo import Conn,KEY
+    from tests.test_funnel_acceptance import _new_db
+    from app.workflow_db import get_record_in_transaction
+    conn=Conn(_new_db())
+    with scope(conn,KEY):
+        demo.start_in_transaction(conn,run_key='demo-handoff-artwork')
+        for sequence in range(5):demo.advance_in_transaction(conn,run_key='demo-handoff-artwork',expected_sequence=sequence)
+        run=demo._get(conn,'demo-handoff-artwork')
+        dossier=get_record_in_transaction(conn,run.run_id,'dossier_version','main').payload['dossier']
+        campaign=dossier['reports']['uriel']['campaign']
+        assert len(campaign['artwork'])==11 and not campaign['execution']['sent']
+        assert all('ARTISTIC CONCEPT' in html or 'Simeon' in html for html in campaign['artwork'].values())
+
+
+def test_active_svg_and_archive_traversal_cannot_enter_a_campaign():
+    visual=campaign_visuals({'synthetic':True},engineering(),'Conditional copy')
+    assets=collateral('Conditional copy')
+    for damage in ('script','path','tiers'):
+        bad=deepcopy(visual);drawing=bad['concepts'][0]
+        if damage=='script':
+            drawing['svg']=drawing['svg'].replace('</svg>','<script>alert(1)</script></svg>')
+            drawing['sha256']=sha256(drawing['svg'].encode()).hexdigest()
+        elif damage=='path':drawing['id']='../../outside'
+        else:drawing['depicted_tiers']=1_000_000_000
+        with pytest.raises(WorkflowError):collateral_artwork(assets,bad)
 
 
 @pytest.mark.skipif(os.getenv('GROWUP_PG_INTEGRATION')!='1',reason='Dedicated PostgreSQL gate required')

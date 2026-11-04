@@ -296,7 +296,9 @@ That is an operator approval, not automated license verification. Revoking a has
 blocks rebuilding its publication package. Other cached photos remain internal.
 
 Uriel reuses the retained concepts and approved photographs in four emails, three
-letters, two distinct flyers, a brochure and Simeon's business card. The ZIP keeps
+letters, two distinct flyers, a brochure and Simeon's business card. Every new campaign stores its eleven designed HTML materials in `artwork`,
+independently of demo sending. ZIP export uses that same preparation function and
+refuses a mismatch with retained artwork. The ZIP keeps
 original text plus mobile-friendly/printable review HTML and shared PNG/SVG/photo
 assets; photographs are stored once rather than duplicated in every material.
 The four-burst hypothetical schedule remains days 0/7/14/21 with the existing
@@ -311,7 +313,7 @@ and the exact package. He cannot request a Canva design or collect images. Direc
 mailbox replies without established dossier correlation do not attach private
 visuals. Historical reports/campaigns are not rewritten. An old engineering report
 without concepts needs an explicitly linked reassessment before a new illustrated
-campaign is ready. New synthetic fixture runs use `handoff-fixtures-15`; older runs
+campaign is ready. New synthetic fixture runs use `handoff-fixtures-16`; older runs
 remain inspectable and cannot silently resume under the new fixture contract.
 
 **Canva status: connection/entitlement not verified; no API generation/export has
@@ -342,7 +344,9 @@ No real source, Canva, Resend, outreach or new operational dossier is required.
 
 Verified checkpoint: 112 targeted local checks passed (16 gated skips), followed by
 26 focused delta checks (3 gated skips); six staged PostgreSQL/image-package checks
-passed with external networking blocked. Browser review confirmed loaded artwork
+passed with external networking blocked. A follow-up correction passed 28 focused
+local checks (3 skips) and eight staged checks, including ordinary campaign artwork
+persistence and active-SVG/path-traversal/render-bound refusals. Browser review confirmed loaded artwork
 and a readable brochure, including a narrow-screen check. No full suite was run.
 
 ### Agent personalities and bounded specialist chat

@@ -545,6 +545,9 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     if campaign['visual_package'] is None:
         campaign['missing'].append('onesimus_visual_conceptualizations; linked engineering reassessment required')
     campaign['visual_design_brief'] = canva_brief('uriel', dossier_digest=payload['digest'], package=campaign['visual_package'])
+    from app.visual_design import collateral_artwork
+    campaign['artwork'] = (collateral_artwork(campaign['collateral'],campaign['visual_package'])
+                           if campaign['visual_package'] else None)
     campaign['data_provenance'] = 'synthetic' if dossier.get('synthetic') else 'inherited_evidence'
     campaign['campaign_plan'] = {'day_offsets':[0,7,14,21], 'window':'one month',
         'human_contact_channel':'email','physical_mail_enabled':False,'collateral_distribution':'email_attachment_only',
