@@ -139,6 +139,9 @@ def demo_message(campaign, *, start_at, timezone_name):
         message.add_alternative(email_html, subtype='html')
         message.get_payload()[-1].add_related(inline_image, maintype='image', subtype='png', cid='<growup-concept>')
     message.add_attachment(attachment, maintype='application', subtype='zip', filename='growup-campaign-demo.zip')
+    boundary_seed=digest_payload({'campaign':campaign['campaign_id'],'itinerary':itinerary})[:40]
+    for index,part in enumerate(message.walk()):
+        if part.is_multipart():part.set_boundary('growup-'+boundary_seed+'-'+str(index))
     return {'recipient':DEMO_RECIPIENT, 'sender':SENDER, 'reply_to':CONTACT,
         'itinerary':itinerary, 'zip_bytes':attachment, 'message_bytes':message.as_bytes(),
         'sent':False, 'scheduled':False, 'provider_calls':0}

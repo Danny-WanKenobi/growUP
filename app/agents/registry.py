@@ -24,7 +24,7 @@ SPECS = (
         ("raphael", "onesimus", "michael"), ("owner_contact", "channel_permission"),
         "Outbound-only opportunity/campaign preparation; never owns inbound conversations; reuse existing packages.",
         ("Autonomous authenticated delivery, suppression/rate-limit enforcement and delivery receipts",
-         "Visual campaign design and contact-channel research"), "app.uriel"),
+         "Authenticated Canva design/export and broader contact-channel research"), "app.uriel"),
     AgentSpec("priscilla", "Priscilla", "Lead Conversion Tracking", ("uriel",),
         (),
         "Lead conversion tracking only; no human conversation ownership, drafting, transport or delivery.",

@@ -314,8 +314,9 @@ does not regenerate it. The draft also references the campaign artwork digest
 and the exact package. He cannot request a Canva design or collect images. Direct
 mailbox replies without established dossier correlation do not attach private
 visuals. Historical reports/campaigns are not rewritten. An old engineering report
-without concepts needs an explicitly linked reassessment before a new illustrated
-campaign is ready. New synthetic fixture runs use `handoff-fixtures-16`; older runs
+without concepts can use an explicitly linked art-only visual assessment derived
+from its intact retained calculations. This leaves the engineering/Michael report
+digests and original custody unchanged; it grants no authorization. New synthetic fixture runs use `handoff-fixtures-16`; older runs
 remain inspectable and cannot silently resume under the new fixture contract.
 
 **Canva status: connection/entitlement not verified; no API generation/export has
@@ -350,6 +351,49 @@ passed with external networking blocked. A follow-up correction passed 28 focuse
 local checks (3 skips) and eight staged checks, including ordinary campaign artwork
 persistence and active-SVG/path-traversal/render-bound refusals. Browser review confirmed loaded artwork
 and a readable brochure, including a narrow-screen check. No full suite was run.
+
+### One retained-dossier visual campaign proof
+
+`app/visual_campaign_proof.py` uses the already-stored synthetic Hudson Lantern
+source `demo-handoff-tour-b41f70297d8c-hudson-sky`. It verifies the dedicated demo
+DB/role, the source dossier/report hashes, financial-to-engineering dependency and
+actual canonical custody chain. It appends one linked `visual-proof-package`
+research artifact in a separate idempotent proof run in `growup_handoff_demo`.
+The source dossier, reports, calculations, snapshots, receipts and Manny custody
+remain unchanged. No new property or synthetic pipeline scenario is seeded.
+
+The linked Onesimus art-only assessment derives three concept views from the
+retained engineering alternatives and binds the original room portfolio. Uriel
+prepares eleven illustrated materials plus the hypothetical November 5/12/19/26,
+2026 itinerary at 10:00 America/Chicago. Simeon's own draft uses an exact retained
+PNG; it has no invented inbound message ID and cannot initiate a real conversation.
+The review page separates the main bench scenario from the north/south room
+portfolio and flags the retained unquantified occupancy/maintenance allowances.
+No favorable budget, site photo or real approval is manufactured by this proof.
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_visual_campaign_proof.py tests/test_outreach_visuals.py tests/test_uriel_campaign_package.py tests/test_uriel_demo_send.py tests/test_communications.py -q -p no:cacheprovider
+```
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-retained-visual-campaign.py
+```
+
+The helper is development-host-only, reads **only** `handoff-demo.env`, blocks
+external networking, removes provider credentials and disables the demo sender.
+It prepares and independently replays the exact proof, then exports a private
+owner review folder beneath `/home/ubuntu/growup-hudson-visual-review-<digest>/`.
+Exports include the review page, complete ZIP, `uriel-review.eml`, draft-only
+`simeon-draft.eml` and proof manifest. MIME boundaries are deterministic so exact
+email hashes survive re-preparation. Export checks committed proof/source hashes
+and confines extracted paths to the review folder. No public endpoint is added.
+
+Verified retained-source checkpoint: three concepts, eleven materials, both room
+IDs, exact Simeon PNG reuse and eleven original custody receipts; source owner
+remains Manny. Exact replay reuses the committed artifact. Thirty-one focused
+local checks passed (three gated skips). No full regression or provider request was
+run. Sending the prepared review message remains a **separate authorization**;
+this helper cannot deliver it or consume/reset an existing send approval.
 
 ### Agent personalities and bounded specialist chat
 

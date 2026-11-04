@@ -471,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 
-def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
+def prepare_campaign(payload: dict[str, Any], *, visual_assessment: dict[str, Any] | None = None) -> dict[str, Any]:
     """Evidence-linked copy and illustrated campaign assets from the inherited dossier."""
     from app.workflow import digest_payload
     if payload.get('digest') != digest_payload({k:v for k,v in payload.items() if k!='digest'}):
@@ -540,8 +540,11 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     from app.uriel_campaign import collateral
     campaign['collateral'] = collateral(introduction)
     from app.visual_design import campaign_visuals, canva_brief
-    campaign['visual_package'] = (campaign_visuals(dossier, reports['onesimus'], introduction)
-                                  if reports['onesimus'].get('conceptualizations') else None)
+    campaign['visual_package'] = (campaign_visuals(dossier, reports['onesimus'], introduction,
+                                  visual_assessment=visual_assessment,source_dossier_digest=payload['digest'])
+                                  if reports['onesimus'].get('conceptualizations') or visual_assessment else None)
+    campaign['visual_assessment_ref'] = ({'digest':visual_assessment['digest'],
+        'source_engineering_digest':visual_assessment['source_engineering_digest']} if visual_assessment else None)
     if campaign['visual_package'] is None:
         campaign['missing'].append('onesimus_visual_conceptualizations; linked engineering reassessment required')
     campaign['visual_design_brief'] = canva_brief('uriel', dossier_digest=payload['digest'], package=campaign['visual_package'])

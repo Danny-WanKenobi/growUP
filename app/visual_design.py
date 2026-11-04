@@ -105,6 +105,26 @@ def validate_concepts(report):
     return report['conceptualizations']
 
 
+def visual_assessment(engineering, *, source_dossier_digest):
+    """Linked art-only assessment for retained reports; calculations stay unchanged."""
+    if engineering.get('digest')!=digest_payload({k:v for k,v in engineering.items() if k!='digest'}):
+        raise WorkflowError('visual assessment requires an intact engineering report')
+    result={'schema':'onesimus-visual-assessment-1','agent':'onesimus',
+            'source_dossier_digest':source_dossier_digest,'source_engineering_digest':engineering['digest'],
+            'source_inspection_digest':engineering.get('source_inspection_digest'),
+            'room_portfolio_digest':digest_payload(engineering.get('room_portfolio') or {}),
+            'conceptualizations':concepts(engineering),'changes_calculations':False,
+            'grants_authority':False,'scope':'Derived artistic views only; original reports and custody remain unchanged.'}
+    result['digest']=digest_payload(result)
+    return result
+
+
+def validate_visual_assessment(engineering, assessment, *, source_dossier_digest):
+    if assessment!=visual_assessment(engineering,source_dossier_digest=source_dossier_digest):
+        raise WorkflowError('visual assessment does not bind the retained engineering/dossier')
+    return assessment['conceptualizations']
+
+
 def validate_visual_package(package):
     """Reject active SVG, path traversal and unbounded raster rendering inputs."""
     drawings=package.get('concepts',[])
@@ -130,8 +150,9 @@ def validate_visual_package(package):
         raise WorkflowError('campaign photo count exceeds bound')
 
 
-def campaign_visuals(dossier, engineering, introduction):
-    drawings = validate_concepts(engineering)
+def campaign_visuals(dossier, engineering, introduction, *, visual_assessment=None, source_dossier_digest=None):
+    drawings = (validate_visual_assessment(engineering,visual_assessment,source_dossier_digest=source_dossier_digest)
+                if visual_assessment is not None else validate_concepts(engineering))
     photos=[]; unavailable=[]
     # Exact content-addressed approval is operator configuration, never a model's
     # or incoming listing's assertion. Internal source caching does not grant rights.
@@ -151,6 +172,7 @@ def campaign_visuals(dossier, engineering, introduction):
         png_assets.append({'id':drawing['id'],'sha256':sha256(content).hexdigest(),
                            'content':b64encode(content).decode(),'media_type':'image/png'})
     return {'schema':'campaign-visuals-1', 'author':'uriel', 'concepts':drawings,'png_assets':png_assets,
+            'visual_assessment_digest':visual_assessment['digest'] if visual_assessment else None,
             'source_photos':photos, 'withheld_source_photos':unavailable,
             'copy':introduction, 'synthetic':bool(dossier.get('synthetic')),
             'status':'prepared_not_sent', 'provider_calls':0, 'photos_missing':not bool(photos),
