@@ -48,6 +48,10 @@ def quantity(inputs: dict, name: str, units: dict, *, default=None):
         if factor is None:
             raise WorkflowError(f"{name} requires {expected}, not {unit!r}")
         value *= factor
+    # Computational range, not a claim of physical feasibility. Refuse extreme
+    # exponents before squaring spacing or multiplying annual resource totals.
+    if not math.isfinite(value) or value > 1e12 or (0 < value < 1e-9):
+        raise WorkflowError(f"{name} outside supported numeric range after unit conversion")
     return value
 
 

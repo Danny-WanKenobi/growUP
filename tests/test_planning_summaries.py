@@ -30,3 +30,5 @@ def test_schedule_requires_all_durations_and_handles_leap_day():
     assert r['total_days']==6 and r['phases'][1]['planned_start']=='2028-02-29'
     assert not any(p['execution_authorized'] for p in r['phases'])
     with pytest.raises(WorkflowError): schedule_plan(dict(planning_start='2026-11-03',phase_duration_days={'survey':True}))
+    with pytest.raises(WorkflowError,match='supported calendar'):
+        schedule_plan(dict(planning_start='9999-12-30',phase_duration_days={p[0]:1 for p in PHASES}))

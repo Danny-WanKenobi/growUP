@@ -53,3 +53,11 @@ def test_cleaning_water_not_dosed_as_nutrient_solution():
     r=evaluate_scenario('bench',crop_profile(),inputs)
     assert r['outputs']['water_l_per_year']==137500
     assert r['outputs']['nutrient_solution_l_per_year']==112500
+
+
+def test_extreme_exponents_refuse_before_layout_arithmetic():
+    crop=crop_profile();crop['spacing_m'].value=1e-200
+    with pytest.raises(WorkflowError,match='numeric range'):
+        evaluate_scenario('bench',crop,site(usable_area_m2=100))
+    with pytest.raises(WorkflowError,match='numeric range'):
+        evaluate_scenario('rack3',crop_profile(),site(usable_area_m2=1e308))

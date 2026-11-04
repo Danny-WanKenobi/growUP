@@ -12,6 +12,37 @@ from app.workflow_db import WorkflowError, get_record_in_transaction, put_record
 KIND = 'solomon_project_event'
 
 
+def owner_summary(dossier, property_id):
+    """Read-only owner view of supplied progress; never physical verification."""
+    from app.linked_reassessments import effective_reports
+    project=dossier.get('solomon_project')
+    report=effective_reports(dossier).get('solomon') or {}
+    if project is None:
+        return {'status':'no_reported_project_observations','reported_complete_phases':[],
+            'unresolved_inspections':[],'external_actions':0,'construction_authorized':False}
+    intact=(isinstance(project,dict) and str(project.get('property_id'))==str(property_id)
+        and isinstance(report,dict) and report.get('digest')==digest_payload({k:v for k,v in report.items() if k!='digest'})
+        and project.get('source_report_digest')==report['digest'])
+    if not intact:
+        return {'status':'stale_or_unbound_project_observations','requires_linked_reassessment':True,
+            'reported_complete_phases':[],'unresolved_inspections':[], 'external_actions':0,'construction_authorized':False}
+    phases=project.get('phases') or {};inspections=project.get('inspections') or {}
+    if not isinstance(phases,dict) or not isinstance(inspections,dict): raise WorkflowError('malformed retained project observations')
+    unresolved=[{'phase':name,'status':inspections[name]} for name,_ in PHASES if inspections.get(name) in ('pending','failed')]
+    blocked=[name for name,_ in PHASES if phases.get(name)=='blocked']
+    return dict(status='reported_project_requires_review' if unresolved or blocked or project.get('proposed_changes') else 'reported_progress_only',
+        source_report_digest=report['digest'],source_project_digest=digest_payload(project),
+        reported_complete_phases=[name for name,_ in PHASES if phases.get(name)=='reported_complete'],
+        blocked_phases=blocked,unresolved_inspections=unresolved,
+        proposed_change_count=len(project.get('proposed_changes') or []),
+        baseline_estimate_usd=project.get('baseline_estimate_usd'),proposed_total_usd=project.get('proposed_total_usd'),
+        baseline_schedule_days=project.get('baseline_schedule_days'),proposed_schedule_days=project.get('proposed_schedule_days'),
+        schedule_delta_days=project.get('proposed_schedule_delta_days'),
+        changes_applied=False,completion_verified=False,inspection_verified=False,
+        external_actions=0,construction_authorized=False,
+        scope='Retained observations only. Proposed budgets and dates do not replace the baseline; passed_claim is not authenticated inspection approval.')
+
+
 def _text(value, name, limit=2000):
     if not isinstance(value, str) or not value.strip() or len(value)>limit:
         raise WorkflowError('invalid '+name)
@@ -86,12 +117,13 @@ def record_in_transaction(conn, *, principal, run_id, dossier_key, event_id, exp
             if any(current['phases'].get(p)!='reported_complete' for p in predecessors):
                 raise WorkflowError('preceding phase reports are incomplete')
             if current['inspections'].get(phase)=='failed': raise WorkflowError('failed inspection remains unresolved')
+            if current['inspections'].get(phase)=='pending': raise WorkflowError('pending inspection remains unresolved')
         current['phases'][phase]=event['status']
     elif event['kind']=='inspection': current['inspections'][phase]=event['status']
     else:
         if len(current['proposed_changes'])>=100: raise WorkflowError('proposed-change limit reached')
         current['proposed_changes'].append({'event_id':event_id,**event,'approval_status':'pending','applied':False})
-    if (event['kind']=='progress' and event['status']!='reported_complete') or (event['kind']=='inspection' and event['status']=='failed'):
+    if (event['kind']=='progress' and event['status']!='reported_complete') or (event['kind']=='inspection' and event['status'] in ('failed','pending')):
         for dependent in phase_names[phase_names.index(phase)+1:]:
             if dependent in current['phases']: current['phases'][dependent]='blocked'
         if event['kind']=='inspection': current['phases'][phase]='blocked'

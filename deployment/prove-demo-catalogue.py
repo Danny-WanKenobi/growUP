@@ -19,7 +19,9 @@ def main():
     if release.parent!=Path('/var/www/growup/releases'): raise SystemExit('STOP: active development release required')
     cmd=['systemd-run','--wait','--pipe','--collect','--quiet','-p','User=growup','-p','Group=growup','-p','WorkingDirectory='+str(release),
         '-p','EnvironmentFile=/var/www/growup/shared/handoff-demo.env','-p','TimeoutStartSec=300',
-        '/usr/bin/env','MVP_WORKFLOW_ENABLED=1','META_SPEND_APPROVED=0','OBS_ENABLED=0','PYTHONDONTWRITEBYTECODE=1',
+        '-p','IPAddressDeny=any','-p','IPAddressAllow=localhost',
+        '/usr/bin/env','-u','BRAVE_API_KEY','-u','META_API_KEY','-u','BASETEN_API_KEY','-u','OPENAI_API_KEY',
+        'MVP_WORKFLOW_ENABLED=1','META_SPEND_APPROVED=0','OBS_ENABLED=0','PYTHONDONTWRITEBYTECODE=1',
         str(release/'.venv/bin/python'),'-B','-m','app.handoff_demo','showcase-suite','--run-key',args.run_key]
     print("Synthetic run prefix: "+args.run_key,flush=True)
     completed=subprocess.run(cmd,capture_output=True,text=True)

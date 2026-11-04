@@ -6126,13 +6126,13 @@ The downstream roles now include these deterministic, retained-evidence addition
 | Onesimus | Daily resource budget, footprint-mass estimate, independent-room bench/rack comparison | No structural/electrical capacity or construction approval |
 | Michael | Operating margin/headroom, downside cashflow, illustrative reserves, five-year milestones and room-specific finance | No guaranteed returns, shared-cost allocation verification, debt/tax or actual-performance claims |
 | Uriel | Financial-claim review and explicit prohibited claims/evidence gaps | Draft only; no new sending capability |
-| Priscilla | Interest rates tied to delivered message identities and additional data-quality counters | Tracking only; no conversation ownership, contact or sending |
+| Priscilla | Evidence-only message journeys, interest rates tied to delivered identities and data-quality counters | Tracking only; no conversation ownership, contact or sending |
 | Nicole | Topic-specific evidence workplan and priority | No current-law research, permit application or clearance |
 | Theresia Keys | Illustrative operating-surplus haircut after debt and debt-service break-even proxy | Not lender underwriting or committed financing |
 | Simeon | Explicit closing checklist and specialist-review routes | No signing, closing, negotiation or disbursement |
-| Solomon | Optional complete serial phase schedule with explicit dates/durations | Assumed calendar plan only; no construction order |
+| Solomon | Optional serial schedule, pending/failed inspection blocks and dependent-phase invalidation | Assumed dates and reported progress only; no construction order |
 | Elmer | Reported expenses plus remaining linked commitments and baseline variance | Not cash paid, double-entry accounting, complete liabilities or tax |
-| Manny | Prioritized stale/missing report actions | Linked rework only; no owner authority granted |
+| Manny | Prioritized stale/missing report actions and bound project-status brief | Linked rework and reported observations only; no owner authority granted |
 | Yoseph | Ordinal risk triage, dated policy screen and reported limit gaps | No coverage opinion, binding or claim submission |
 | Deborah | Property-bound document/version conflicts and legal-question workplan | No legal opinion, enforceability determination or representation |
 
@@ -6194,7 +6194,23 @@ money, assume uniform operating cashflow, and show a three-month operating-cost
 reserve separately; the reserve is not silently added to existing totals.
 Construction scheduling requires every phase duration and an explicit planning
 start date; missing inputs remain unquantified. Negative proposed total duration
-is refused; change orders remain proposals.
+is refused; change orders remain proposals. Calendar overflow is refused rather
+than producing an invalid date. Reopening a phase inspection as pending or failed
+blocks that phase and its already-reported dependents until new observations are
+supplied. A passed_claim is still only a supplied claim. Manny's project-status
+view binds to the current Solomon report and exposes unresolved inspections,
+reported completions and separate baseline/proposed totals; a changed report
+requires linked reassessment instead of silently reusing the old project log.
+
+Priscilla's message_journeys summarize only retained status evidence. A reply
+without a delivery record does not fabricate delivery; delivered/bounced conflicts
+take priority over a favorable-looking journey label. Simulated and actual event
+domains remain separate, and repeated message statuses never create extra people
+or authorize contact. Engineering quantities outside the supported computational
+range (nonzero magnitudes below 1e-9 or values above 1e12 after unit conversion)
+are refused before layout arithmetic; those bounds are not physical feasibility
+or verified-capacity criteria. The Ubuntu synthetic proof denies non-local IP
+connections in addition to disabling inference spending and removing provider keys.
 
 Fixture contract 13 preserves contracts 1–12 for inspection. New typed fictional
 adviser records, multi-room calculations and a dated Solomon schedule extend the

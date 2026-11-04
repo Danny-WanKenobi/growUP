@@ -105,3 +105,26 @@ def test_missing_plan_and_wrong_holder_cannot_record(monkeypatch):
     conn,rid=specialist_seed(monkeypatch,agent='simeon')
     with scope(conn,KEY):
         with pytest.raises(WorkflowError,match='hold canonical custody'): record(conn,rid,0)
+
+
+def test_reopened_inspection_blocks_claims_and_owner_summary_stays_conditional(monkeypatch):
+    conn,rid=prepared(monkeypatch)
+    with scope(conn,KEY):
+        record(conn,rid,0)
+        record(conn,rid,1,observation(phase='design'))
+        record(conn,rid,2,observation('inspection','pending'))
+        before=deepcopy(conn._db)
+        with pytest.raises(WorkflowError,match='pending inspection'): record(conn,rid,3)
+        assert conn._db==before
+        source=get_record_in_transaction(conn,rid,'dossier_version','main').payload
+        view=project.owner_summary(source['dossier'],source['property_id'])
+        assert view['blocked_phases']==['survey','design']
+        assert view['unresolved_inspections']==[{'phase':'survey','status':'pending'}]
+        assert not view['completion_verified'] and not view['construction_authorized']
+        record(conn,rid,3,observation('inspection','passed_claim'))
+        record(conn,rid,4)
+        record(conn,rid,5,observation(phase='design'))
+        source=get_record_in_transaction(conn,rid,'dossier_version','main').payload
+        assert project.owner_summary(source['dossier'],source['property_id'])['reported_complete_phases']==['survey','design']
+        source['dossier']['solomon_project']['source_report_digest']='different-report'
+        assert project.owner_summary(source['dossier'],source['property_id'])['requires_linked_reassessment']

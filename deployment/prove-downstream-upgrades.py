@@ -9,7 +9,10 @@ TESTS=(
  'tests/test_dossier_coordinator.py::test_live_coordinator_interruption_and_concurrent_replay[solomon-False]',
  'tests/test_adviser_assessments.py',
  'tests/test_room_portfolio.py',
+ 'tests/test_engineering_completion.py::test_extreme_exponents_refuse_before_layout_arithmetic',
  'tests/test_planning_summaries.py',
+ 'tests/test_solomon_project.py::test_reopened_inspection_blocks_claims_and_owner_summary_stays_conditional',
+ 'tests/test_campaign_tracking.py::test_timeline_preserves_out_of_order_and_domain_separation',
 )
 
 

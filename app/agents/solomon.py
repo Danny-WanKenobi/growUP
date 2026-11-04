@@ -107,6 +107,8 @@ def schedule_plan(budget):
     except (ValueError,TypeError): raise WorkflowError('explicit ISO planning_start date required') from None
     result=[]
     for name,_ in PHASES:
-        end=cursor+timedelta(days=durations[name]);result.append(dict(phase=name,planned_start=cursor.isoformat(),planned_end_exclusive=end.isoformat(),duration_days=durations[name],execution_authorized=False));cursor=end
+        try: end=cursor+timedelta(days=durations[name])
+        except OverflowError: raise WorkflowError('planning schedule exceeds supported calendar') from None
+        result.append(dict(phase=name,planned_start=cursor.isoformat(),planned_end_exclusive=end.isoformat(),duration_days=durations[name],execution_authorized=False));cursor=end
     return dict(status='assumed_serial_plan',total_days=sum(durations.values()),phases=result,
         scope='Illustrative serial calendar-day schedule, not mobilization or a committed completion date. Weather, permits, work calendars and delays are unmodeled.')

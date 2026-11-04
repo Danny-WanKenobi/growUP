@@ -40,6 +40,13 @@ def test_timeline_preserves_out_of_order_and_domain_separation():
     assert timeline['actual']['message_status_counts']['interested']==0
     assert timeline['simulated']['message_status_counts']['interested']==1
     assert len(timeline['events'])==4
+    journey=timeline['actual']['message_journeys'][0]
+    assert journey['stage']=='conflicting_delivery_evidence'
+    assert journey['delivery_evidence_conflict'] and not journey['contact_authorized']
+    assert timeline['simulated']['message_journeys'][0]['stage']=='interest_recorded'
+    unmatched=timeline_in_transaction(_FakeConn([_package(),[event('replied'),event('replied')]]),package_entry=data['package_entry'])
+    assert unmatched['actual']['messages']==1 and unmatched['actual']['reply_rate_of_delivered'] is None
+    assert unmatched['actual']['message_journeys'][0]['reply_without_delivery_record']
 
 
 @pytest.mark.parametrize('changes',[{'message_id':''},{'occurred_at':'2026-11-03'},{'evidence_refs':[]},{'simulated':'false'}])

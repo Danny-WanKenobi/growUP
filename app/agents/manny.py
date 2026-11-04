@@ -60,6 +60,8 @@ def assess(property_id,dossier):
     facts=deepcopy(raphael.get('facts') or {})
     unknowns=[name for name,value in facts.items() if not isinstance(value,dict) or value.get('classification')!='verified']
     if not facts: unknowns=['retained_property_assessment_facts']
+    from app.solomon_project import owner_summary
+    project_status=owner_summary(dossier,property_id)
     return {'version':'manny-owner-overview-1','property_id':str(property_id),
         'status':'needs_evidence' if missing else 'prepared_for_owner_review','missing':sorted(set(missing)),
         'property':{k:deepcopy(dossier.get(k)) for k in ('name','street_address','city','state','zip_code')},
@@ -70,6 +72,7 @@ def assess(property_id,dossier):
             'facts':facts,'unknown_or_unverified':unknowns,'source_report_digest':raphael.get('digest')},
         'engineering_scenarios':alternatives,'financial_scenarios':financial,
         'room_financial_summary':deepcopy(finance.get('room_finance')),
+        'project_status':project_status,
         'latest_accounting':deepcopy(accounting),'latest_accounting_digest':valid.get('elmer',{}).get('digest'),
         'solomon_project_digest':digest_payload(dossier['solomon_project']) if isinstance(dossier.get('solomon_project'),dict) else None,
         'asset_inputs':values,'recommended_action':'Human review of evidence, assumptions and exceptions; no external execution.',

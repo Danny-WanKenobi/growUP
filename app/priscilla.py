@@ -816,7 +816,20 @@ def timeline_in_transaction(conn, *, package_entry):
         correlated_replies=sum('replied' in states and 'delivered' in states for states in messages.values())
         interested=sum('interested' in states and 'delivered' in states for states in messages.values())
         interest_without_reply=sum('interested' in states and 'replied' not in states for states in messages.values())
+        journeys=[]
+        for (provider,message_id),states in sorted(messages.items(),key=lambda item:(str(item[0][0]),str(item[0][1]))):
+            conflict={'delivered','bounced'}<=states
+            stage=('conflicting_delivery_evidence' if conflict else 'interest_recorded' if 'interested' in states
+                else 'reply_recorded' if 'replied' in states else 'delivery_recorded' if 'delivered' in states
+                else 'bounce_recorded' if 'bounced' in states else 'send_recorded' if 'sent' in states
+                else 'prepared_only' if 'prepared' in states else 'unknown')
+            journeys.append({'provider':provider,'message_id':message_id,'observed_statuses':sorted(states),
+                'stage':stage,'delivery_evidence_conflict':conflict,
+                'reply_without_delivery_record': 'replied' in states and 'delivered' not in states,
+                'next_evidence_action':'Resolve contradictory delivery records' if conflict else 'Correlate retained reply/interest evidence for review' if states & {'replied','interested'} else 'Await additional recorded evidence',
+                'contact_authorized':False,'closed_deal':False})
         return {'message_status_counts':counts,'messages':len(messages),
+            'message_journeys':journeys,
             'reply_rate_of_delivered':None if not delivered else correlated_replies/delivered,
             'interest_rate_of_delivered':None if not delivered else interested/delivered,
             'interested_without_recorded_reply':interest_without_reply,
