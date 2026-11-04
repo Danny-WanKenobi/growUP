@@ -20,6 +20,7 @@ REVIEW_ACTIONS = {
     'prepare_elmer_intake': 'Prepare accounting intake from retained costs',
     'complete_elmer_intake': 'Complete the retained accounting assessment',
     'resolve_owner_exception': 'Record an administrative owner-review decision',
+    'coordinate_dossier': 'Pause or resume the recorded coordinator only; no stage execution',
 }
 
 
@@ -30,8 +31,16 @@ def transaction(action, mutate):
     event = AgentEvent(agent=AgentId.WONDRUE, run_id='wondrue-workspace',
         event_type='wondrue.workspace.' + action, summary='Owner cockpit history/review',
         details={}, retention_class=RetentionClass.PERMANENT)
+    def guarded(conn):
+        try:return mutate(conn)
+        except BaseException:
+            # Interruptions must release both transaction locks and uncommitted
+            # canonical mutations; the committed checkpoint remains resumable.
+            try:conn.rollback()
+            finally:conn.close()
+            raise
     return run_consequential_transaction(operation_class=OperationClass.CONSEQUENTIAL_INTERNAL,
-                                         event=event, mutate=mutate)
+                                         event=event, mutate=guarded)
 
 
 def _text(value, maximum, name):
@@ -160,6 +169,10 @@ def intent_for_review(raw):
         raise WorkflowError('This operation is not enabled in the cockpit review executor; no action taken.')
     args = value['args']
     allowed = {'run_id','dossier_key','expected_digest','operation_id'}
+    if value['intent'] == 'coordinate_dossier':
+        allowed.update({'action','expected_sequence'})
+        if args.get('action') not in ('stop','resume') or isinstance(args.get('expected_sequence'),bool) or not isinstance(args.get('expected_sequence'),int) or args['expected_sequence']<0:
+            raise WorkflowError('only explicit coordinator stop/resume and exact sequence are permitted')
     if value['intent'] == 'resolve_owner_exception':
         allowed.add('decision_json')
     if set(args) - allowed:
@@ -179,6 +192,8 @@ def propose(conn, request_id, raw, note):
     source = record(conn, value['args']['run_id'], 'dossier_version', value['args']['dossier_key'])
     if source['digest'] != value['args']['expected_digest']:
         raise WorkflowError('dossier changed; inspect again')
+    checkpoint=None
+    if value['intent']=='coordinate_dossier':checkpoint=_coordinator_checkpoint(conn,value)
     note = _text(note, 1000, 'review reason')
     lock(conn, 'wondrue-review:' + request_id)
     run = get_run_by_key_in_transaction(conn, 'wondrue-review:' + request_id)
@@ -190,7 +205,7 @@ def propose(conn, request_id, raw, note):
     run = create_run_in_transaction(conn, idempotency_key='wondrue-review:' + request_id)
     state = {'id':request_id, 'intent':value, 'reason':note, 'status':'pending',
              'created_at':instant().isoformat(), 'source_version':source['version'],
-             'source_digest':source['digest'], 'choices':['approve','reject','defer'],
+             'source_digest':source['digest'], 'checkpoint_digest':checkpoint.digest if checkpoint else None, 'choices':['approve','reject','defer'],
              'effects':REVIEW_ACTIONS[value['intent']], 'external_actions':0,
              'provider_calls':0, 'grants_property_authorization':False}
     write(conn, run.run_id, 'review', state)
@@ -228,6 +243,9 @@ def decide(conn, request_id, expected_digest, choice, note):
         source=record(conn,state['intent']['args']['run_id'],'dossier_version',state['intent']['args']['dossier_key'])
         if source['digest']!=state['source_digest'] or source['version']!=state['source_version']:
             raise WorkflowError('retained evidence changed; create a new review')
+        if state['intent']['intent']=='coordinate_dossier':
+            checkpoint=_coordinator_checkpoint(conn,state['intent'])
+            if checkpoint.digest!=state.get('checkpoint_digest'):raise WorkflowError('coordinator changed; prepare a new review')
         # Commit this claim BEFORE calling an existing separately audited service.
         state['status']='dispatch_claimed'
     else:state['status']='rejected' if choice=='reject' else 'deferred'
@@ -240,8 +258,24 @@ def finish(conn, request_id, result=None):
     run=get_run_by_key_in_transaction(conn,'wondrue-review:'+request_id)
     row=read(conn,run.run_id,'review')
     if row.payload['status']!='dispatch_claimed':raise WorkflowError('dispatch claim missing')
-    state={**row.payload,'status':'completed' if result is not None else 'needs_reconciliation',
+    valid=result is not None
+    if isinstance(result,dict) and result.get('outcome') not in (None,'result'):valid=False
+    if valid and row.payload.get('intent',{}).get('intent')=='coordinate_dossier':
+        outcome=result.get('data',result) if isinstance(result,dict) else {}
+        args=row.payload['intent']['args']
+        expected='stopped' if args['action']=='stop' else 'running'
+        valid=(isinstance(outcome,dict) and outcome.get('status')==expected and outcome.get('sequence')==args['expected_sequence']+1 and not outcome.get('replayed'))
+    state={**row.payload,'status':'completed' if valid else 'needs_reconciliation',
            'finished_at':instant().isoformat(), 'result':result,
            'recovery':'Inspect operation_id in the existing agent audit before any further action.'}
     write(conn,run.run_id,'review',state,row)
     return state
+
+
+def _coordinator_checkpoint(conn,intent):
+    args=intent['args'];row=read(conn,UUID(args['run_id']),'coordinator:'+args['dossier_key'])
+    if row is None or row.payload.get('principal')!='wondrue-operator' or row.payload.get('sequence')!=args['expected_sequence']:
+        raise WorkflowError('exact owner coordinator checkpoint required')
+    expected='stopped' if args['action']=='resume' else 'running'
+    if row.payload.get('status')!=expected:raise WorkflowError('coordinator state does not permit that control')
+    return row

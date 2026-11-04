@@ -24,9 +24,9 @@ legacy command/extraction routes are refused. The underlying agent/inference
 services and their tests remain available to separately authorized callers.
 Existing internal agent automation is not rerouted through chat.
 
-Only four internal actions are enabled in the cockpit executor: prepare an owner
-brief, prepare/complete Elmer intake, and record an administrative owner exception
-decision. Each proposal binds an exact retained dossier version/digest, explicit
+The cockpit executor allows preparing an owner brief, preparing/completing Elmer
+intake, recording an administrative owner exception decision, and stopping/resuming
+an existing owner coordinator checkpoint (never running a stage). Each proposal binds an exact retained dossier version/digest, explicit
 arguments, operation ID, reason and later owner choice (approve/reject/defer).
 Changed evidence or a stale review digest refuses execution. A durable dispatch
 claim precedes the separately audited agent call. An interruption or failure stays
@@ -42,6 +42,104 @@ and a matching Origin. Responses, including authentication errors, are no-store.
 No API keys are stored in browser storage. Chat saves create workspace artifacts
 and audit events, not dossier versions. Append-only history is preserved; no chat
 hard-delete feature is offered. Searches/pages and conversations are bounded.
+
+### Operations desk: eight owner-workflow milestones
+
+Open the account menu -> **Operations desk**. All views use the current server's
+retained records; the dedicated synthetic database is accessible only through the
+separate practice connector. No new discovery, model calls, provider activation,
+email delivery or external actions are enabled by these milestones.
+
+1. **Human Review** combines existing operational proposals, retained-input reviews,
+   dossier exceptions, CSR/appointment requests, correspondence and asset tasks.
+   It displays recorded owner, urgency, dependencies, due dates and current shared
+   owner-resolution status. Missing urgency stays unknown. Source-bound administrative
+   acknowledge/defer/follow-up notes use compare-and-set; they do not resolve the
+   originating workflow, confirm an appointment or send a message.
+2. **Retained-input review** starts from Library -> Inspect -> Prepare retained-input
+   owner review. Manny must hold the current real dossier. Select an unresolved
+   scoped task and one supported downstream agent. Preview the exact retained-input
+   assessment, then explicitly approve/defer/reject with a reason. Approval commits
+   three bounded steps: evidence request, targeted custody return, linked assessment
+   back to Manny. Each mutation and its checkpoint share an audited transaction.
+   Reload its saved link or reopen it from Human Review to recover. Changed source,
+   task, manifest or stale dependencies refuse; no arbitrary fact entry, authentication
+   override or automatic task closure. Raphael, Gabriel, Elmer and Manny are not
+   targets of this narrowed UI path; their existing separate services are preserved.
+3. **Targeted reassessment plan** lists only reports made stale by retained dependency
+   digests, in upstream-first order. A stale parent must be refreshed before a child
+   preview. Cycles refuse. This is a plan, not automatic execution or replacement
+   evidence. Missing reports/facts can remain unresolved even when no stale edge exists.
+4. **Daily briefing** is an on-demand, source-linked view for an explicit date in
+   America/Chicago: recorded changes, pending/uncertain decisions, stale packages and
+   reported obligations due within seven days, overdue or without a known due date.
+   It does not install a scheduler, verify payment or claim complete coverage.
+5. **Compare properties** accepts 2-4 distinct property identities selected from the
+   Library. Exact versions, category/county evidence, engineering, room portfolios,
+   financial cases, assumptions, missing inputs and stale dependencies remain visible.
+   No automatic ranking, combined confidence score or summed alternatives is invented.
+6. **Alternatives** names append-only hypothetical scenarios and links a new alternative
+   to an exact immutable parent digest. Compare 2-4 scenarios of the same source version;
+   see input differences and deterministic results with units and unknowns. The isolated
+   `growup_wondrue_sandbox` role remains SELECT/INSERT only. Old unnamed records and the
+   three-argument service contract remain readable/idempotent. No promotion route exists.
+7. **Execution** projects actual persisted coordinator, rework, review and CSR worker
+   records. A stored running state is not a live-process heartbeat. Only an existing
+   `wondrue-operator` coordinator in the matching state/sequence exposes a Human Review
+   pause/resume proposal. It changes a checkpoint, never starts a worker or advances a
+   stage. Other jobs are inspect-only; uncertain generic dispatch is never auto-retried.
+8. **Operating rehearsal** creates a new isolated fictional Elm Fork practice case,
+   brings it through canonical assessment, approves a fictional Nicole correction,
+   refreshes only Theresia Keys -> Simeon -> Solomon -> Elmer dependencies, files a
+   protected copy, exercises a dated obligation/overdue correction and later dispute,
+   and verifies archive preservation. The practice viewer displays its dated-version
+   timeline. Scripted fixture decisions have no operational authority. Existing
+   catalogue runs remain unchanged; operational timers exclude synthetic records.
+
+Read views are bounded (100 tasks/page, 30 proposals/retained reviews/page, 50 dossiers
+and 50 dated changes per briefing, 200 supported job checkpoints, 20 recent isolated
+alternatives). The UI reports partial coverage. References retain exact version/digest;
+unknowns are not zero. Reader credentials cannot save/decide; all writes require an
+operator and matching Origin. APIs remain private and no-store. Emergency stop blocks
+retained-review mutations while inspection remains available. No schema migration or
+new credentials are required for the workbench.
+
+Focused local checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_wondrue_workbench.py tests/test_wondrue_workspace.py tests/test_guided_demo_review.py -q -p no:cacheprovider
+node --check app/wondrue_assets/workbench.js
+```
+
+On the approved development host, after installing a reviewed release:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-wondrue-workbench.py
+```
+
+The helper enforces securecode-dev and blocks external network access. It runs three
+selected PostgreSQL checks: retained-only contract fixtures in `growup_mvp_gate`, the
+owner lifecycle/interruption proof in `growup_handoff_demo`, and named alternatives in
+`growup_wondrue_sandbox`. Gate fixtures are explicitly **not real properties** and are
+refused by operational review outside the gate. Synthetic receipts use the existing
+dedicated HMAC scope. Trigger-protected gate/demo histories remain for audit; no cleanup
+or operational business writes occur. This proves service/transaction contracts, not
+real-property authentication, professional approval or autonomous external activity.
+
+Validation for this milestone: **36 focused local checks passed; five explicit PG
+checks skipped locally**. The three new selected PostgreSQL proofs passed on the
+development host with external network blocked. Browser QA on the isolated gate
+verified briefing, distinct-property comparison, linked-alternative comparison,
+review-controlled pause and a 390px mobile layout without horizontal overflow.
+No full regression suite was run. Use `--proof gate`, `--proof demo` or
+`--proof sandbox` to repeat only the relevant isolated proof.
+
+Implementation: `wondrue_insights`, `wondrue_retained_review`, the private
+`routes/wondrue_workbench` router, `operating_rehearsal`, and `workbench.js`; existing
+workspace, shared rework/custody/dependency services and isolated scenario storage are
+reused. Rollback to the prior release hides these controls without deleting history.
+An approved retained review can be inspected after redeployment; never discard a
+partially committed review or replay a generic uncertain dispatch blindly.
 
 ### Dossier-aware conversations
 
@@ -85,7 +183,7 @@ case to Manny; established catalogue records are not modified. This feature only
 uses `growup_handoff_demo` as `growup_demo`, under its existing separate HMAC scope.
 It never falls back to operational credentials, databases or signing keys. A server
 without that connector shows an unavailable message; no database is provisioned by
-a browser request. The normal operational executor's four-action allowlist is unchanged.
+a browser request. Its synthetic approvals cannot authorize an operational dossier.
 
 The bounded story is a superseding **fictional** zoning note for Nicole. Choices:
 use a supplied fictional update, or keep the evidence unknown. Preparing a preview

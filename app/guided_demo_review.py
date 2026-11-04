@@ -60,10 +60,15 @@ def _assess(source,inputs):
     return report,eligible,reasons
 
 
-def create_in_transaction(conn,case_id):
+def create_in_transaction(conn,case_id,scenario_id=None):
     _guard(conn)
     case_id=str(UUID(str(case_id)));key='demo-handoff-review-'+UUID(case_id).hex
-    demo.start_in_transaction(conn,run_key=key)
+    from app.workflow_db import get_run_by_key_in_transaction
+    existing_run=get_run_by_key_in_transaction(conn,key)
+    if existing_run and _read(conn,existing_run.run_id,'guided-review-case'):
+        if scenario_id is not None and existing_run.limits.get('scenario_id')!=scenario_id:raise WorkflowError('practice profile conflict')
+        return inspect_in_transaction(conn,case_id)
+    demo.start_in_transaction(conn,run_key=key,scenario_id=scenario_id)
     run=_run(conn,case_id)
     existing=_read(conn,run.run_id,'guided-review-case')
     if existing:return inspect_in_transaction(conn,case_id)
@@ -82,7 +87,7 @@ def create_in_transaction(conn,case_id):
         'status':'pending','authority':'human_owner','grants_permission':False})
     put_record_in_transaction(conn,run.run_id,kind='owner_review_task',record_key=task_key,version=1,payload=task,digest=digest_payload(task))
     _write(conn,run.run_id,'guided-review-case',{'id':case_id,'run_key':key,'task_key':task_key,
-        'original_version':source.version,'original_digest':source.digest,
+        'scenario_id':run.limits.get('scenario_id'),'original_version':source.version,'original_digest':source.digest,
         'original_report_digests':{a:r['digest'] for a,r in source.payload['dossier']['reports'].items()},
         'initial_receipts':verify_chain_in_transaction(conn,did),'created_at':instant().isoformat()})
     return inspect_in_transaction(conn,case_id)
@@ -227,6 +232,7 @@ def inspect_in_transaction(conn,case_id,review_id=None):
     brief=manny_review.inspect_in_transaction(conn,run_id=run.run_id,dossier_key='main')['brief']
     return demo.marked({'case':case.payload,'source_digest':source.digest,'source_version':source.version,
         'review':dict(row.payload,review_digest=row.digest) if row else None,'choices':CHOICES,
+        'operating_rehearsal':(_read(conn,run.run_id,'operating-rehearsal').payload if _read(conn,run.run_id,'operating-rehearsal') else None),
         'original_preserved':True,'inherited_reports_preserved':preserved,
         'current_holder':(current_custody_in_transaction(conn,did) or {}).get('holder','unknown'),
         'verified_receipts':verify_chain_in_transaction(conn,did),'owner_brief':brief,

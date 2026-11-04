@@ -70,11 +70,19 @@ def evaluate(inputs):
             'operational_writes':0,'engineering':result}
 
 
-def save(scenario_id,source,inputs):
+def save(scenario_id,source,inputs,name=None,parent_id=None,expected_parent_digest=None):
     scenario_id=str(UUID(str(scenario_id)))
     value={'id':scenario_id,'source':sanitize_source(source),'inputs':inputs,'result':evaluate(inputs)}
-    digest=digest_payload(value)
+    if name is not None:
+        if not isinstance(name,str) or not name.strip() or len(name)>80:raise WorkflowError('scenario name must contain 1 to 80 characters')
+        value['name']=name.strip()
+    if (parent_id is None)!=(expected_parent_digest is None):raise WorkflowError('complete parent reference required')
     with connection() as conn:
+        if parent_id is not None:
+            parent=_scenario(conn,parent_id,expected_parent_digest)
+            if parent['id']==scenario_id or parent['source']!=value['source']:raise WorkflowError('alternative must retain the same exact source')
+            value['parent']={'id':parent['id'],'digest':expected_parent_digest}
+        digest=digest_payload(value)
         with conn.cursor() as cur:
             cur.execute('INSERT INTO sandbox_scenarios(id,payload,digest) VALUES (%s,%s::jsonb,%s) '
                         'ON CONFLICT(id) DO NOTHING',(scenario_id,__import__('json').dumps(value),digest))
@@ -91,4 +99,23 @@ def list_scenarios(offset=0):
             cur.execute('SELECT payload,digest FROM sandbox_scenarios ORDER BY created_at DESC,id LIMIT 20 OFFSET %s',(offset,))
             rows=cur.fetchall()
     if any(digest_payload(r['payload'])!=r['digest'] for r in rows):raise WorkflowError('sandbox integrity failure')
-    return {'items':[r['payload'] for r in rows],'has_more':len(rows)==20,'label':LABEL}
+    return {'items':[dict(r['payload'],record_digest=r['digest']) for r in rows],'has_more':len(rows)==20,'label':LABEL}
+
+
+def _scenario(conn,scenario_id,expected_digest):
+    with conn.cursor() as cur:
+        cur.execute('SELECT payload,digest FROM sandbox_scenarios WHERE id=%s',(str(UUID(str(scenario_id))),))
+        row=cur.fetchone()
+    if not row or row['digest']!=expected_digest or digest_payload(row['payload'])!=row['digest']:
+        raise WorkflowError('scenario missing or reference changed')
+    return row['payload']
+
+
+def compare_scenarios(refs):
+    if not 2<=len(refs)<=4 or len({r['id'] for r in refs})!=len(refs):raise WorkflowError('choose two to four distinct scenarios')
+    with connection() as conn:rows=[_scenario(conn,r['id'],r['digest']) for r in refs]
+    if any(r['source']!=rows[0]['source'] for r in rows):raise WorkflowError('compare alternatives of the same exact source version')
+    keys=sorted(set().union(*(r['inputs'].keys() for r in rows)))
+    return {'scenarios':rows,'changed_input_groups':[k for k in keys if any(r['inputs'].get(k)!=rows[0]['inputs'].get(k) for r in rows[1:])],
+        'label':LABEL,'ranking':None,'totals':None,'operational_writes':0,'provider_calls':0,
+        'limits':'All quantities are assumptions. Unknowns are not zero. Alternatives are not additive or approved designs.'}

@@ -82,7 +82,7 @@ def test_interrupted_dispatch_cannot_be_reexecuted(store):
     assert ws.finish(store,rid)['status']=='needs_reconciliation'
 
 
-@pytest.mark.parametrize('intent',['start_discovery','collect_dcad_evidence','draft_outreach','compare_scenarios','coordinate_dossier'])
+@pytest.mark.parametrize('intent',['start_discovery','collect_dcad_evidence','draft_outreach','compare_scenarios'])
 def test_provider_or_dispatch_operations_cannot_enter_review_executor(intent):
     with pytest.raises(WorkflowError,match='not enabled'):
         ws.intent_for_review({'intent':intent,'args':{}})

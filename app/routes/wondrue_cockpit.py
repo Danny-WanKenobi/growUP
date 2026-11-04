@@ -55,7 +55,7 @@ def page():
 
 @router.get('/wondrue/assets/{name}')
 def asset(name:str):
-    if name not in ('shell.css','shell.js','guided-review.js'):raise HTTPException(404)
+    if name not in ('shell.css','shell.js','guided-review.js','workbench.js'):raise HTTPException(404)
     return FileResponse(ASSETS/name,headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
 
 
@@ -244,6 +244,9 @@ class SandboxRequest(BaseModel):
     key:str=Field(min_length=1,max_length=500)
     version:int=Field(ge=1)
     inputs:dict[str,Any]
+    name:str|None=Field(None,min_length=1,max_length=80)
+    parent_id:UUID|None=None
+    expected_parent_digest:str|None=Field(None,pattern='^[0-9a-f]{64}$')
 
 
 @router.post('/wondrue/api/sandbox')
@@ -252,7 +255,7 @@ def sandbox(body:SandboxRequest,request:Request):
     from app import wondrue_sandbox as isolated
     if not isolated.enabled():raise HTTPException(409,'Sandbox execution is disabled until database/role isolation is proven. No copy or execution occurred.')
     source=safe_call('sandbox_source',lambda c:ws.record(c,body.run_id,'dossier_version',body.key,body.version))
-    try:return isolated.save(body.id,source,body.inputs)
+    try:return isolated.save(body.id,source,body.inputs,body.name,body.parent_id,body.expected_parent_digest)
     except (DatabaseNotConfiguredError,DatabaseUnavailableError):raise HTTPException(503,'Sandbox storage unavailable; no operational fallback is allowed.') from None
     except ValueError as exc:raise HTTPException(409,str(exc)) from None
 
