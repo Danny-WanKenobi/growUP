@@ -1,4 +1,4 @@
-# Grow Up development release deployment. Run from Windows PowerShell.
+# Grow Up host-pinned release deployment. Run from Windows PowerShell.
 [CmdletBinding()]
 param([ValidateSet('DEV_SERVER','LIVE_SERVER')][string]$Target = 'DEV_SERVER', [switch]$PlanOnly, [switch]$AllowDirtyWorktree)
 Set-StrictMode -Version Latest
@@ -9,7 +9,6 @@ $Remote = "ubuntu@${RemoteHostName}"
 $ActualHost = (& ssh -o BatchMode=yes -o ConnectTimeout=12 $Remote hostname | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $ActualHost -ne $ExpectedHost) { throw 'SSH host identity does not match deployment target.' }
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Remote = "${RemoteUser}@${RemoteHostName}"
 $dirty = @(& git -C $Repo status --porcelain)
 if ($LASTEXITCODE -ne 0) { throw 'git status failed.' }
 if ($dirty.Count -gt 0 -and -not $AllowDirtyWorktree -and -not $PlanOnly) { throw 'Working tree has changes. Review them, then use -AllowDirtyWorktree to deploy only the exact committed GitHub revision.' }
