@@ -5381,3 +5381,13 @@ Provider contract references: [received-email list](https://resend.com/docs/api-
 Live account compatibility and actual delivery remain unverified until separately
 authorized testing. Phone/chat adapters, automatic campaign delivery, human-queue
 resolution and actual signing/closing integrations are deferred.
+
+
+Receiving-domain setup is intentionally deferred. Search `.env.example` for
+`REPLACE_ME_RECEIVING_DOMAIN`; its value is
+`REPLACE_ME_RECEIVING_DOMAIN.example.invalid`. This is a nonfunctional setup
+placeholder, not a mailbox or an enrolled destination. Both polling runtime
+validation and the secret-free configuration preview reject it. Keep credentials
+blank and provider access disabled until the actual receiving domain is supplied
+and the bounded provider test is separately authorized. No public callback or
+VPS deployment is needed to continue offline development.
