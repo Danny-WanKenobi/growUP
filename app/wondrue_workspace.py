@@ -40,6 +40,13 @@ def _text(value, maximum, name):
     return value.strip()
 
 
+def valid_record(kind,payload,digest):
+    if kind=='dossier_version':
+        if payload.get('digest') is not None and payload['digest']!=digest:return False
+        return digest_payload({k:v for k,v in payload.items() if k!='digest'})==digest
+    return digest_payload(payload)==digest
+
+
 def chat(conn, chat_id, create=False):
     chat_id = str(UUID(str(chat_id)))
     key = PREFIX + chat_id
@@ -84,7 +91,7 @@ def append_turn(conn, chat_id, request_id, text, answer, input_digest=None):
     write(conn, run.run_id, 'request:' + request_id, value)
     state = {**meta.payload, 'count':value['sequence'], 'updated_at':value['created_at']}
     if state['count'] == 1:
-        state['title'] = text[:70]
+        state['title'] = ((state.get('context') or {}).get('title','')+' · '+text).strip(' ·')[:70]
     write(conn, run.run_id, 'chat', state, meta)
     return value
 
@@ -119,7 +126,7 @@ def catalogue(conn, query='', offset=0, tasks=False):
         rows = cur.fetchall()
     items = []
     for row in rows:
-        if row['digest'] != digest_payload(row['payload']):
+        if not valid_record(row['kind'],row['payload'],row['digest']):
             # A quarantined row must not make every other retained record invisible.
             # Never expose its claims or permit an action based on its payload.
             items.append({'run_id':str(row['run_id']),'kind':row['kind'],'key':row['record_key'],
@@ -140,7 +147,7 @@ def record(conn, run_id, kind, key, version=None):
     if kind not in (*LIBRARY_KINDS, 'owner_review_task'):
         raise WorkflowError('record type is not in the retained Library')
     row = get_record_in_transaction(conn, UUID(str(run_id)), kind, _text(key, 500, 'record key'), version=version)
-    if row is None or row.digest != digest_payload(row.payload):
+    if row is None or not valid_record(kind,row.payload,row.digest):
         raise WorkflowError('retained record missing or integrity check failed')
     return {'run_id':str(row.run_id), 'kind':kind, 'key':key, 'version':row.version,
             'digest':row.digest, 'data':row.payload}

@@ -99,6 +99,28 @@ class Message(BaseModel):
     request_id:UUID
     text:str=Field(min_length=1,max_length=4000)
     intent:dict[str,Any]|None=None
+    expected_context_revision:int|None=Field(None,ge=0)
+
+
+class DossierSelection(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    request_id:UUID
+    expected_revision:int=Field(ge=0)
+    run_id:UUID|None=None
+    key:str|None=Field(None,min_length=1,max_length=500)
+    version:int|None=Field(None,ge=1)
+    digest:str|None=Field(None,min_length=64,max_length=64)
+
+
+@router.post('/wondrue/api/chats/{chat_id}/selection')
+def select_dossier(chat_id:UUID,body:DossierSelection,request:Request):
+    authorize(request,True)
+    fields=(body.run_id,body.key,body.version,body.digest)
+    if any(v is not None for v in fields) and not all(v is not None for v in fields):
+        raise HTTPException(422,'A complete dossier reference or an explicit empty selection is required.')
+    reference=None if body.run_id is None else {'run_id':str(body.run_id),'key':body.key,'version':body.version,'digest':body.digest}
+    from app.wondrue_dossier_chat import select
+    return safe_call('select_dossier',lambda c:select(c,chat_id,body.request_id,body.expected_revision,reference),True)
 
 
 def answer(conn,text,intent=None):
@@ -131,13 +153,23 @@ def answer(conn,text,intent=None):
 def message(chat_id:UUID,body:Message,request:Request):
     authorize(request,True)
     def mutate(conn):
-        fingerprint=ws.digest_payload({'text':body.text.strip(),'intent':body.intent})
-        run,_=ws.chat(conn,chat_id)
+        fingerprint=ws.digest_payload({'text':body.text.strip(),'intent':body.intent,'context_revision':body.expected_context_revision})
+        run,meta=ws.chat(conn,chat_id)
         replay=ws.read(conn,run.run_id,'request:'+str(body.request_id))
         if replay:
             if replay.payload['text']!=body.text.strip() or replay.payload.get('input_digest')!=fingerprint:raise WorkflowError('message identity conflict')
             return replay.payload
-        result=answer(conn,body.text,body.intent)
+        context=meta.payload.get('context')
+        if meta.payload.get('context_revision',0)>0 and body.expected_context_revision!=meta.payload.get('context_revision'):
+            raise WorkflowError('conversation dossier selection changed; reload before asking')
+        if context and body.intent:
+            args=body.intent.get('args') or {}
+            if (args.get('run_id') and args['run_id']!=context['run_id']) or (args.get('dossier_key') and args['dossier_key']!=context['key']):
+                raise WorkflowError('Select that dossier explicitly before discussing it in this conversation.')
+        if context and body.intent is None:
+            from app.wondrue_dossier_chat import explain
+            result=explain(conn,context,body.text)
+        else:result=answer(conn,body.text,body.intent)
         return ws.append_turn(conn,chat_id,body.request_id,body.text,result,fingerprint)
     return safe_call('message',mutate,True)
 

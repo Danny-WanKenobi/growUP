@@ -43,6 +43,39 @@ No API keys are stored in browser storage. Chat saves create workspace artifacts
 and audit events, not dossier versions. Append-only history is preserved; no chat
 hard-delete feature is offered. Searches/pages and conversations are bounded.
 
+### Dossier-aware conversations
+
+Open a Library dossier and choose **Discuss this dossier**. Its exact run, key,
+version and digest are durably selected for that conversation. Selection survives
+reload/search/reopening; Clear selection changes only chat metadata. Earlier turns
+and source references are immutable. Another tab changing or clearing selection
+makes a stale message refuse until the conversation is reloaded.
+
+Follow-ups about progress, evidence gaps, engineering, finances and proposed changes
+use retained reports from the selected version. Exact-version Raphael decisions
+are included only when run/key/version/digest bindings agree. Linked reassessments
+reuse the existing effective-report resolver and stale-dependency screening. No
+figures are generated or recalculated. Missing reports remain unknown. Answers
+include working links to the exact stored dossier/decision and report digests.
+A newer dossier version produces a warning; it never silently replaces the selected
+version or changes a historical answer. Proposed operational changes open the
+existing Human Review path and do not execute from a chat message.
+
+The Library and selections recognize the canonical dossier writer's embedded-digest
+convention (hash excludes the digest field and the embedded/stored digest must agree).
+Other record kinds retain their existing whole-payload convention; malformed records
+remain quarantined. Conversation selection itself creates no dossier/custody writes.
+These are deterministic grounded views, not unrestricted language-model answers.
+
+Validated with 17 focused local tests and all 18 workspace tests under PostgreSQL.
+Browser proof on the isolated gate confirmed selecting a dossier, reopening the
+conversation after reload, a second question without reselection, stored financial
+highlights and exact-version citation navigation. No provider calls or operational
+dossier writes. Current custody is reported separately at answer time, not as the
+historical custody state of a pinned version.
+
+
+
 ### Isolated Wondrue hypotheticals
 
 Sandbox execution defaults disabled. After deploying reviewed code on an approved
