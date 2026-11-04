@@ -136,7 +136,7 @@ def append_elmer_correction_in_transaction(conn,run_id,dossier_key,report):
 def append_owner_material_in_transaction(conn,run_id,dossier_key,*,section,material):
     """Append Manny-owned briefs/decisions without replacing any prior report."""
     from app.agents.stages import _load
-    if section not in ('owner_briefs','owner_decisions','owner_rework','owner_vault_entries'): raise WorkflowError('unsupported owner material')
+    if section not in ('owner_briefs','owner_decisions','owner_rework','owner_vault_entries','owner_asset_events'): raise WorkflowError('unsupported owner material')
     source,did=_load(conn,run_id,dossier_key,'manny')
     if material.get('source_dossier_digest')!=source.digest or material.get('digest')!=digest_payload({k:v for k,v in material.items() if k!='digest'}):
         raise CustodyTamperError('owner material does not bind current dossier')

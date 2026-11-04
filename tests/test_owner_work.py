@@ -94,6 +94,15 @@ def test_vault_files_exact_snapshot_and_replay_does_not_duplicate(monkeypatch):
         assert manny_review.inspect_in_transaction(conn,run_id=rid,dossier_key='main')['brief']['vault_entries']==[entry]
         copies=owner_work.read_vault_in_transaction(conn,run_id=rid,dossier_key='main')
         assert copies['entries'][0]['payload']==archived['payload'] and copies['records_written']==0
+        from app.agents.elmer import read_vault_in_transaction
+        before=deepcopy(conn._db)
+        accounting=read_vault_in_transaction(conn,run_id=rid,dossier_key='main')
+        assert accounting['reader']=='elmer' and accounting['access']=='read_only' and before==conn._db
+        assert accounting['entries'][0]['accounting_assessment']['digest']==accounting['latest_working_accounting_assessment']['digest']
+        from app import asset_tracking
+        asset_tracking.mutate_in_transaction(conn,principal='owner',run_id=rid,dossier_key='main',operation_id='post-vault-observation',expected_digest=source(conn,rid).digest,as_of='2026-11-03',operator_authorized=True,
+            event=dict(kind='asset_status',entity_id='asset',property_id=source(conn,rid).payload['property_id'],observed_on='2026-11-03',status='planning',note='FICTIONAL planning observation',evidence_refs=['demo:planning'],previous_entity_digest=None))
+        assert read_vault_in_transaction(conn,run_id=rid,dossier_key='main')['entries'][0]['payload']==archived['payload']
         conn._db['vault_archive'][0]['digest']='tampered'
         with pytest.raises(WorkflowError,match='integrity'): owner_work.read_vault_in_transaction(conn,run_id=rid,dossier_key='main')
 

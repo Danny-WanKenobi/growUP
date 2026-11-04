@@ -105,6 +105,7 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
         source,_=_load(conn,run_id,dossier_key,'manny')
         brief=manny_review.inspect_in_transaction(conn,run_id=run_id,dossier_key=dossier_key)['brief']
         reports=effective_reports(source.payload['dossier'])
+        if (brief.get('asset_tracking') or {}).get('exceptions'): raise WorkflowError('vault refused: unresolved tracked asset obligations')
         if brief['unresolved_task_keys'] or brief['unscoped_task_keys'] or brief['overview']['missing'] or stale_dependencies(reports): raise WorkflowError('vault refused: unresolved review/evidence/dependencies')
         if any(not item['retained'] for item in brief['overview']['report_manifest'] if item['agent']!='gabriel'): raise WorkflowError('vault refused: missing pipeline report')
         if any(r.get('missing') for a,r in reports.items() if a!='manny'): raise WorkflowError('vault refused: report evidence gaps')

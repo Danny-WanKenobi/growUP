@@ -250,7 +250,7 @@ implementations remain the package/event authorities.
 | Elmer / `elmer` | Separated cost buckets, linked corrections, exceptions and completed accounting handoff to Manny | Double-entry bookkeeping, bank feeds, tax calculations, filings and payments |
 | Yoseph / `yoseph` — shared adviser, outside pipeline | Durable two-way insurance/liability consultation and disagreement queue | Carrier quotes, policy interpretation, coverage validation, binding and claims |
 | Deborah / `deborah` — shared adviser, outside pipeline | Durable two-way legal-evidence consultation and disagreement queue | Current-law research, supported legal opinions, filings and representation |
-| Manny / `manny` | Consolidated source-linked owner brief, latest accounting view and durable administrative exception decisions | Verified asset register, performance/maintenance automation and delegated transactions |
+| Manny / `manny` | Consolidated owner brief, linked evidence rework, protected vault and dated asset/obligation tracking | Verified asset register, performance/maintenance automation and delegated transactions |
 
 ### Canonical handoff contract from the outset
 
@@ -5844,3 +5844,94 @@ and archive tamper refusal. The dedicated PostgreSQL coordinator gate adds
 interrupted/concurrent dispatch, interrupted reassessment/replay and archive
 UPDATE/DELETE refusal. All gate data are disposable test material; protected
 append-only rows follow existing gate retention rules.
+
+#### Manny: ongoing asset observations and obligation tracking
+
+`app.asset_tracking` maintains an append-only `owner_asset_events` history in the
+canonical dossier, with full immutable snapshots and current-holder checks.
+Manny must hold custody to record an observation or save a monitoring result.
+Each event binds the property UUID, a stable entity ID, evidence references,
+observation date, correction note, global sequence and the previous event digest
+for that entity. A correction/reopening appends a complete new observation;
+original events, reports, accounting assessments and vault copies remain intact.
+No ownership, operating permission, payment or legal clearance is inferred.
+
+Two event kinds are supported:
+
+- `asset_status`, using `entity_id="asset"`: unknown, under_review, planning,
+  on_hold, reported_operating or reported_inactive.
+- `obligation`, with a stable ID: maintenance, inspection, lease, tax, insurance,
+  regulatory, financial or other; status open, disputed, reported_satisfied or
+  cancelled. Supply description, optional `due_on`, optional decimal-string
+  `amount_usd` and USD currency. Amounts must be finite, nonnegative cents.
+
+References are retained supplied evidence, not independently authenticated facts.
+`reported_satisfied` is not verified payment, an expense posting, a permit or a
+construction signoff. Missing amounts and dates remain unknown; known USD
+subtotals exclude unknown amounts and must not be read as complete liabilities.
+Initial legacy `asset_obligations` wrappers remain visible in Manny's overview;
+they are not silently converted into dated, verified register entries.
+
+Every command takes an explicit ISO `as_of` date. An open obligation is overdue
+only when its due date is strictly earlier than that date. Due-today obligations
+are not overdue. Future observations and out-of-order updates to the same entity
+are refused; append a current, evidence-linked correction instead. Historical
+read-only projections are supported. The owner brief identifies its last
+explicit monitoring date and never presents that check as a current live scan.
+There is no background scheduler, automatic reminder, live provider access or
+human message delivery in this milestone. Checks occur when the internal
+monitor command is invoked.
+
+Overdue/disputed obligations, on-hold assets and reported operating status create
+stable, dossier-bound items in the existing human owner queue. Repeated checks
+of the same exception do not create duplicate tasks. Later observations do not
+silently close the original tasks; the existing owner decision/revalidation
+mechanism applies. Saving an observation or monitoring result also appends a
+refreshed owner brief. Asset evidence changes revalidate earlier owner decisions.
+Current tracked exceptions block vault filing even if an administrative task was
+closed; closing a task never changes the underlying obligation/status evidence.
+
+Wondrue entrypoints, all using the existing single-owner authentication:
+
+- `inspect_asset_tracking`: read-only; arguments run_id, dossier_key, as_of.
+- `record_asset_observation`: explicit operator intent with run_id, dossier_key,
+  operation_id, expected_digest, as_of and scalar `event_json` containing the
+  structured event below.
+- `monitor_asset_obligations`: the same mutation arguments except event_json;
+  saves a dated monitoring result, queues new exceptions and refreshes the brief.
+- `inspect_elmer_vault`: read-only; run_id and dossier_key. Calls Elmer's internal
+  read-only vault adapter, verifies archived copies, exposes each retained
+  accounting report plus the latest working accounting assessment for comparison.
+  Reading never transfers custody, changes archived records or starts corrections.
+
+Example `event_json` contents (encode this object as a JSON string in intent args):
+
+```json
+{"kind":"obligation","entity_id":"roof-inspection","property_id":"PROPERTY_UUID","observed_on":"2026-11-03","status":"open","category":"inspection","description":"Inspection requirement reported by the supplied source","due_on":"2026-11-10","amount_usd":"125.50","currency":"USD","note":"Reported estimate; no payment or approval asserted","evidence_refs":["RETAINED_EVIDENCE_REFERENCE"],"previous_entity_digest":null}
+```
+
+For a correction, use the current obligation's `entity_digest` as
+`previous_entity_digest`; use the latest dossier digest as `expected_digest`.
+New entity creation requires an explicit null parent. Retrying an identical
+principal-bound operation replays its result; changed inputs require a new
+operation ID. Read-Only rejects mutations, Ask approvals bind the principal,
+model-proposed mutations refuse, and real target/live inference disabled remain
+required. Emergency stop blocks writes. Locks and a single audited transaction
+cover events, snapshots, exception tasks, briefs and operation outcomes;
+interruption rolls the work back. Histories stop at 100 events and the existing
+100-brief limit, whichever is reached first, without deleting history.
+
+Elmer's access is a module-level accounting reader and an authenticated dashboard
+view under the existing single-owner credentials, not a new public account or
+separate agent login. Corrections still use Elmer's linked working-dossier
+reconciliation path. The vault is never edited to match later accounting.
+There are no new migrations, secrets, dependencies, payments, filings, source
+acquisition, contracts or external actions.
+
+Focused tests in `tests/test_asset_tracking.py` cover dates, due-today/overdue
+boundaries, missing and invalid monetary inputs, correction lineage, unchanged
+history, duplicate checks, replay conflicts, scoped property inputs, permissions,
+owner revalidation and tracked-exception filing refusal. The existing PostgreSQL
+coordinator gate additionally proves interrupted asset writes, concurrent replay,
+durable overdue tasks and unchanged protected archive bytes. Elmer's read-only
+vault comparison is checked in the existing vault test.

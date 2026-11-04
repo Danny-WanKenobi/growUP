@@ -143,3 +143,19 @@ def latest_assessment(dossier):
             raise ValueError('accounting assessment lineage failure')
         previous=report
     return previous
+
+
+def read_vault_in_transaction(conn,*,run_id,dossier_key):
+    """Elmer's internal read-only accounting access; never transfers custody."""
+    from app.owner_work import read_vault_in_transaction as read
+    result=read(conn,run_id=run_id,dossier_key=dossier_key)
+    for item in result['entries']:
+        dossier=item['payload'].get('dossier') or {}
+        assessment=latest_assessment(dossier)
+        item['accounting_assessment']=deepcopy(assessment)
+    from app.agents.stages import _load
+    from uuid import UUID
+    current,_=_load(conn,UUID(str(run_id)),dossier_key)
+    result['latest_working_accounting_assessment']=deepcopy(latest_assessment(current.payload.get('dossier') or {}))
+    result.update(reader='elmer',access='read_only',corrections='Use linked working-dossier accounting reassessment; archived bytes are immutable.')
+    return result

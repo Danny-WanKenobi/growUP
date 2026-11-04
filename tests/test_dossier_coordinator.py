@@ -457,6 +457,37 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                     with pytest.raises(Exception,match='append-only'):
                         with conn.cursor() as cur: cur.execute(sql,dict(sid=archived['snapshot_id']))
                     conn.rollback()
+            from app import asset_tracking
+            with get_connection() as conn:
+                current=get_record_in_transaction(conn,rid,'dossier_version',key)
+            observation=dict(kind='obligation',entity_id='pg-inspection',property_id=str(prop['id']),observed_on='2026-11-03',
+                status='open',category='inspection',description='Disposable reported inspection obligation',due_on='2026-11-04',amount_usd='125.50',currency='USD',
+                note='Disposable PG evidence, not payment or clearance',evidence_refs=['pg-test:obligation'],previous_entity_digest=None)
+            asset_args=dict(principal='pg-test',run_id=rid,dossier_key=key,operation_id='pg-asset',expected_digest=current.digest,as_of='2026-11-03',event=observation,operator_authorized=True)
+            append=asset_tracking.append_owner_material_in_transaction
+            def interrupt_asset(*args,**kwargs):
+                append(*args,**kwargs);raise KeyboardInterrupt('controlled asset snapshot interruption')
+            monkeypatch.setattr(asset_tracking,'append_owner_material_in_transaction',interrupt_asset)
+            with pytest.raises(KeyboardInterrupt): asset_tracking.audited(**asset_args)
+            monkeypatch.setattr(asset_tracking,'append_owner_material_in_transaction',append)
+            with get_connection() as conn:
+                assert get_record_in_transaction(conn,rid,'dossier_version',key).digest==current.digest
+            barrier=Barrier(2)
+            def asset_once(_):
+                barrier.wait(timeout=10);return asset_tracking.audited(**asset_args)
+            with ThreadPoolExecutor(max_workers=2) as pool: tracked=list(pool.map(asset_once,range(2)))
+            assert sum(bool(r['replayed']) for r in tracked)==1
+            monitored=asset_tracking.audited(principal='pg-test',run_id=rid,dossier_key=key,operation_id='pg-monitor',expected_digest=tracked[0]['dossier_digest'],as_of='2026-11-05',operator_authorized=True)
+            assert len(monitored['created_task_keys'])==1 and monitored['asset_tracking']['obligations'][0]['overdue']
+            with get_connection() as conn:
+                latest=get_record_in_transaction(conn,rid,'dossier_version',key)
+                assert len(latest.payload['dossier']['owner_asset_events'])==1
+                assert latest.payload['dossier']['owner_briefs'][-1]['asset_tracking']['as_of']=='2026-11-05'
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+6
+                preserved=owner_work.archive_exact_in_transaction(conn,did,version.version)
+                assert preserved['payload']==archived['payload'] and preserved['digest']==archived['digest']
+                from app.agents.elmer import read_vault_in_transaction
+                assert read_vault_in_transaction(conn,run_id=rid,dossier_key=key)['access']=='read_only'
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 

@@ -97,6 +97,7 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
     for task in queue['tasks']: statuses[task['review_status']]=statuses.get(task['review_status'],0)+1
     unresolved=[r['record_key'] for r in queue['tasks'] if r['review_status'] not in ('closed_by_owner','closed_as_duplicate')]
     from app.owner_work import rework_views_in_transaction
+    from app.asset_tracking import retained_view
     brief={'version':'manny-owner-brief-1','run_id':str(run_id),'dossier_key':dossier_key,'property_id':source.payload['property_id'],'source_dossier_digest':source.digest,
         'evidence_context_digest':context,'overview':overview,'exceptions':queue['tasks'],'unscoped_task_keys':queue['unscoped_task_keys'],
         'exception_counts':statuses,'unresolved_task_keys':unresolved,'advisory_threads':advisory,
@@ -106,6 +107,7 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
             'latest_version_digest':latest.digest,'scope':'source dossier before this package is appended'},
         'rework_history':rework_views_in_transaction(conn,run_id,source.payload['dossier']),
         'vault_entries':deepcopy(source.payload['dossier'].get('owner_vault_entries') or []),
+        'asset_tracking':retained_view(source.payload['dossier'],source.payload['property_id']),
         'decision_package_status':'owner_review_required','business_approval':False,'external_actions':0,
         'synthetic':source.payload.get('synthetic') is True,
         'limitations':['Closing an administrative task never verifies a property fact or authorizes execution.',
