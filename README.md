@@ -141,6 +141,73 @@ reused. Rollback to the prior release hides these controls without deleting hist
 An approved retained review can be inspected after redeployment; never discard a
 partially committed review or replay a generic uncertain dispatch blindly.
 
+### Owner evidence intake and attachments
+
+From **Library -> Inspect retained record -> Evidence & attachments**, select a
+file, declare its issuer/source, optional source URL, document date and obtained
+date, claim scope and limitations. Unknown dates remain unknown; the separate
+server receipt timestamp is not the document date. Review the exact filename,
+byte count, SHA-256 and metadata, then explicitly save. The document is linked to
+that exact run/key/version/digest and a pending task appears in **Human Review**.
+**Inspect attached evidence** reopens it from that task. A stale selected version
+cannot accept a new upload; select the current version first. Historical attachments
+remain bound to their original version, without silent rebinding.
+
+The server always assigns `owner_supplied_unverified`. It accepts no caller
+verification flag, collector marker or authentication override. Declared provenance,
+issuer, dates, filename and checksum do **not** authenticate the property claims.
+The existing Census/DCAD collector-only admission policies are unchanged. Uploads
+are not automatically parsed, admitted to verification, passed to an agent or used
+to change an assessment. Automatic evidence-to-rework routing remains a subsequent
+milestone. Acknowledging/closing the administrative task cannot authenticate a file.
+
+Original bytes, metadata and a bounded append-only index use the existing private
+workflow store. No public file directory, new storage dependency or schema migration
+is introduced. Each dossier can retain 20 files of at most **512 KiB** each. Allowed
+formats are PDF, PNG, JPEG and UTF-8 TXT/CSV; archives, HTML, executables, invalid
+UTF-8, path-like filenames and mismatched headers refuse. Header checks identify
+containers only: no malware scanning, PDF interpretation, OCR or safety certification
+is provided. Files are always authenticated **downloads**, never inline previews,
+with octet-stream, attachment disposition, no-store and nosniff headers. Reads verify
+both retained-record digests and the original byte checksum. Source URLs are stored
+as text and never fetched. Do not put credentials in a source URL; those refuse.
+
+Owner/operator access plus matching Origin is required before an upload body is
+read. The JSON envelope is capped at 750,000 bytes for both declared-length and
+streamed requests, fitting the existing private gateways. Reader credentials may
+inspect/download, but cannot upload. The audit stores the consequential event, not
+file contents. Same-ID/same-request retries replay one result; conflicting identity
+or duplicate bytes under a new ID refuse. Blob, metadata, index, review task and
+audit commit together; interruption rolls everything back. The original dossier,
+reports, versions and custody receipts are not amended by intake. Operational
+connectors are required; synthetic demo records cannot be uploaded through this path.
+
+Implementation: `app/owner_evidence.py`, `app/routes/owner_evidence.py` and
+`app/wondrue_assets/evidence.js`, integrated with the existing workspace/inbox.
+Private endpoints: POST/GET `/wondrue/api/evidence`, metadata GET
+`/wondrue/api/evidence/{run_id}/{evidence_id}` and authenticated GET with
+`/download`. No hard-delete or metadata-edit endpoint is provided.
+
+Focused checks (no full regression suite):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_owner_evidence.py tests/test_wondrue_workspace.py -q -p no:cacheprovider
+node --check app/wondrue_assets/evidence.js
+```
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-owner-evidence.py
+```
+
+The proof helper runs only on securecode-dev against `growup_mvp_gate`, with
+external network blocked. It exercises real PostgreSQL concurrent replay,
+interrupted-save rollback, byte retrieval and unchanged dossier/custody. Explicit
+non-real test fixtures and their audit history stay in the gate database. Validation:
+29 focused local tests passed, two explicit PG checks skipped locally; the new
+selected PostgreSQL proof passed. Browser QA saved a test attachment, reopened it
+from Human Review and verified a 390px mobile layout without horizontal overflow.
+No real operational attachment, source acquisition or provider call was made.
+
 ### Dossier-aware conversations
 
 Open a Library dossier and choose **Discuss this dossier**. Its exact run, key,
