@@ -201,6 +201,8 @@ def control(conn,*,package_entry,action,request_id,expected_revision,principal,a
             from app.visual_design import reuse_visuals
             package=get_package_in_transaction(conn,package_entry)
             draft['visual_reuse']=reuse_visuals(package or {},actor=actor,text=text)
+            if draft['visual_reuse'].get('html'):
+                draft.update(html=draft['visual_reuse']['html'],attachments=draft['visual_reuse']['attachments'])
             write(conn,run.run_id,'draft:'+request_id,draft)
             state['latest_draft_key']='draft:'+request_id
         else:

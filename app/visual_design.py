@@ -3,7 +3,7 @@
 Generated SVG contains no scripts, external resources, foreignObject or raw markup
 from evidence. Financial copy is escaped verbatim; no new figures are invented.
 """
-from base64 import b64encode
+from base64 import b64encode, b64decode
 from hashlib import sha256
 from html import escape
 import json
@@ -145,7 +145,12 @@ def campaign_visuals(dossier, engineering, introduction):
         photos.append({**image, 'rights_basis':'operator_content_hash_allowlist',
                        'label':'Source photo; property association unverified unless separately established.'})
     # Artwork is reused by Simeon and Solomon; these roles never invoke a designer.
-    return {'schema':'campaign-visuals-1', 'author':'uriel', 'concepts':drawings,
+    png_assets=[]
+    for drawing in drawings:
+        content=raster_concept(drawing)
+        png_assets.append({'id':drawing['id'],'sha256':sha256(content).hexdigest(),
+                           'content':b64encode(content).decode(),'media_type':'image/png'})
+    return {'schema':'campaign-visuals-1', 'author':'uriel', 'concepts':drawings,'png_assets':png_assets,
             'source_photos':photos, 'withheld_source_photos':unavailable,
             'copy':introduction, 'synthetic':bool(dossier.get('synthetic')),
             'status':'prepared_not_sent', 'provider_calls':0, 'photos_missing':not bool(photos),
@@ -261,10 +266,30 @@ def reuse_visuals(package, *, actor, text):
     visual=campaign.get('visual_package')
     if not visual:
         return {'status':'no_retained_visuals','design_requested':False,'provider_calls':0}
-    return {'status':'reusing_retained_visuals', 'package_entry':str(package.get('entry_id','')),
+    result={'status':'reusing_retained_visuals', 'package_entry':str(package.get('entry_id','')),
             'visual_package_digest':digest_payload(visual), 'concept_sha256':[c['sha256'] for c in visual['concepts']],
             'artwork_digest':digest_payload(campaign.get('artwork') or {}),
             'authored_text_digest':digest_payload({'text':text}), 'design_requested':False,'provider_calls':0}
+    pngs=visual.get('png_assets') or []
+    if pngs:
+        image=pngs[0]
+        try:body=b64decode(image['content'],validate=True)
+        except (ValueError,KeyError):raise WorkflowError('retained response image is malformed') from None
+        if len(body)>1_000_000 or sha256(body).hexdigest()!=image.get('sha256'):
+            raise WorkflowError('retained response image digest mismatch')
+        from io import BytesIO
+        from PIL import Image, UnidentifiedImageError
+        try:
+            with Image.open(BytesIO(body)) as decoded:
+                if decoded.format!='PNG' or decoded.size!=(1200,760) or getattr(decoded,'n_frames',1)!=1:
+                    raise WorkflowError('retained response image format or dimensions differ')
+                decoded.verify()
+        except (UnidentifiedImageError,OSError,ValueError):
+            raise WorkflowError('retained response image is unsafe') from None
+        result['html']='<html><body><p>'+escape(text).replace('\n','<br>')+'</p><img src="cid:growup-retained-concept" width="600" alt="Retained preliminary Kratky concept"><p>'+LABEL+'</p></body></html>'
+        result['attachments']=[{'filename':'growup-retained-concept.png','content_id':'growup-retained-concept',
+                                'content':image['content'],'sha256':image['sha256']}]
+    return result
 
 
 def canva_brief(agent, *, dossier_digest, package):

@@ -125,6 +125,8 @@ def test_illustrated_full_package_schedule_mime_and_simeon_reuse(tmp_path):
     result=reuse_visuals(package,actor='simeon',text='My own reply.')
     assert result['concept_sha256']==[c['sha256'] for c in visual['concepts']]
     assert not result['design_requested'] and result['provider_calls']==0
+    assert result['attachments'][0]['content']==visual['png_assets'][0]['content']
+    assert 'My own reply.' in result['html'] and 'cid:growup-retained-concept' in result['html']
 
 
 def test_ordinary_uriel_preparation_persists_all_eleven_designs(monkeypatch):

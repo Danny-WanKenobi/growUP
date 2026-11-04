@@ -308,7 +308,9 @@ PNG, plus the illustrated ZIP. Existing recipient, permission, one-shot claim an
 no-retry safeguards remain; building artwork never sends an email. Uriel remains
 email-only; letters/flyers/cards are digital attachments, not enabled postal work.
 
-Simeon writes his own response text and references retained campaign visual hashes
+Simeon writes his own response text and reuses the exact retained Uriel PNG in
+a prepared HTML/CID reply attachment. Its hash and dimensions are verified; he
+does not regenerate it. The draft also references the campaign artwork digest
 and the exact package. He cannot request a Canva design or collect images. Direct
 mailbox replies without established dossier correlation do not attach private
 visuals. Historical reports/campaigns are not rewritten. An old engineering report

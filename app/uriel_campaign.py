@@ -110,7 +110,7 @@ def demo_message(campaign, *, start_at, timezone_name):
         for drawing in visual['concepts']:
             visual_files['artwork/concepts/'+drawing['id']+'.svg'] = drawing['svg'].encode()
             visual_files['artwork/concepts/'+drawing['id']+'.png'] = raster_concept(drawing)
-        visual_files['artwork/manifest.json'] = json.dumps({k:v for k,v in visual.items() if k not in ('copy','source_photos','concepts')},indent=2).encode()
+        visual_files['artwork/manifest.json'] = json.dumps({k:v for k,v in visual.items() if k not in ('copy','source_photos','concepts','png_assets')},indent=2).encode()
         visual_files['canva/uriel-brief.json'] = json.dumps(campaign.get('visual_design_brief') or {},indent=2).encode()
         files['canva/README.txt'] = 'Optional Canva design exchange. PNG/SVG concepts and exact copy are supplied in this package. No account connection, credit allowance, paid request or automatic export is established by these files. Do not send source photos or private records to Canva without the applicable approval. Simeon reuses the completed materials; he does not request designs.\n'
         files['README.txt'] += 'Artwork is in artwork/. Open the HTML materials in a browser; PNG/SVG concepts are included. All art is conceptual, not site evidence. Physical mailing remains disabled.\n'
