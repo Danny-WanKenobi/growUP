@@ -488,6 +488,40 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 assert preserved['payload']==archived['payload'] and preserved['digest']==archived['digest']
                 from app.agents.elmer import read_vault_in_transaction
                 assert read_vault_in_transaction(conn,run_id=rid,dossier_key=key)['access']=='read_only'
+            from app import asset_monitor
+            from datetime import datetime,timezone
+            monkeypatch.setenv('ASSET_MONITOR_ENABLED','1')
+            monkeypatch.setenv('SABBATH_BLACKOUT','0')
+            now=datetime(2026,11,6,18,tzinfo=timezone.utc)
+            def guard_gate(conn):
+                with conn.cursor() as cur:
+                    cur.execute('SELECT current_database() AS db')
+                    assert cur.fetchone()['db']=='growup_mvp_gate'
+            monkeypatch.setattr(asset_monitor,'guard_database',guard_gate)
+            monitor_put=asset_monitor.put_record_in_transaction
+            def interrupt_status(*args,**kwargs):
+                result=monitor_put(*args,**kwargs)
+                if kwargs.get('record_key','').startswith('asset-monitor-status:'): raise KeyboardInterrupt('controlled monitor checkpoint interruption')
+                return result
+            monkeypatch.setattr(asset_monitor,'put_record_in_transaction',interrupt_status)
+            with pytest.raises(KeyboardInterrupt): asset_monitor.check(run_id=rid,dossier_key=key,now=now)
+            monkeypatch.setattr(asset_monitor,'put_record_in_transaction',monitor_put)
+            with get_connection() as conn:
+                assert get_record_in_transaction(conn,rid,'research_artifact','asset-monitor-status:'+key) is None
+            with get_connection() as conn:
+                selected=asset_monitor.candidates(conn,('',''),20)
+                assert any(str(t['run_id'])==str(rid) and t['record_key']==key for t in selected)
+                before=get_record_in_transaction(conn,rid,'dossier_version',key)
+            automatic=asset_monitor.check(run_id=rid,dossier_key=key,now=now)
+            assert automatic['status']=='checked' and automatic['created_tasks']==0
+            with get_connection() as conn:
+                assert get_record_in_transaction(conn,rid,'dossier_version',key).digest==before.digest
+            with get_connection() as conn:
+                assert asset_monitor.check_in_transaction(conn,run_id=rid,dossier_key=key,now=now)['status']=='already_checked'
+                status=get_record_in_transaction(conn,rid,'research_artifact','asset-monitor-status:'+key)
+                assert status.payload['as_of']=='2026-11-06'
+                assert manny_review.inspect_in_transaction(conn,run_id=rid,dossier_key=key)['brief']['automatic_monitoring']['source_is_current']
+
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 

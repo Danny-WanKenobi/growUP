@@ -5935,3 +5935,79 @@ owner revalidation and tracked-exception filing refusal. The existing PostgreSQL
 coordinator gate additionally proves interrupted asset writes, concurrent replay,
 durable overdue tasks and unchanged protected archive bytes. Elmer's read-only
 vault comparison is checked in the existing vault test.
+
+#### Bounded automatic internal asset monitoring
+
+`python -B -m app.asset_monitor` runs one cycle and exits. It is disabled unless
+`ASSET_MONITOR_ENABLED=1` and the existing workflow is enabled. It refuses any
+runtime database except `growup_dev` as `growup_app`; it does not target production,
+the synthetic demo database or the PostgreSQL gate database. Tests use disposable
+gate records through the transaction-level helper only. The emergency stop and
+existing owner-configured Sabbath guard are checked before connecting and between
+dossiers. Dates are derived from the aware worker clock in America/Chicago;
+missing timezone data fails closed through the shared blackout guard. The Sabbath
+window remains the configured clock approximation, not an astronomical sunset
+calculation; keep its existing seasonal configuration accurate.
+
+The development timer runs 2 minutes after boot and every 15 minutes after the
+previous invocation finishes. Each cycle examines at most 20 latest, tracked,
+non-synthetic workflow dossiers, for a 60-second work budget. Each database
+statement is limited to 5 seconds and lock waits to 1 second. An in-flight bounded
+statement may finish after the work budget; systemd imposes a 90-second service
+limit, then SIGTERM/10-second shutdown handling. Dossier work, queue creation,
+monitoring status and permanent audit commit together; interruption rolls back
+in-flight work. Already committed dossiers stay committed. A database advisory
+session lock suppresses overlapping cycles across hosts/processes.
+
+A durable keyset cursor advances after every attempted dossier, including blocked
+or upstream-held records, so one blocked item cannot monopolize the scan. It wraps
+after reaching the end. A crash before cursor saving can revisit a dossier, but
+the locked per-dossier daily/event-digest checkpoint prevents duplicate work.
+Only held-Manny dossiers with retained asset observations are monitored. No new
+properties, discovery work, evidence retrieval, models, emails, payments or legal
+approvals are performed. Historical test/demo records are not enrolled.
+
+Each eligible dossier is checked at most once per Chicago day unless its asset
+observation digest changes. Backward monitoring dates refuse. Routine checks
+retain a versioned `asset-monitor-status:<dossier_key>` and audit; they append an
+owner brief only when new exception tasks are created, avoiding daily consumption
+of the canonical 100-brief limit. Manual monitoring retains its existing always-
+save behavior. New tasks still use the same stable exception IDs and shared owner
+queue. Previous decisions are never executed, closed or overwritten by the timer.
+Existing history limits remain enforced; a history-limit failure is a blocker,
+not permission to discard records.
+
+`inspect_owner_brief` exposes `automatic_monitoring` with checked_at, as_of,
+checked_state and source_is_current (the asset observation digest still matches,
+not a claim that a scheduled check just ran). The separately retained canonical
+asset_tracking field preserves its saved snapshot date. Errors produce sanitized
+blocked counts rather than credentials or record contents. A cycle containing
+blocked dossiers exits nonzero so service status/journal shows the condition;
+other records can progress and the next scheduled cycle retries after traversal.
+No missed-tick catch-up burst occurs after downtime or blackout.
+
+Reviewed activation requires local sudo because deployment and test privileges do
+not install system timers. After deployment and PostgreSQL acceptance:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/setup-asset-monitor.py --release /var/www/growup/current --apply
+systemctl list-timers growup-asset-monitor.timer
+systemctl --no-pager show growup-asset-monitor.service -p Result -p ExecMainStatus
+journalctl -u growup-asset-monitor.service --no-pager -n 20
+```
+
+The installer verifies the active development release, preserves differing existing
+units for review, installs only the two reviewed unit files, verifies them, then
+enables the timer and runs one bounded check. It does not modify credentials,
+shared application settings, other timers or network routing. Future deployments
+use the current release path automatically. Pause future cycles with
+`sudo systemctl disable --now growup-asset-monitor.timer`; stop an in-flight cycle
+with `sudo systemctl stop growup-asset-monitor.service`. Disabling the timer does
+not stop a cycle already running. The existing emergency-stop setting also blocks
+new dossier work. Restart/re-enable resumes from the durable cursor.
+
+`tests/test_asset_monitor.py` checks pauses without database access, synthetic
+exclusion, development-target refusal, overlap, deadline and cursor/failure
+fairness. The PostgreSQL coordinator gate exercises the real candidate query,
+daily idempotency, persisted check status and unchanged canonical dossier on an
+unchanged routine check. These tests do not activate a timer or enroll production.

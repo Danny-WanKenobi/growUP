@@ -108,13 +108,15 @@ def inspect_in_transaction(conn,*,run_id,dossier_key,as_of):
     return {**project(source.payload['dossier'],property_id=source.payload['property_id'],as_of=as_of),'source_dossier_digest':source.digest}
 
 
-def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expected_digest,as_of,event=None,operator_authorized=False):
+def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expected_digest,as_of,event=None,operator_authorized=False,brief_policy='always'):
     from app.mvp import _require_enabled
     _require_enabled()
     if not isinstance(principal,str) or not principal.strip() or operator_authorized is not True: raise WorkflowError('explicit operator grant required')
     if os.getenv('DOSSIER_COORDINATOR_EMERGENCY_STOP','0')=='1': raise WorkflowError('asset tracking emergency-stopped')
+    if brief_policy not in ('always','on_exception') or (event is not None and brief_policy!='always'): raise WorkflowError('unsupported monitoring brief policy')
     _date(as_of);run_id=UUID(str(run_id));source,did=manny_review._locked(conn,run_id,dossier_key)
     request=dict(principal=principal,dossier_key=dossier_key,expected_digest=expected_digest,as_of=as_of,event=event)
+    if brief_policy!='always': request['brief_policy']=brief_policy
     key,replay=manny_review._operation(conn,run_id,dossier_key,operation_id,request)
     if replay: return replay
     source,_=_load(conn,run_id,dossier_key,'manny')
@@ -136,10 +138,15 @@ def mutate_in_transaction(conn,*,principal,run_id,dossier_key,operation_id,expec
             task=dict(agent='manny',property_id=source.payload['property_id'],dossier_id=str(did),requirement=issue['reason'],
                 entity_id=issue['entity_id'],entity_digest=issue['entity_digest'],detected_as_of=as_of,status='pending',authority='human_owner',grants_permission=False)
             put_record_in_transaction(conn,run_id,kind='owner_review_task',record_key=task_key,version=1,payload=task,digest=digest_payload(task));created.append(task_key)
-    brief=manny_review.inspect_in_transaction(conn,run_id=run_id,dossier_key=dossier_key)['brief']
-    brief.pop('digest');brief['asset_tracking']=state;brief=_seal(brief)
-    source,version=append_owner_material_in_transaction(conn,run_id,dossier_key,section='owner_briefs',material=brief)
-    result=dict(asset_tracking=state,created_task_keys=created,owner_brief_digest=brief['digest'],dossier_digest=source.digest,custody_version=version.version,external_actions=0,replayed=False)
+    brief=None
+    if brief_policy=='always' or created:
+        brief=manny_review.inspect_in_transaction(conn,run_id=run_id,dossier_key=dossier_key)['brief']
+        brief.pop('digest');brief['asset_tracking']=state;brief=_seal(brief)
+        source,version=append_owner_material_in_transaction(conn,run_id,dossier_key,section='owner_briefs',material=brief)
+    else:
+        from app.custody_db import latest_version_in_transaction
+        version=latest_version_in_transaction(conn,did)
+    result=dict(asset_tracking=state,created_task_keys=created,owner_brief_digest=brief['digest'] if brief else None,dossier_digest=source.digest,custody_version=version.version,external_actions=0,replayed=False)
     record=dict(request=request,result=result)
     put_record_in_transaction(conn,run_id,kind='research_artifact',record_key=key,version=1,payload=record,digest=digest_payload(record))
     return result

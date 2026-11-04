@@ -1,0 +1,12 @@
+[Unit]
+Description=Grow Up bounded asset monitor every 15 minutes after completion
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15min
+AccuracySec=30s
+Unit=growup-asset-monitor.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

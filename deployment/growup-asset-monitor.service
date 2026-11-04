@@ -1,0 +1,20 @@
+[Unit]
+Description=Grow Up bounded internal asset due-date monitoring
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=growup
+Group=growup
+WorkingDirectory=/var/www/growup/current
+EnvironmentFile=/var/www/growup/shared/growup.env
+ExecStart=/usr/bin/env ASSET_MONITOR_ENABLED=1 META_SPEND_APPROVED=0 OBS_ENABLED=0 PYTHONDONTWRITEBYTECODE=1 /var/www/growup/current/.venv/bin/python -B -m app.asset_monitor
+TimeoutStartSec=90s
+TimeoutStopSec=10s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

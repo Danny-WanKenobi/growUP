@@ -98,6 +98,8 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
     unresolved=[r['record_key'] for r in queue['tasks'] if r['review_status'] not in ('closed_by_owner','closed_as_duplicate')]
     from app.owner_work import rework_views_in_transaction
     from app.asset_tracking import retained_view
+    automatic=get_record_in_transaction(conn,run_id,'research_artifact','asset-monitor-status:'+dossier_key)
+    if automatic and automatic.digest!=digest_payload(automatic.payload): raise WorkflowError('automatic monitor status integrity failure')
     brief={'version':'manny-owner-brief-1','run_id':str(run_id),'dossier_key':dossier_key,'property_id':source.payload['property_id'],'source_dossier_digest':source.digest,
         'evidence_context_digest':context,'overview':overview,'exceptions':queue['tasks'],'unscoped_task_keys':queue['unscoped_task_keys'],
         'exception_counts':statuses,'unresolved_task_keys':unresolved,'advisory_threads':advisory,
@@ -107,6 +109,7 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
             'latest_version_digest':latest.digest,'scope':'source dossier before this package is appended'},
         'rework_history':rework_views_in_transaction(conn,run_id,source.payload['dossier']),
         'vault_entries':deepcopy(source.payload['dossier'].get('owner_vault_entries') or []),
+        'automatic_monitoring':{**deepcopy(automatic.payload),'source_is_current':automatic.payload['asset_event_digest']==((source.payload['dossier'].get('owner_asset_events') or [{}])[-1]).get('digest')} if automatic else None,
         'asset_tracking':retained_view(source.payload['dossier'],source.payload['property_id']),
         'decision_package_status':'owner_review_required','business_approval':False,'external_actions':0,
         'synthetic':source.payload.get('synthetic') is True,

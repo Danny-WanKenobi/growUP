@@ -272,3 +272,24 @@ Notes:
   expectation of partitioned work — overlapping sweeps are correct
   but duplicate effort; one active timer per database is the
   intended topology.
+
+## Bounded asset monitor (owner activation)
+
+After the deployed release passes PostgreSQL acceptance, run:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/setup-asset-monitor.py --release /var/www/growup/current --apply
+```
+
+This installs only `growup-asset-monitor.service` / `.timer`, enables a 15-minute
+completion-based cadence and runs one bounded internal check. It uses existing
+service credentials without changing them. Its worker is restricted to
+`growup_dev/growup_app`, at most 20 dossiers and a 60-second work budget (90-second
+systemd limit); no providers or external business actions. The shared emergency
+stop and Sabbath window apply. Manual deployment does not enable the timer.
+Inspect result with `systemctl --no-pager show growup-asset-monitor.service -p Result
+-p ExecMainStatus` and `systemctl list-timers growup-asset-monitor.timer`.
+Stop future ticks using `sudo systemctl disable --now growup-asset-monitor.timer`;
+stop an active cycle separately using `sudo systemctl stop growup-asset-monitor.service`.
+The durable cursor/checkpoints survive stops and release updates. Root README
+contains detailed bounds, daily deduplication and failure semantics.
