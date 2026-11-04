@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 
 
 def main():
@@ -20,13 +21,15 @@ def main():
         '-p','EnvironmentFile=/var/www/growup/shared/handoff-demo.env','-p','TimeoutStartSec=300',
         '/usr/bin/env','MVP_WORKFLOW_ENABLED=1','META_SPEND_APPROVED=0','OBS_ENABLED=0','PYTHONDONTWRITEBYTECODE=1',
         str(release/'.venv/bin/python'),'-B','-m','app.handoff_demo','showcase-suite','--run-key',args.run_key]
+    print("Synthetic run prefix: "+args.run_key,flush=True)
     completed=subprocess.run(cmd,capture_output=True,text=True)
     if completed.returncode: raise SystemExit('STOP: isolated showcase proof failed. Partial synthetic progress is retained; retry with the SAME run key: '+args.run_key)
     proof=json.loads(completed.stdout)
     if proof.get('result')!='PASS' or proof.get('operational_writes')!=0 or proof.get('scenarios')!=29: raise SystemExit('STOP: unexpected proof result')
-    target=Path('/home/ubuntu')/(args.run_key+'-proof.json')
-    # Run key is validated by the child before this path is used.
-    target.write_text(json.dumps(proof,indent=2),encoding='utf-8');os.chmod(target,0o644)
+    fd,name=tempfile.mkstemp(prefix='growup-us-demo-proof-',suffix='.json',dir='/home/ubuntu')
+    target=Path(name)
+    with os.fdopen(fd,'w',encoding='utf-8') as output: json.dump(proof,output,indent=2)
+    os.chmod(target,0o644)
     print('PASS: 13 checkpoint-matrix runs + 16 fictional US property cases persisted in growup_handoff_demo.')
     for case in proof['property_catalogue']['results']:
         print(case['name']+' | '+case['city']+', '+case['state']+' | '+case['property_type']+' | '+case['phase']+' | '+case['run_key'])
