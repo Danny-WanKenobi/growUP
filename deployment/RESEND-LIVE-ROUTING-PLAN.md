@@ -1,9 +1,9 @@
-# Resend VPS deployment and routing plan — NOT ACTIVATED
+# Resend VPS routing — deployment verified, provider activation pending
 
 No VPS deployment, Nginx edit, secret change, webhook registration, provider
 request, mail delivery or production migration is authorized by this document.
 
-## Confirmed baseline
+## Historical inspection baseline
 
 Read-only inspection on 2026-11-04 found srv1577410 serving
 growup.securecodeusa.com through Cloudflare and Nginx, with a private-preview
@@ -11,7 +11,9 @@ Basic Authentication gate at server scope. Nginx proxies to 127.0.0.1:8010.
 The active release was 20261101T171548Z_91591ba. Its running environment named
 growup_prod, growup_app, DEMO_MODE=yes and MVP_WORKFLOW_ENABLED=0. Backend health
 and readiness returned 200. The release lacked the Resend implementation.
-Reconfirm this baseline immediately before any approved change.
+This baseline was superseded by the owner-authorized live deployment on 2026-11-04.
+The first verified new activation was 4d1000e; consult the current RELEASE-MANIFEST.txt
+for subsequent exact revisions. Reconfirm the current state before another change.
 
 ## Independent configuration
 
@@ -112,3 +114,24 @@ Exact deployed commit, schema/migration disposition, nonsecret server/data/actio
 profile, health/readiness, private-page protection, public endpoint rejection
 tests, correct signature tests, retained event replay evidence, rollback point,
 and a statement of which provider calls or deliveries were actually authorized.
+
+
+## Verified deployment checkpoint (2026-11-04)
+
+The new GitHub-based live launcher successfully installed the reviewed application
+on srv1577410, configured LIVE_SERVER, checked an empty pending-migration list
+without production SQL writes, preserved a custom-format growup_prod backup with
+a verified SHA256 and retained its previous release/environment rollback point.
+Health and readiness passed on 127.0.0.1:8010. The exact Nginx callback exception
+was installed after nginx -t validation; no other site's routing was modified.
+
+Public HTTPS verification through Cloudflare found: / and /docs return Basic
+Authentication 401; /integrations/resend/enroll and /wondrue/command still return
+Basic Authentication 401; GET on the exact callback returns method-restricted 403;
+POST on the exact callback reaches application JSON resend_tracking_disabled
+(404, no Basic Authentication challenge). A trailing-slash callback remains
+protected. Thus routing is established, but event processing remains disabled.
+
+Resend registration, actual signing secret, actual receiving domain, enabled event
+tracking and bounded end-to-end provider proof are still pending. No outbound
+sender or Solomon live-mail transport was added by this deployment task.

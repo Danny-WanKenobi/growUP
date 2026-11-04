@@ -18,10 +18,13 @@ def test_mode_update_preserves_secrets_and_existing_provider_policy():
     changed,report=tool.revised(original,'srv1577410')
     assert 'DATABASE_PASSWORD="private-value"' in changed and 'DEMO_MODE=yes' in changed
     assert 'RESEND_TRACKING_ENABLED=1' in changed and 'SERVER_MODE=LIVE_SERVER' in changed
+    assert 'RESEND_SENDER=uriel@securecodeusa.com' in changed
     assert 'private-value' not in str(report)
     assert tool.revised(changed,'srv1577410')[0]==changed
     dev,_=tool.revised(original,'securecode-dev',True)
     assert 'SERVER_MODE=DEV_SERVER' in dev and 'RESEND_TRACKING_ENABLED=0' in dev
+    custom,_=tool.revised(original+'RESEND_SENDER=custom@securecodeusa.com\n','srv1577410')
+    assert 'RESEND_SENDER=custom@securecodeusa.com' in custom
 
 
 def test_pending_inventory_is_read_only_and_closes_connection(monkeypatch):

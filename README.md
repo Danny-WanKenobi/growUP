@@ -6299,8 +6299,9 @@ credentials. Development deployment is pinned to ubuntu@securecode-dev.
 The separate proposed VPS upgrade, exact-path Nginx exception, verification and
 rollback checkpoint are in
 [deployment/RESEND-LIVE-ROUTING-PLAN.md](deployment/RESEND-LIVE-ROUTING-PLAN.md).
-That plan has not been applied. No callback has been registered and no VPS
-deployment, production migration or provider activation occurred in this task.
+The initial server-toggle checkpoint did not apply that plan. The subsequent
+owner-authorized deployment-workflow task upgraded the VPS and installed the exact
+callback route; Resend registration and provider activation remain pending.
 
 
 ## Finalized two-server deployment workflow
@@ -6321,3 +6322,21 @@ preserved. Callback routing setup is a separate exact-path, validated Nginx chan
 not a global preview-auth removal. No deployment registers a Resend webhook or
 sends email. See deployment/README-DEPLOYMENT.md for bootstrap, rollback, targeted
 proof and the remaining secret/receiving-domain activation prerequisites.
+
+
+### Verified live deployment and Resend routing
+
+On 2026-11-04 the corrected live launcher deployed the reviewed revision to
+srv1577410 and set LIVE_SERVER. The current release manifest is authoritative for
+the exact commit. A protected PostgreSQL backup/checksum and old configuration/
+release checkpoint were retained. All 17 migrations were already applied; live
+preflight confirmed no pending SQL. Both health and database readiness passed.
+
+The exact public POST /integrations/resend/webhook now reaches the installed
+adapter. It returns structured disabled-integration JSON until configured, while
+ordinary pages, docs, private enrollment, command routes and trailing-slash paths
+retain preview authentication. Resend is not registered or enabled, and no email
+has been sent. Actual receiving-domain/signing-secret setup and the still-missing
+outbound transport remain explicit follow-up work. The development instance uses
+DEV_SERVER; root-owned tool installation/explicit environment configuration may
+require the owner's local dev-console command described in the deployment guide.

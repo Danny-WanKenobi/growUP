@@ -17,6 +17,8 @@ PROFILES={
 def revised(text,host,disable_resend=False):
     mode,port,database,callback=PROFILES[host]
     updates={'SERVER_MODE':mode,'RESEND_PUBLIC_CALLBACK_URL':callback}
+    sender_values=[line.partition('=')[2].strip().strip('"\'') for line in text.splitlines() if line.strip().partition('=')[0]=='RESEND_SENDER']
+    if not sender_values or not sender_values[-1]: updates['RESEND_SENDER']='uriel@securecodeusa.com'
     if disable_resend: updates.update(RESEND_TRACKING_ENABLED='0',RESEND_POLL_ENABLED='0',RESEND_POLL_ACCESS_APPROVED='0')
     kept=[]
     for line in text.splitlines():

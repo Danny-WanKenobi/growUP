@@ -100,7 +100,8 @@ def inspect(environ=None):
         "poll_api_key_installed":bool(env.get("RESEND_API_KEY","")),
         "poll_request_allowance_configured":env.get("RESEND_POLL_REQUEST_ALLOWANCE","0")!="0",
         "poll_mode_requires_public_callback":False,
-        "note":"Placeholder configuration permits local signed-fixture testing; public callbacks remain unavailable."}
+        "note":("Private DEV_SERVER: callbacks are intentionally unavailable; offline tests and separately authorized polling remain possible."
+            if not target.callback_available else "LIVE_SERVER callback selected; this preview does not verify routing or enable provider access. Resolve the listed prerequisites before activation.")}
 
 
 if __name__ == "__main__":
