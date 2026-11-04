@@ -44,6 +44,23 @@ function conversionOptions(){
  const terms=node('article');terms.append(node('h3','Theresia · Unsigned, conditional proposal'));for(const text of b.theresia.participation_proposal.conditions)terms.append(node('p','• '+text));
  const audit=node('article');audit.append(node('h3','Elmer · Keep proposed capital separate from income'));for(const text of b.elmer.classification_notes)audit.append(node('p',text));
  root.append(sales,terms,audit,detail('Explicit assumptions, formulas and source linkage',{inputs:m.inputs,formulas:m.formulas,source_dossier_digest:b.source_dossier_digest,model_digest:m.digest,reports_mutated:b.reports_mutated}));
+ const records=b.owner_history||[],latest=records.at(-1);
+ const owner=node('article');owner.append(node('h3','Manny · Fictional owner decision package'));
+ for(const item of records){const card=node('article');card.append(node('h3','Revision '+item.revision+' · '+(item.pathway==='owner_funded'?'Owner-funded consulting':'Project participation simulation')),node('p',item.fictional_owner_concerns),node('p',item.manny.decision));
+ for(const condition of item.manny.unresolved_conditions)card.append(node('p','Pending: '+condition));
+ card.append(detail('Retained assessment and predecessor linkage',item));owner.append(card);}
+ if(!records.length)owner.append(node('p','No fictional preference has been saved yet.'));
+ const form=node('form'),choice=node('select');choice.setAttribute('aria-label','Fictional preferred pathway');
+ for(const [value,label] of [['owner_funded','Owner-funded consulting'],['participation','Tokenized project participation — simulated']]){const option=node('option',label);option.value=value;choice.append(option);}
+ choice.value=latest?latest.pathway:'owner_funded';
+ const concerns=node('textarea');concerns.maxLength=1000;concerns.required=true;concerns.setAttribute('aria-label','Fictional owner concerns');concerns.value=latest?latest.fictional_owner_concerns:'Fictional owner wants to compare available cash, control and risk before deciding.';
+ const save=node('button','Save fictional preference for Manny');form.append(choice,concerns,save);
+ form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{
+ const response=await fetch('/wondrue/api/demo-tour/conversion-preference',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({pathway:choice.value,concerns:concerns.value,expected_previous:latest?latest.digest:null})});
+ const result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Preference could not be saved');
+ if(!result.replayed)b.owner_history=[...records,result.assessment];conversionOptions();status(result.replayed?'Existing fictional preference retained; no duplicate created.':'Linked demo owner package saved. No real action authorized.');
+ }catch(error){status(error.message+' Reload the page before retrying a conflicting preference.');save.disabled=false;}};
+ owner.append(form,node('p','Owner-only save to the isolated demo database. No email, funding, token issuance, ledger posting or canonical custody change.'));root.append(owner);
  status('Demo-only comparison. Retained dossier and accounting history unchanged.');
 }
 $('conversion').onclick=conversionOptions;

@@ -49,6 +49,8 @@ def inspect_in_transaction(conn):
         if item.get('scenario_id')=='hudson-sky':
             from app.conversion_demo import build
             conversion_options=build(row.payload)
+            from app.conversion_owner_demo import history
+            conversion_options['owner_history']=history(conn,run.run_id,row.payload)
     from app.demo_knowledge import library
     return demo.marked({'package_id':package_id(),'database':'growup_handoff_demo','chapters':[{'title':title,'text':text} for title,text in CHAPTERS],
         'cases':record.payload['cases'],'program':program(),'knowledge':library(),'manifest_digest':record.digest,

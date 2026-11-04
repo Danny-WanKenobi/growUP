@@ -2,10 +2,28 @@
 from pathlib import Path
 from fastapi import APIRouter,Request,HTTPException
 from fastapi.responses import HTMLResponse,FileResponse
+from pydantic import BaseModel, Field, ConfigDict
 from app.routes.wondrue_cockpit import authorize,HEADERS
 from app.db import DatabaseNotConfiguredError,DatabaseUnavailableError
 router=APIRouter()
 ASSETS=Path(__file__).resolve().parents[1]/'wondrue_assets'
+
+
+class ConversionPreference(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    pathway:str
+    concerns:str=Field(min_length=1,max_length=1000)
+    expected_previous:str | None=Field(default=None,pattern='^[0-9a-f]{64}$')
+
+
+@router.post('/wondrue/api/demo-tour/conversion-preference')
+def conversion_preference(body:ConversionPreference,request:Request):
+    authorize(request,mutate=True)
+    from app.conversion_owner_demo import service
+    try:return service(body.pathway,body.concerns,body.expected_previous)
+    except (DatabaseNotConfiguredError,DatabaseUnavailableError):
+        raise HTTPException(503,'Isolated demo storage unavailable; no operational fallback.') from None
+    except ValueError as e:raise HTTPException(409,str(e)) from None
 
 
 @router.get('/wondrue/demo-tour',response_class=HTMLResponse)

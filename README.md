@@ -7588,3 +7588,25 @@ and offering operations remain deferred.
 
 Focused checks: `python -m pytest tests/test_conversion_demo.py tests/test_demo_tour.py -q -p no:cacheprovider`;
 `node --check app/wondrue_assets/demo-tour.js`.
+
+### Fictional preference to Manny
+
+The conversion-options panel can save a fictional owner's preferred pathway
+and concerns. Full owner authentication and same-origin checks protect this
+demo-only mutation. Simeon's wording, the selected Theresia conditional proposal,
+Elmer's accounting distinctions and Manny's comparison form one retained
+assessment. Changed preferences append a new assessment with the exact prior
+digest; stale changes refuse and exact retries reuse the existing result.
+
+These supplements use the existing workflow-record store in
+`growup_handoff_demo`, with its isolated credentials and scope. They do not
+replace canonical agent reports, move custody, grant funding/contract approval,
+or write to the operational database. Earlier assessments remain accessible in
+the viewer. No migration is needed. At most 100 linked assessments are supported
+per retained source; a changed source requires a separate source-bound history.
+
+Targeted checks: `python -m pytest tests/test_conversion_owner_demo.py tests/test_conversion_demo.py tests/test_demo_tour.py -q -p no:cacheprovider`.
+For an explicitly configured isolated demo environment,
+`python -m app.conversion_owner_demo` runs the bounded two-preference persistence
+proof and verifies unchanged source/custody. It appends demo records on first use;
+it is not a read-only command. No providers or external actions are involved.
