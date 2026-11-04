@@ -62,6 +62,8 @@ class BraveSearchResult(BaseModel):
     retrieved_at: str
     published_at: str | None = None
     rank: int = Field(ge=1)
+    image_url: str | None = Field(default=None, max_length=4096)
+    images: list[dict] = Field(default_factory=list, max_length=10)
 
 
 def get_brave_api_key() -> str:
@@ -105,6 +107,9 @@ def parse_results(
                 retrieved_at=retrieved_at,
                 published_at=str(item["age"]) if item.get("age") else None,
                 rank=rank,
+                image_url=(item['thumbnail']['original']
+                           if isinstance(item.get('thumbnail'), dict) and isinstance(item['thumbnail'].get('original'), str)
+                           and len(item['thumbnail']['original']) <= 4096 else None),
             )
         )
     return results

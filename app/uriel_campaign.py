@@ -94,16 +94,44 @@ def demo_message(campaign, *, start_at, timezone_name):
     files['business-card.txt'] = assets['business_card']
     files['itinerary.json'] = json.dumps(itinerary, indent=2)
     files['README.txt'] = '\n'.join(lines) + '\nText collateral for review, not print-ready artwork.\n'
+    visual_files = {}
+    visual = campaign.get('visual_package')
+    email_html = None
+    inline_image = None
+    if visual:
+        from app.visual_design import render_material, raster_concept, CONTACT as VISUAL_CONTACT
+        for index, item in enumerate(assets['emails'], 1):
+            visual_files[f'artwork/emails/email-{index}.html'] = render_material(item['subject'], item['body'], visual, index=index-1,asset_prefix='../').encode()
+        for kind in ('letters', 'flyers'):
+            for index, text in enumerate(assets[kind], 1):
+                title=('Room for a fresh possibility' if index==1 else 'A concept worth a closer look') if kind=='flyers' else 'An invitation to explore the possibilities'
+                visual_files[f'artwork/{kind}/{kind[:-1]}-{index}.html'] = render_material(title,text,visual,index=index-1,asset_prefix='../').encode()
+        for kind in ('brochure','business_card'):
+            title='From underused space to a growing possibility' if kind=='brochure' else 'Grow Up / business card'
+            visual_files[f'artwork/{kind}.html'] = render_material(title,assets[kind],visual,asset_prefix='').encode()
+        for image in visual.get('source_photos',[]):
+            from app.dossier_media import read_photo
+            visual_files['artwork/media/'+image['sha256']+'.webp'] = read_photo(image)
+        for drawing in visual['concepts']:
+            visual_files['artwork/concepts/'+drawing['id']+'.svg'] = drawing['svg'].encode()
+            visual_files['artwork/concepts/'+drawing['id']+'.png'] = raster_concept(drawing)
+        visual_files['artwork/manifest.json'] = json.dumps({k:v for k,v in visual.items() if k not in ('copy','source_photos','concepts')},indent=2).encode()
+        visual_files['canva/uriel-brief.json'] = json.dumps(campaign.get('visual_design_brief') or {},indent=2).encode()
+        files['canva/README.txt'] = 'Optional Canva design exchange. PNG/SVG concepts and exact copy are supplied in this package. No account connection, credit allowance, paid request or automatic export is established by these files. Do not send source photos or private records to Canva without the applicable approval. Simeon reuses the completed materials; he does not request designs.\n'
+        files['README.txt'] += 'Artwork is in artwork/. Open the HTML materials in a browser; PNG/SVG concepts are included. All art is conceptual, not site evidence. Physical mailing remains disabled.\n'
+        inline_image = raster_concept(visual['concepts'][0])
+        from html import escape
+        email_html = '<html><body><h1>Grow Up / A possibility worth exploring</h1><p>'+escape('\n'.join(lines)).replace('\n','<br>')+'</p><img src="cid:growup-concept" width="600" alt="Labeled preliminary passive Kratky concept"><p>ARTISTIC CONCEPT — NOT A SITE PHOTO OR CONSTRUCTION PLAN.</p><p>All visual campaign materials are in the attached ZIP. Questions: '+VISUAL_CONTACT+'</p></body></html>'
     if campaign.get('data_provenance') == 'synthetic':
         label = 'SYNTHETIC DEMONSTRATION — NOT A REAL PROPERTY; VERIFICATION AND AUTHORIZATION ARE SIMULATED.\n'
         lines.insert(0, label.strip())
         files = {name: (label + text if name.endswith('.txt') else text) for name, text in files.items()}
     buf = BytesIO()
     with ZipFile(buf, 'w', compression=ZIP_DEFLATED) as archive:
-        for name, text in sorted(files.items()):
+        for name, text in sorted({**files, **visual_files}.items()):
             info = ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
-            archive.writestr(info, text.encode('utf-8'))
+            archive.writestr(info, text.encode('utf-8') if isinstance(text,str) else text)
     attachment = buf.getvalue()
     if len(attachment) > 5_000_000: raise ValueError('demo attachment exceeds limit')
     message = EmailMessage(policy=SMTP)
@@ -112,6 +140,9 @@ def demo_message(campaign, *, start_at, timezone_name):
     message['Reply-To'] = CONTACT
     message['Subject'] = '[DEMO] Grow Up four-stage campaign review package'
     message.set_content('\n'.join(lines) + '\n\nAll campaign materials are attached for review. Contact: ' + CONTACT)
+    if email_html:
+        message.add_alternative(email_html, subtype='html')
+        message.get_payload()[-1].add_related(inline_image, maintype='image', subtype='png', cid='<growup-concept>')
     message.add_attachment(attachment, maintype='application', subtype='zip', filename='growup-campaign-demo.zip')
     return {'recipient':DEMO_RECIPIENT, 'sender':SENDER, 'reply_to':CONTACT,
         'itinerary':itinerary, 'zip_bytes':attachment, 'message_bytes':message.as_bytes(),

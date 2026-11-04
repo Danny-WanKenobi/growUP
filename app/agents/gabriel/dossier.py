@@ -137,6 +137,7 @@ class PropertyDossier(BaseModel):
     county_attribution: CountyAttribution | None = None
     category_attribution: CategoryAttribution | None = None
     census_evidence: dict[str, Any] | None = None
+    media: dict[str, Any] | None = None
 
 
 class RankingComparison(BaseModel):

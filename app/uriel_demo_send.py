@@ -113,6 +113,13 @@ def send_once(campaign, *, start_at, timezone_name):
         'subject':str(mime['Subject']), 'text':mime.get_body(preferencelist=('plain',)).get_content(),
         'attachments':[{'filename':'growup-campaign-demo.zip',
             'content':base64.b64encode(prepared['zip_bytes']).decode()}]}
+    html_part = mime.get_body(preferencelist=('html',))
+    if html_part:
+        body['html'] = html_part.get_content()
+        for part in mime.walk():
+            if part.get('Content-ID') == '<growup-concept>':
+                body['attachments'].append({'filename':'growup-concept.png','content_id':'growup-concept',
+                    'content':base64.b64encode(part.get_payload(decode=True)).decode()})
     material = {'campaign_id':campaign['campaign_id'], 'body_digest':digest_payload(body),
         'zip_sha256':hashlib.sha256(prepared['zip_bytes']).hexdigest(),
         'itinerary':prepared['itinerary'], 'from':SENDER, 'reply_to':CONTACT}

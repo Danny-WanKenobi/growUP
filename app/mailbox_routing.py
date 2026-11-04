@@ -116,6 +116,8 @@ def control(conn, *, conversation_id, action, principal, text=None, expected_rev
                   "to": inbound.payload["identity"]["from"], "in_reply_to": mid,
                   "text": shown['text'],"source_text":text,"personality_version":shown['personality_version'], "status": "draft_only", "send_enabled": False,
                   "principal": principal}
+        result['visual_policy'] = 'reuse_retained_dossier_visuals_only; no design-provider access'
+        result['visual_status'] = 'dossier correlation required before attaching private visuals'
     elif action == "request_uriel_followup" and state["owner"] == "simeon":
         result = {"owner": "uriel", "conversation_id": mid, "inbound_record_digest": inbound.digest,
                   "notes": text, "status": "requires_dossier_link_and_campaign_review",

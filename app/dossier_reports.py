@@ -53,6 +53,8 @@ def append_agent_report_in_transaction(conn, run_id, dossier_key, *, agent, repo
     if report.get("schema_version") != schema or report.get("source_dossier_digest") != source.digest:
         raise CustodyTamperError("agent report does not bind its input dossier/schema")
     if agent == "onesimus":
+        from app.visual_design import validate_concepts
+        validate_concepts(report)
         inspection = (source.payload.get("dossier", {}).get("reports") or {}).get("raphael")
         if not inspection or report.get("source_inspection_digest") != inspection.get("digest"):
             raise CustodyTamperError("engineering report does not bind its inspection")

@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
-    """Evidence-linked plain-text campaign drafts from the inherited dossier only."""
+    """Evidence-linked copy and illustrated campaign assets from the inherited dossier."""
     from app.workflow import digest_payload
     if payload.get('digest') != digest_payload({k:v for k,v in payload.items() if k!='digest'}):
         raise UrielError('campaign input failed dossier digest verification')
@@ -539,6 +539,12 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         'suppression_preserved':bool(policy.get('suppressed')),'outbound_delivery_authorized':False}
     from app.uriel_campaign import collateral
     campaign['collateral'] = collateral(introduction)
+    from app.visual_design import campaign_visuals, canva_brief
+    campaign['visual_package'] = (campaign_visuals(dossier, reports['onesimus'], introduction)
+                                  if reports['onesimus'].get('conceptualizations') else None)
+    if campaign['visual_package'] is None:
+        campaign['missing'].append('onesimus_visual_conceptualizations; linked engineering reassessment required')
+    campaign['visual_design_brief'] = canva_brief('uriel', dossier_digest=payload['digest'], package=campaign['visual_package'])
     campaign['data_provenance'] = 'synthetic' if dossier.get('synthetic') else 'inherited_evidence'
     campaign['campaign_plan'] = {'day_offsets':[0,7,14,21], 'window':'one month',
         'human_contact_channel':'email','physical_mail_enabled':False,'collateral_distribution':'email_attachment_only',

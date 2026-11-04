@@ -299,7 +299,7 @@ def test_related_audited_entrypoints_require_run_identity(monkeypatch,agent):
     assert captured[0].run_id==run_id
 
 
-@pytest.mark.parametrize('historical_version',['handoff-fixtures-1','handoff-fixtures-13'])
+@pytest.mark.parametrize('historical_version',['handoff-fixtures-1','handoff-fixtures-13','handoff-fixtures-14'])
 def test_old_unfinished_fixture_refuses_mutation_but_stays_inspectable(historical_version):
     from app.workflow_db import WorkflowError
     db = _new_db(); conn = Conn(db)

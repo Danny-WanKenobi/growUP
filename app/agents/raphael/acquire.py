@@ -96,6 +96,8 @@ def _result_payload(item: Any) -> dict[str, Any]:
         "published_at": dumped.get("published_at"),
         "retrieved_at": dumped.get("retrieved_at", ""),
         "rank": dumped.get("rank"),
+        "image_url": dumped.get("image_url"),
+        "images": dumped.get("images", []),
     }
 
 
@@ -293,6 +295,13 @@ def ensure_artifact_owned(
         )
     else:
         payload = _artifact_payload(assignment_id, query, [], attempt, error)
+    if attempt == 'completed':
+        from app.dossier_media import collect_search_images
+        try:
+            collect_search_images(run_id, payload['results'], config=config)
+        except (WorkflowError, OSError):
+            # An optional-media problem must not discard already collected facts.
+            payload['image_cache_status'] = 'unavailable; retained textual evidence preserved'
     conn = get_connection(config)
     try:
         stored = put_record_in_transaction(

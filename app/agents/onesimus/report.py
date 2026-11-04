@@ -367,4 +367,8 @@ def build_engineering_report(scenarios: dict[str, dict[str, Any]], *,
                         "All capacity checks require supporting site evidence and appropriate review.",
                         "Reference inclusion is not model training or a claim of expert certification."],
     }
+    from app.visual_design import concepts, canva_brief
+    report['conceptualizations'] = concepts(report)
+    report['visual_design_brief'] = canva_brief('onesimus', dossier_digest=report.get('source_dossier_digest'),
+                                             package=report['conceptualizations'])
     return _seal(report)

@@ -244,6 +244,107 @@ Implementation: `evidence_workbench`, `document_worker`, `refresh_workflow`,
 owner rework, linked reassessment, canonical custody and calculator services.
 Rolling back hides new controls while retaining original evidence and all history.
 
+### Dossier visuals and illustrated outreach
+
+New engineering reports now carry **three original, editable Onesimus concept
+illustrations**: a growing-room view, access/layout study and passive root-zone
+cutaway. These are locally rendered SVG/PNG schematics, not photorealistic images,
+measured drawings, verified site photos or construction plans. Illustrations bind
+the retained calculation alternatives and inspection digest. The depicted tier
+count follows the selected configuration (bounded to four illustrated tiers);
+missing geometry stays unknown and each drawing states it is not to scale.
+The existing report/custody append checks require the three intact concepts before
+new Onesimus reports can proceed to Michael. Incomplete engineering still returns
+its missing inputs; artwork never grants Raphael authorization or feasibility.
+
+Gabriel can cache provider-supplied property-image URLs during **future explicitly
+approved acquisition**. The current adapter retains Brave thumbnail-original URLs;
+it does not crawl galleries, infer hidden image URLs or claim to collect every
+photo on a website. No new discovery was launched to implement this feature.
+Photo downloads use the shared credential-free public-HTTPS policy, exact configured
+image/CDN hosts, no redirects/retries, twelve-second HTTP timeouts and at most ten
+attempts per workflow run. Each claim consumes durable `image_attempts` before HTTP;
+uncertain or interrupted attempts are never silently retried. This is an additional
+network allowance, separate from Brave's application request counter. The existing
+shared HTTP policy's DNS resolution/connect-time rebinding limitation remains.
+
+Images are decoded with Pillow (JPEG/PNG/WebP only, single frame, at most 8 MB and
+24 million decoded pixels), stripped of source metadata/EXIF, resized within
+1600×1600 and re-encoded as WebP (at most 1 MB). Common content-addressed `images/`
+and `archives/` folders sit beneath a **database-specific private namespace**.
+Dossiers cite only images from their retained source pages, with URL/time/input and
+output hashes, sizes, identity uncertainty and unknown publication rights. The ZIP
+manifest records actual bytes saved; already-compressed images may gain no space
+and ZIP overhead can make the archive larger. No automatic media deletion is added.
+Low free disk space pauses acquisition/storage before filling the volume.
+Photo bytes stay outside PostgreSQL; their digests/manifests travel in the dossier's
+immutable snapshots. Preserve/back up the private media directory with the database.
+
+```dotenv
+GROWUP_MEDIA_DIR=/var/www/growup/shared/media
+GABRIEL_IMAGE_CACHE_ENABLED=0
+GABRIEL_IMAGE_HOSTS=
+GROWUP_IMAGE_PUBLICATION_SHA256=
+```
+
+The directory must be absolute and `DATABASE_NAME` explicit. Collection stays off
+until enabled with approved hosts and a bounded acquisition assignment. Public
+availability does not establish permission to reuse a photograph in advertising.
+Only exact compressed-photo hashes placed by the operator in
+`GROWUP_IMAGE_PUBLICATION_SHA256` after rights review may enter campaign artwork.
+That is an operator approval, not automated license verification. Revoking a hash
+blocks rebuilding its publication package. Other cached photos remain internal.
+
+Uriel reuses the retained concepts and approved photographs in four emails, three
+letters, two distinct flyers, a brochure and Simeon's business card. The ZIP keeps
+original text plus mobile-friendly/printable review HTML and shared PNG/SVG/photo
+assets; photographs are stored once rather than duplicated in every material.
+The four-burst hypothetical schedule remains days 0/7/14/21 with the existing
+Sabbath adjustment. These are review designs, not certified printer-ready files.
+New recipient-restricted demo mail can include an HTML overview and a CID-embedded
+PNG, plus the illustrated ZIP. Existing recipient, permission, one-shot claim and
+no-retry safeguards remain; building artwork never sends an email. Uriel remains
+email-only; letters/flyers/cards are digital attachments, not enabled postal work.
+
+Simeon writes his own response text and references retained campaign visual hashes
+and the exact package. He cannot request a Canva design or collect images. Direct
+mailbox replies without established dossier correlation do not attach private
+visuals. Historical reports/campaigns are not rewritten. An old engineering report
+without concepts needs an explicitly linked reassessment before a new illustrated
+campaign is ready. New synthetic fixture runs use `handoff-fixtures-15`; older runs
+remain inspectable and cannot silently resume under the new fixture contract.
+
+**Canva status: connection/entitlement not verified; no API generation/export has
+been activated.** Onesimus and Uriel prepare provider-specific design briefs with
+brand guidance, input digests and exact material lists; the ZIP includes a Canva
+exchange brief plus editable artwork. This is preparation, not a working OAuth
+connection. The reported 30 free requests are not treated as an API budget.
+[Canva's current Autofill documentation](https://www.canva.dev/docs/apps/rest-apis/reference/autofills/create-design-autofill-job/)
+requires an eligible plan and an authorized user access token. A Codex Canva
+connection would not by itself authorize the unattended Grow Up server. Local
+artwork works without Canva, credits or an image-generation provider. Connecting
+and proving an authenticated runtime design/export path remains a separate blocker.
+
+Focused checks (no full regression):
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_outreach_visuals.py tests/test_engineering_reports.py tests/test_uriel_campaign_package.py tests/test_uriel_demo_send.py tests/test_communications.py tests/test_mvp_gabriel.py tests/test_acquisition_budget.py -q -p no:cacheprovider
+```
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-outreach-visuals.py
+```
+
+The proof helper is DEV-only, uses `growup_mvp_gate`, blocks external networking
+and supplies a mocked photo response. It checks compression/isolation, interrupted
+pre-request charging/replay, retained dossier binding and the illustrated package.
+No real source, Canva, Resend, outreach or new operational dossier is required.
+
+Verified checkpoint: 112 targeted local checks passed (16 gated skips), followed by
+26 focused delta checks (3 gated skips); six staged PostgreSQL/image-package checks
+passed with external networking blocked. Browser review confirmed loaded artwork
+and a readable brochure, including a narrow-screen check. No full suite was run.
+
 ### Agent personalities and bounded specialist chat
 
 `app/personalities.py` defines 17 versioned, presentation-only profiles: Gabriel,

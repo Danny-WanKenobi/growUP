@@ -110,6 +110,8 @@ def _reconstruct_results(artifact: dict[str, Any]) -> list[BraveSearchResult]:
                     "retrieved_at": stored.get("retrieved_at", "") or "1970-01-01T00:00:00+00:00",
                     "published_at": stored.get("published_at"),
                     "rank": stored.get("rank") or 1,
+                    "image_url": stored.get("image_url"),
+                    "images": stored.get("images", []),
                 }
             )
         )

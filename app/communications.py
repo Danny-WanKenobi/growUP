@@ -198,6 +198,9 @@ def control(conn,*,package_entry,action,request_id,expected_revision,principal,a
                 'personality_version':VERSION,
                 'source_revision':state['revision'],'text':text,'status':'draft_only',
                 'review_required':True,'send_enabled':False,'signing_authorized':False}
+            from app.visual_design import reuse_visuals
+            package=get_package_in_transaction(conn,package_entry)
+            draft['visual_reuse']=reuse_visuals(package or {},actor=actor,text=text)
             write(conn,run.run_id,'draft:'+request_id,draft)
             state['latest_draft_key']='draft:'+request_id
         else:

@@ -10,6 +10,7 @@ later stage over the persisted version).
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import UUID
 
@@ -45,6 +46,8 @@ def _result_payload(item: Any) -> dict[str, Any]:
         "retrieved_at": dumped.get("retrieved_at", ""),
         "rank": dumped.get("rank"),
         "assignment_id": dumped.get("assignment_id", ""),
+        "image_url": dumped.get("image_url"),
+        "images": dumped.get("images", []),
     }
 
 
@@ -125,6 +128,21 @@ def persist_dossier_versions(
     digests: list[str] = []
     for dossier in getattr(dossier_set, "dossiers", []) or []:
         key = getattr(dossier, "key", "")
+        # Only photos already retained outside the business transaction are
+        # attached, and only from a page actually cited by this dossier.
+        photos = {}
+        for artifact_key in (artifact_keys if os.getenv('GROWUP_MEDIA_DIR') else []):
+            artifact = get_record_in_transaction(conn, run_id, KIND_RESEARCH_ARTIFACT, artifact_key)
+            if artifact and artifact.digest != digest_payload(artifact.payload):
+                raise WorkflowError('image source artifact integrity failure')
+            for item in (artifact.payload.get('results', []) if artifact else []):
+                if item.get('url') in dossier.sources:
+                    for image in item.get('images', []):
+                        if image.get('page_url') == item['url']:
+                            photos[image['sha256']] = image
+        if photos:
+            from app.dossier_media import archive_photos
+            dossier.media = archive_photos(list(photos.values())[:10])
         payload = {
             "version": 1,
             "builder_version": getattr(dossier_set, "dossier_version", ""),
