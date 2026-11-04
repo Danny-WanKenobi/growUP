@@ -43,6 +43,11 @@ def test_owner_package_on_arrival_uses_latest_reports_and_preserves_unknowns(mon
         assert overview['latest_accounting']['reported_actual_expenses']['total_usd']=='0.00'
         assert overview['property_assessment']['facts']['structural_capacity']['value'] is None
         assert not overview['ownership_verified'] and not brief['business_approval']
+        readiness=overview['execution_readiness']
+        assert readiness['closing_checklist'] and readiness['regulatory_workplan']
+        assert readiness['underwriting_scenarios']
+        assert not readiness['external_actions_authorized'] and not readiness['funding_committed'] and not readiness['deal_closed']
+        assert readiness['source_report_digests']['simeon']==retained['reports']['simeon']['digest']
         assert not {'yoseph','deborah'} & {r['agent'] for r in overview['report_manifest']}
         assert brief['unresolved_task_keys'] and brief['custody']['current_holder']=='manny'
 

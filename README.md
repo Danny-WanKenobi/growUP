@@ -6117,7 +6117,7 @@ return path, profile binding, owner lifecycle replay and vault preservation;
 existing matrix, isolation, JavaScript rendering and history tests remain in use.
 No provider calls or real-world business actions are part of these scenarios.
 
-#### Downstream capability quick wins (fixture contract 13)
+#### Downstream capability quick wins (fixture contract 14)
 
 The downstream roles now include these deterministic, retained-evidence additions:
 
@@ -6201,6 +6201,16 @@ supplied. A passed_claim is still only a supplied claim. Manny's project-status
 view binds to the current Solomon report and exposes unresolved inspections,
 reported completions and separate baseline/proposed totals; a changed report
 requires linked reassessment instead of silently reusing the old project log.
+Protected filing refuses an unresolved project inspection, blocked phase or stale
+project/report binding, even if administrative review tasks were closed.
+Elmer also flags multiple expense IDs citing the same evidence for distinct-charge
+review. He preserves every reported entry and total: a shared invoice might contain
+legitimate separate line items, so neither duplication nor payment is presumed.
+Manny's consolidated execution_readiness section brings together Nicole's evidence
+workplan, Theresia's scenario funding gaps/downside proxies and Simeon's closing
+checklist with source-report digests. Michael's resilience summaries remain visible
+in each financial scenario. This is a planning/exception package, not committed
+funding, permission to act or a closed deal.
 
 Priscilla's message_journeys summarize only retained status evidence. A reply
 without a delivery record does not fabricate delivery; delivered/bounced conflicts
@@ -6212,7 +6222,7 @@ are refused before layout arithmetic; those bounds are not physical feasibility
 or verified-capacity criteria. The Ubuntu synthetic proof denies non-local IP
 connections in addition to disabling inference spending and removing provider keys.
 
-Fixture contract 13 preserves contracts 1–12 for inspection. New typed fictional
+Fixture contract 14 preserves contracts 1–13 for inspection. New typed fictional
 adviser records, multi-room calculations and a dated Solomon schedule extend the
 existing catalogue. Elm Fork's owner story also demonstrates two-way structured
 Yoseph and Deborah screening without custody/authority transfer. Old runs are

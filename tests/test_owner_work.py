@@ -57,6 +57,21 @@ def test_vault_refuses_unresolved_evidence(monkeypatch):
         assert before==conn._db
 
 
+def test_open_project_inspection_cannot_be_filed_as_finished(monkeypatch):
+    from tests.test_elmer import accounting_fixture
+    from tests.test_solomon_project import record,observation
+    from app import elmer_intake
+    conn,rid=accounting_fixture(monkeypatch,[],coverage='none_reported')
+    with scope(conn,KEY):
+        record(conn,rid,0,observation('inspection','pending'))
+        elmer_intake.prepare_in_transaction(conn,principal='owner',run_id=rid,dossier_key='main',operation_id='arrival',expected_digest=source(conn,rid).digest)
+        view=manny_review.inspect_in_transaction(conn,run_id=rid,dossier_key='main')['brief']['overview']
+        assert view['project_status']['unresolved_inspections']
+        before=deepcopy(conn._db)
+        with pytest.raises(WorkflowError,match='unresolved project'): call(conn,rid,'vault','pending-project')
+        assert conn._db==before
+
+
 def test_vault_files_exact_snapshot_and_replay_does_not_duplicate(monkeypatch):
     from app import handoff_demo as demo
     from app.agents.onesimus import crops

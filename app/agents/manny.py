@@ -55,6 +55,7 @@ def assess(property_id,dossier):
         if not isinstance(value,dict): continue
         financial[name]={'complete':value.get('complete'),'verdict':value.get('verdict','unknown'),
             'outputs':deepcopy(value.get('outputs') or {}),'missing':deepcopy(value.get('missing') or []),
+            'operating_resilience':deepcopy(value.get('operating_resilience')),
             'classification':'scenario_estimate','source_report_digest':finance.get('digest')}
     accounting=valid.get('elmer',{}).get('accounting_assessment') or {}
     facts=deepcopy(raphael.get('facts') or {})
@@ -62,6 +63,9 @@ def assess(property_id,dossier):
     if not facts: unknowns=['retained_property_assessment_facts']
     from app.solomon_project import owner_summary
     project_status=owner_summary(dossier,property_id)
+    underwriting=(valid.get('theresia_keys') or {}).get('underwriting_assessment') or {}
+    closing=(valid.get('simeon') or {}).get('closing_assessment') or {}
+    regulatory=(valid.get('nicole') or {}).get('regulatory_assessment') or {}
     return {'version':'manny-owner-overview-1','property_id':str(property_id),
         'status':'needs_evidence' if missing else 'prepared_for_owner_review','missing':sorted(set(missing)),
         'property':{k:deepcopy(dossier.get(k)) for k in ('name','street_address','city','state','zip_code')},
@@ -73,6 +77,12 @@ def assess(property_id,dossier):
         'engineering_scenarios':alternatives,'financial_scenarios':financial,
         'room_financial_summary':deepcopy(finance.get('room_finance')),
         'project_status':project_status,
+        'execution_readiness':{'regulatory_workplan':deepcopy(regulatory.get('evidence_workplan') or []),
+            'underwriting_scenarios':{name:{k:deepcopy(item.get(k)) for k in ('capital_needed_usd','funding_gap_usd','annual_after_debt_proxy_usd','meets_supplied_planning_limits','downside_operating_surplus_80pct_after_debt_usd')} for name,item in (underwriting.get('scenarios') or {}).items()},
+            'closing_checklist':deepcopy(closing.get('closing_checklist') or []),
+            'source_report_digests':{a:valid[a]['digest'] for a in ('nicole','theresia_keys','simeon') if a in valid},
+            'external_actions_authorized':False,'funding_committed':False,'deal_closed':False,
+            'scope':'Consolidated retained planning conditions; complete intake or owner filing grants no execution permission.'},
         'latest_accounting':deepcopy(accounting),'latest_accounting_digest':valid.get('elmer',{}).get('digest'),
         'solomon_project_digest':digest_payload(dossier['solomon_project']) if isinstance(dossier.get('solomon_project'),dict) else None,
         'asset_inputs':values,'recommended_action':'Human review of evidence, assumptions and exceptions; no external execution.',

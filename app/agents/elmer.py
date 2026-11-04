@@ -116,6 +116,14 @@ def assess(property_id, dossier):
     if proposed is not None and ceiling is not None and proposed>ceiling: exception_reasons.append('Pending proposals exceed supplied planning limit')
     if total_e is not None and baseline is not None and total_e>baseline: exception_reasons.append('Reported expenses exceed baseline estimate')
     exposure=total_e+remaining if total_e is not None and remaining is not None else None
+    evidence_groups={}
+    for row in expenses:
+        evidence_groups.setdefault(row['evidence_ref'].strip(),[]).append(row['id'])
+    collisions=[{'evidence_ref':ref,'expense_ids':ids,
+        'scope':'Possible shared invoice or legitimate separate line items; resolve scope with evidence, never silently remove a record.'}
+        for ref,ids in sorted(evidence_groups.items()) if len(ids)>1]
+    for group in collisions:
+        exception_reasons.append('Multiple expense IDs share evidence; review distinct-charge scope: '+', '.join(group['expense_ids']))
     return {'version':'elmer-project-cost-intake-1','property_id':str(property_id),
         'source_solomon_report_digest':source_digest,'source_project_digest':digest_payload(project) if isinstance(project,dict) else None,
         'status':'needs_evidence' if missing else 'preliminary_accounting_intake',
@@ -126,6 +134,7 @@ def assess(property_id, dossier):
         'reported_commitments':{'entries':commitments,'total_usd':format(total_c,'.2f') if total_c is not None else None,
             'unexpensed_linked_balance_usd':format(remaining,'.2f') if remaining is not None else None},
         'reported_actual_expenses':{'entries':expenses,'total_usd':format(total_e,'.2f') if total_e is not None else None,'payments_verified':False},
+        'same_evidence_expense_groups':collisions,'distinct_charge_total_verified':False,
         'exceptions':exception_reasons,'classification':'reported_unverified',
         'budget_variance':{'reported_expenses_plus_unexpensed_commitments_usd':format(exposure,'.2f') if exposure is not None else None,
             'baseline_less_reported_exposure_usd':format(baseline-exposure,'.2f') if baseline is not None and exposure is not None else None,

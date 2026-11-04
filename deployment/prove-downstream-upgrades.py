@@ -13,6 +13,9 @@ TESTS=(
  'tests/test_planning_summaries.py',
  'tests/test_solomon_project.py::test_reopened_inspection_blocks_claims_and_owner_summary_stays_conditional',
  'tests/test_campaign_tracking.py::test_timeline_preserves_out_of_order_and_domain_separation',
+ 'tests/test_owner_work.py::test_open_project_inspection_cannot_be_filed_as_finished',
+ 'tests/test_elmer.py::test_different_expense_ids_with_shared_invoice_require_review_without_erasing_records',
+ 'tests/test_manny_review.py::test_owner_package_on_arrival_uses_latest_reports_and_preserves_unknowns',
 )
 
 

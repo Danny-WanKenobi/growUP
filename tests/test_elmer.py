@@ -132,6 +132,21 @@ def test_invalid_period_does_not_produce_zero_reported_expenses(monkeypatch):
         assert result['reported_actual_expenses']['total_usd'] is None
 
 
+def test_different_expense_ids_with_shared_invoice_require_review_without_erasing_records(monkeypatch):
+    rows=[transaction('invoice-import-a','expense','100',evidence_ref='demo:shared-invoice'),
+          transaction('invoice-import-b','expense','100',evidence_ref='demo:shared-invoice')]
+    conn,rid=accounting_fixture(monkeypatch,rows)
+    with scope(conn,KEY):
+        before=deepcopy(source(conn,rid).payload)
+        report=elmer_intake.preview_in_transaction(conn,run_id=rid,dossier_key='main')['report']
+        accounting=report['accounting_assessment']
+        assert accounting['reported_actual_expenses']['total_usd']=='200.00'
+        assert accounting['same_evidence_expense_groups'][0]['expense_ids']==['invoice-import-a','invoice-import-b']
+        assert not accounting['distinct_charge_total_verified']
+        assert any('distinct-charge' in task['reason'] for task in report['owner_review_requests'])
+        assert source(conn,rid).payload==before
+
+
 def test_linked_corrections_preserve_original_and_return_to_manny(monkeypatch):
     conn,rid=accounting_fixture(monkeypatch,[transaction('e1','expense','100')])
     with scope(conn,KEY):

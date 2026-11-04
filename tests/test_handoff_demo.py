@@ -299,7 +299,8 @@ def test_related_audited_entrypoints_require_run_identity(monkeypatch,agent):
     assert captured[0].run_id==run_id
 
 
-def test_old_unfinished_fixture_refuses_mutation_but_stays_inspectable():
+@pytest.mark.parametrize('historical_version',['handoff-fixtures-1','handoff-fixtures-13'])
+def test_old_unfinished_fixture_refuses_mutation_but_stays_inspectable(historical_version):
     from app.workflow_db import WorkflowError
     db = _new_db(); conn = Conn(db)
     with scope(conn, KEY):
@@ -311,17 +312,17 @@ def test_old_unfinished_fixture_refuses_mutation_but_stays_inspectable():
                 limits = row["limits"]
                 if isinstance(limits, str):
                     limits = json.loads(limits)
-                    limits["fixture_version"] = "handoff-fixtures-1"
+                    limits["fixture_version"] = historical_version
                     row["limits"] = json.dumps(limits)
                 else:
-                    limits["fixture_version"] = "handoff-fixtures-1"
+                    limits["fixture_version"] = historical_version
         before = copy.deepcopy(db)
         with pytest.raises(WorkflowError, match="historical fixture run is read-only"):
             demo.advance_in_transaction(conn, run_key=result["run_key"], expected_sequence=0)
         assert db == before
         inspected = demo.inspect_in_transaction(conn, run_key=result["run_key"])
         assert inspected["sequence"] == 0
-        assert inspected["fixture_version"] == "handoff-fixtures-1"
+        assert inspected["fixture_version"] == historical_version
 
 
 def test_viewer_render_synchronizes_current_and_historical_scenarios():
