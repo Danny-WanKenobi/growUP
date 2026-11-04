@@ -24,7 +24,8 @@ def build_report(agent, payload):
     if payload["digest"] != digest_payload({k:v for k,v in payload.items() if k!="digest"}):
         raise WorkflowError("input dossier failed digest verification")
     spec = AGENT_SPECS[agent]
-    dossier = payload.get("dossier") or {}
+    from app.linked_reassessments import effective_dossier
+    dossier = effective_dossier(payload.get("dossier") or {})
     reports = deepcopy(dossier.get("reports") or {})
     if agent=="manny":
         from app.agents.elmer import latest_assessment
@@ -79,7 +80,9 @@ def build_report(agent, payload):
         if any(name.startswith('report:') for name in missing):
             result['campaign'] = {'status':'needs_evidence','campaign_id':None,'missing':list(missing)}
         else:
-            result['campaign'] = prepare_campaign(payload)
+            campaign_payload=deepcopy(payload);campaign_payload['dossier']=dossier
+            campaign_payload['digest']=digest_payload({k:v for k,v in campaign_payload.items() if k!='digest'})
+            result['campaign'] = prepare_campaign(campaign_payload)
             for gap in result['campaign']['missing']:
                 if gap not in missing:
                     missing.append(gap)

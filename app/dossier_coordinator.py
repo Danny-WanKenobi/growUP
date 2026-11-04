@@ -33,7 +33,8 @@ def _build(agent, payload):
     from app.agents.onesimus.report import build_engineering_report
     from app.mvp import _site_inputs
     from app.michael import assess, financial_inputs_from_raw
-    dossier = payload['dossier']
+    from app.linked_reassessments import effective_dossier
+    dossier = effective_dossier(payload['dossier'])
     reports = dossier.get('reports') or {}
     inputs = dossier.get('assessment_inputs') or {}
     if not isinstance(inputs, dict):

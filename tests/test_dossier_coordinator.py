@@ -409,6 +409,54 @@ def test_live_coordinator_interruption_and_concurrent_replay(monkeypatch, holder
                 assert next(t for t in view['tasks'] if t['record_key']==task['record_key'])['review_status']=='closed_by_owner'
                 assert get_record_in_transaction(conn,rid,'owner_review_task',task['record_key']).payload['status']=='pending'
                 assert verify_chain_in_transaction(conn,did)==initial_receipts+4
+            from app import owner_work
+            with get_connection() as conn:
+                current=get_record_in_transaction(conn,rid,'dossier_version',key)
+                task=next(t for t in manny_review.queue_in_transaction(conn,run_id=rid,dossier_key=key)['tasks'] if t['record_key']==task['record_key'])
+            request=manny_review.audited(**{**owner_inputs,'operation_id':'pg-request-rework','expected_digest':current.digest,
+                'decision':{**owner_inputs['decision'],'expected_sequence':task['resolution_sequence'],'disposition':'request_evidence'}})
+            dispatch=dict(principal='pg-test',run_id=rid,dossier_key=key,operation_id='pg-dispatch',expected_digest=request['dossier_digest'],
+                action='dispatch',inputs=dict(task_key=task['record_key'],target_agent='solomon'),operator_authorized=True)
+            owner_append=owner_work.append_owner_material_in_transaction
+            def interrupted_dispatch(*args,**kwargs):
+                owner_append(*args,**kwargs);raise KeyboardInterrupt('controlled rework interruption')
+            monkeypatch.setattr(owner_work,'append_owner_material_in_transaction',interrupted_dispatch)
+            with pytest.raises(KeyboardInterrupt): owner_work.audited(**dispatch)
+            monkeypatch.setattr(owner_work,'append_owner_material_in_transaction',owner_append)
+            with get_connection() as conn:
+                assert get_record_in_transaction(conn,rid,'dossier_version',key).digest==request['dossier_digest']
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+4
+            barrier=Barrier(2)
+            def dispatch_once(_):
+                barrier.wait(timeout=10);return owner_work.audited(**dispatch)
+            with ThreadPoolExecutor(max_workers=2) as pool: dispatched=list(pool.map(dispatch_once,range(2)))
+            assert sum(bool(r['replayed']) for r in dispatched)==1
+            rework=dict(principal='pg-test',run_id=rid,dossier_key=key,operation_id='pg-reassess',expected_digest=dispatched[0]['dossier_digest'],
+                action='reassess',inputs=dict(job_key=dispatched[0]['job_key']),operator_authorized=True)
+            append=owner_work.append_reassessment_in_transaction
+            def interrupted_reassessment(*args,**kwargs):
+                append(*args,**kwargs);raise KeyboardInterrupt('controlled reassessment interruption')
+            monkeypatch.setattr(owner_work,'append_reassessment_in_transaction',interrupted_reassessment)
+            with pytest.raises(KeyboardInterrupt): owner_work.audited(**rework)
+            monkeypatch.setattr(owner_work,'append_reassessment_in_transaction',append)
+            result=owner_work.audited(**rework)
+            assert result['current_holder']=='manny' and owner_work.audited(**rework)['replayed']
+            with get_connection() as conn:
+                current=get_record_in_transaction(conn,rid,'dossier_version',key)
+                assert current.payload['dossier']['reports']['elmer']==original_accounting
+                assert current.payload['dossier']['agent_reassessments'][-1]['agent']=='solomon'
+                assert verify_chain_in_transaction(conn,did)==initial_receipts+6
+                version=latest_version_in_transaction(conn,did)
+                archived=owner_work.archive_exact_in_transaction(conn,did,version.version)
+                assert archived['digest']
+                conn.commit()
+            # Archive storage itself is protected against update and deletion by PostgreSQL.
+            for sql in ('UPDATE custody_snapshots_archive SET digest=digest WHERE snapshot_id=%(sid)s',
+                        'DELETE FROM custody_snapshots_archive WHERE snapshot_id=%(sid)s'):
+                with get_connection() as conn:
+                    with pytest.raises(Exception,match='append-only'):
+                        with conn.cursor() as cur: cur.execute(sql,dict(sid=archived['snapshot_id']))
+                    conn.rollback()
     finally:
         _pg_cleanup([str(rid)],[str(did)] if did else [],[str(prop['id'])])
 

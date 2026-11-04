@@ -21,7 +21,8 @@ def _bound(value, prop):
 
 
 def assess(property_id, dossier):
-    missing=[]; reports=dossier.get('reports') or {}; solomon=reports.get('solomon')
+    from app.linked_reassessments import effective_reports
+    missing=[]; reports=effective_reports(dossier); solomon=reports.get('solomon')
     baseline=None; ceiling=None; estimate_lines=[]; changes=[]; proposed=None; project=dossier.get('solomon_project')
     source_digest=None
     try:

@@ -22,7 +22,8 @@ def assess(property_id,dossier):
     if (not isinstance(obligations.get('entries'),list) or len(obligations.get('entries',[]))>100
             or obligations.get('coverage') not in ('reported','none_reported')
             or (obligations.get('coverage')=='none_reported' and obligations.get('entries'))): missing.append('asset_obligations:explicit_reported_records')
-    reports=dossier.get('reports') or {};manifest=[];valid={}
+    from app.linked_reassessments import effective_reports,stale_dependencies
+    reports=effective_reports(dossier);stale=stale_dependencies(reports);manifest=[];valid={}
     for agent in PIPELINE_IDS[:-1]:
         report=reports.get(agent)
         if agent=='elmer':
@@ -32,7 +33,8 @@ def assess(property_id,dossier):
         if intact: valid[agent]=report
         manifest.append({'agent':agent,'retained':intact,'report_digest':report['digest'] if intact else None,
             'status':report.get('status',report.get('outcome','not_declared')) if intact else 'missing_or_invalid',
-            'missing':deepcopy(report.get('missing',[])) if intact else ['retained_report']})
+            'missing':deepcopy(report.get('missing',[])) if intact else ['retained_report'],
+            'stale_dependencies':stale.get(agent,[])})
     for name in ('michael','elmer'):
         if name not in valid: missing.append('report:'+name)
     raphael=valid.get('raphael') or {}; engineering=valid.get('onesimus') or {}; finance=valid.get('michael') or {}

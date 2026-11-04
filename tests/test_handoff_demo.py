@@ -12,7 +12,14 @@ from tests.test_funnel_acceptance import _new_db
 
 class Cursor(BaseCursor):
     def execute(self, sql, params=None):
-        if sql.startswith("SELECT current_database()"):
+        if sql.startswith("INSERT INTO custody_snapshots_archive"):
+            p=dict(params);rows=self._db.setdefault('vault_archive',[])
+            for row in self._db['snapshots']:
+                if str(row['dossier_id'])==str(p['dossier']) and row['version']==p['version'] and not any(str(r['snapshot_id'])==str(row['snapshot_id']) for r in rows): rows.append(copy.deepcopy(row))
+            self._result=[]
+        elif sql.startswith("SELECT * FROM custody_snapshots_archive"):
+            p=dict(params);self._result=[copy.deepcopy(r) for r in self._db.get('vault_archive',[]) if str(r['dossier_id'])==str(p['dossier']) and r['version']==p['version']]
+        elif sql.startswith("SELECT current_database()"):
             self._result=[{"db":self._db.get("database",DATABASE),"role":self._db.get("role",ROLE)}]
         else:
             super().execute(sql,params)

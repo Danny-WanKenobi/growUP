@@ -5757,3 +5757,90 @@ unchanged presentation context, tampered resolution indexes and operator/model
 permission boundaries. The Ubuntu coordinator gate additionally tests forced
 interruption after an owner-decision snapshot and concurrent identical decisions
 against disposable PostgreSQL data; operational dossier history is untouched.
+
+#### Manny: targeted rework and permanent protected filing
+
+Manny's current `request_evidence` decisions can now become one targeted internal
+rework assignment. `dispatch_owner_rework` requires the current task's
+`review_status=evidence_requested`, an explicit upstream pipeline agent and the
+current dossier digest. It appends a canonical request manifest and snapshot,
+then returns custody from Manny to that agent. The versioned job is bound to the
+property, dossier, original task/decision, principal and receipt. Shared advisers
+remain outside custody. A superseded request cannot be used as the active job.
+
+`reassess_owner_rework` reuses the existing deterministic assessment functions,
+shared Raphael verification policy and accounting correction path. It performs
+no discovery, evidence retrieval, inference or external action. Original report
+slots remain unchanged: generic corrections append `agent_reassessments` with
+parent-report and input digests; Elmer retains his existing linked
+`elmer_assessments`. Reports and snapshots return to Manny with an updated owner
+brief. A needs-evidence assessment remains needs-evidence; it is not an
+operational authorization. Earlier owner dispositions require revalidation when
+underlying evidence changes; the original task is never silently closed.
+Dependent reports expose stale input digests in the owner overview and block
+vault admission until reassessed. A worker invocation is bounded to one target;
+there is no new scheduler, automatic provider access or recursive campaign.
+
+Allowed corrections are deliberately narrow: Raphael accepts `assessment_inputs`
+containing only `site`; Onesimus only `crop`; Michael only `financial`.
+Downstream specialists accept only their own `specialist_inputs` wrappers.
+These remain classified, property/evidence-bound inputs under the existing
+validators, not independently authenticated facts. Gabriel can requalify retained
+evidence, but this endpoint does not admit new discovery or source authentication.
+Elmer accepts his existing `correction` object. Invalid inputs refuse without
+committing, leaving the assignment available for a corrected retry. Missing
+accounting evidence remains on the existing Elmer correction path.
+
+Wondrue commands use explicit operator intents, real target and live inference
+disabled, the same Read-Only/Ask/Full permission enforcement and principal-bound
+approval as owner decisions. Model proposals cannot dispatch or file dossiers.
+Common arguments: `run_id`, `dossier_key`, unique `operation_id`, and
+`expected_digest` from the latest inspection. `inputs_json` examples:
+
+```json
+{"intent":"dispatch_owner_rework","args":{"run_id":"RUN_UUID","dossier_key":"main","operation_id":"owner-rework-1","expected_digest":"CURRENT_DIGEST","inputs_json":"{\"task_key\":\"OWNER_TASK_KEY\",\"target_agent\":\"nicole\"}"}}
+```
+
+After inspecting the newly returned digest, use `reassess_owner_rework` with
+`inputs_json={"job_key":"RETURNED_JOB_KEY"}` (JSON-encoded as a string). Add only
+the target's supported correction inputs when available. Retry the identical
+operation ID and arguments after a lost response; changed inputs require a new
+operation ID and latest digest. Emergency stop blocks writes. Dossier locks,
+report/snapshot/receipt/job/audit transactions and replay checks protect retries
+and interruption. Reassessment and request histories each stop at 100 entries;
+no history is deleted to make room.
+
+`file_owner_vault` accepts no fact overrides (`inputs_json="{}"`). Manny must hold
+the dossier, all scoped and unscoped review tasks must be resolved, all required
+downstream reports must be intact, and there must be no report gaps, stale
+report dependencies, missing owner inputs or active rework. Closing a review task
+alone cannot remove a report's missing-evidence flags. Unknown physical facts
+retain their classifications: filing is preservation, not verified safety,
+property ownership, profitability, legal clearance or permission to execute.
+
+The vault immediately copies the **exact reviewed version** to the existing
+`custody_snapshots_archive`, without deleting its hot snapshot or archiving any
+other dossier. It verifies the stored bytes/digest and appends an immutable
+canonical `owner_vault_entries` manifest naming the snapshot, custody version and
+source dossier digest. Existing PostgreSQL triggers reject archive UPDATE/DELETE;
+canonical versions and custody receipts remain protected. There is no erase,
+replace or unvault command. New evidence creates new working versions and does
+not rewrite earlier vault copies. `inspect_owner_brief` lists manifests and rework
+history; read-only `inspect_owner_vault` verifies those locators against archived
+bytes and returns the full protected dossiers. Standard retention may later remove
+the redundant hot copy, while the archive remains readable.
+
+Protection uses existing database access control, immutable-table triggers and
+canonical integrity checks. It is not off-site backup, encryption-at-rest setup,
+or protection against a database administrator; ordinary backup obligations
+remain. No schema migration, credentials, environment setting or dependency is
+added. Operational dossiers are not automatically filed or reworked during
+installation.
+
+Checks: `tests/test_owner_work.py` covers source-bound dispatch, immutable
+reassessment/replay, stale downstream dependencies, task/permission gates,
+interruption cleanup, blocked filing, exact successful filing, verified retrieval
+and archive tamper refusal. The dedicated PostgreSQL coordinator gate adds
+interrupted/concurrent dispatch, interrupted reassessment/replay and archive
+UPDATE/DELETE refusal. All gate data are disposable test material; protected
+append-only rows follow existing gate retention rules.

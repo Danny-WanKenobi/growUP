@@ -136,7 +136,7 @@ def append_elmer_correction_in_transaction(conn,run_id,dossier_key,report):
 def append_owner_material_in_transaction(conn,run_id,dossier_key,*,section,material):
     """Append Manny-owned briefs/decisions without replacing any prior report."""
     from app.agents.stages import _load
-    if section not in ('owner_briefs','owner_decisions'): raise WorkflowError('unsupported owner material')
+    if section not in ('owner_briefs','owner_decisions','owner_rework','owner_vault_entries'): raise WorkflowError('unsupported owner material')
     source,did=_load(conn,run_id,dossier_key,'manny')
     if material.get('source_dossier_digest')!=source.digest or material.get('digest')!=digest_payload({k:v for k,v in material.items() if k!='digest'}):
         raise CustodyTamperError('owner material does not bind current dossier')
@@ -149,6 +149,32 @@ def append_owner_material_in_transaction(conn,run_id,dossier_key,*,section,mater
     custody_payload=deepcopy(latest.payload);custody_payload.update(dossier=deepcopy(payload['dossier']),dossier_digest=stored.digest)
     version=_append_version_in_transaction(conn,property_id=latest.property_id,payload=custody_payload,created_by='manny',supersedes=latest.version,
         amendment={'kind':section,'parent_digest':latest.digest,'material_digest':material['digest']})
+    snapshot_in_transaction(conn,dossier_id=did,version=version.version)
+    link=deepcopy(link_record.payload);link['custody_version']=version.version
+    put_record_in_transaction(conn,run_id,kind='custody_link',record_key=dossier_key,version=link_record.version+1,payload=link,digest=digest_payload(link))
+    return stored,version
+
+
+def append_reassessment_in_transaction(conn,run_id,dossier_key,material):
+    """Append one current-holder reassessment, preserving original report slots."""
+    from app.agents.stages import _load
+    agent=material['agent'];source,did=_load(conn,run_id,dossier_key,agent)
+    if material['source_dossier_digest']!=source.digest or material['digest']!=digest_payload({k:v for k,v in material.items() if k!='digest'}):
+        raise CustodyTamperError('reassessment does not bind current dossier')
+    from app.linked_reassessments import effective_reports
+    prior=effective_reports(source.payload['dossier']).get(agent) or {}
+    if material.get('parent_report_digest')!=prior.get('digest'): raise WorkflowError('reassessment parent changed')
+    if agent in ('elmer','manny'): raise WorkflowError('agent requires its dedicated assessment path')
+    if material['report'].get('source_dossier_digest')!=source.digest or material['report'].get('digest')!=digest_payload({k:v for k,v in material['report'].items() if k!='digest'}): raise WorkflowError('reassessment report integrity failure')
+    latest=latest_version_in_transaction(conn,did);link_record=get_record_in_transaction(conn,run_id,'custody_link',dossier_key)
+    payload=deepcopy(source.payload);history=payload['dossier'].setdefault('agent_reassessments',[])
+    if len(history)>=100: raise WorkflowError('reassessment history limit reached')
+    history.append(deepcopy(material));payload['version']=source.version+1
+    payload['digest']=digest_payload({k:v for k,v in payload.items() if k!='digest'})
+    stored=put_record_in_transaction(conn,run_id,kind='dossier_version',record_key=dossier_key,version=source.version+1,payload=payload,digest=payload['digest'])
+    custody_payload=deepcopy(latest.payload);custody_payload.update(dossier=deepcopy(payload['dossier']),dossier_digest=stored.digest)
+    version=_append_version_in_transaction(conn,property_id=latest.property_id,payload=custody_payload,created_by=agent,supersedes=latest.version,
+        amendment={'kind':'targeted_reassessment','parent_digest':latest.digest,'material_digest':material['digest']})
     snapshot_in_transaction(conn,dossier_id=did,version=version.version)
     link=deepcopy(link_record.payload);link['custody_version']=version.version
     put_record_in_transaction(conn,run_id,kind='custody_link',record_key=dossier_key,version=link_record.version+1,payload=link,digest=digest_payload(link))

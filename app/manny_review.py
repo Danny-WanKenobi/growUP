@@ -18,7 +18,8 @@ def _latest(conn,run_id,kind):
 
 def evidence_context(payload):
     dossier=deepcopy(payload.get('dossier') or {})
-    dossier.pop('owner_briefs',None);dossier.pop('owner_decisions',None)
+
+    for section in ('owner_briefs','owner_decisions','owner_rework','owner_vault_entries'): dossier.pop(section,None)
     (dossier.get('reports') or {}).pop('manny',None)
     return digest_payload({'property_id':payload['property_id'],'dossier':dossier})
 
@@ -102,6 +103,8 @@ def inspect_in_transaction(conn,*,run_id,dossier_key):
             'last_transfer_receipt_id':holder.get('receipt_id') if holder else None,
             'integrity_scope':'Canonical snapshot/receipt integrity only; not verification of property claims.',
             'latest_version_digest':latest.digest,'scope':'source dossier before this package is appended'},
+        'rework_history':deepcopy(source.payload['dossier'].get('owner_rework') or []),
+        'vault_entries':deepcopy(source.payload['dossier'].get('owner_vault_entries') or []),
         'decision_package_status':'owner_review_required','business_approval':False,'external_actions':0,
         'synthetic':source.payload.get('synthetic') is True,
         'limitations':['Closing an administrative task never verifies a property fact or authorizes execution.',

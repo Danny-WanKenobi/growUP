@@ -55,7 +55,7 @@ READ_ONLY_INTENTS = frozenset(
         "inspect_agents",
         "preview_agent_report",
         "inspect_owner_queue",
-        "inspect_owner_brief",
+        "inspect_owner_brief", "inspect_owner_vault",
         "inspect_lead_metrics",
         "inspect_campaign_tracking",
         "inspect_communications",
@@ -75,7 +75,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "record_solomon_project",
         "prepare_elmer_intake",
         "prepare_owner_brief",
-        "resolve_owner_exception",
+        "resolve_owner_exception", "dispatch_owner_rework", "reassess_owner_rework", "file_owner_vault",
         "reconcile_elmer",
         "complete_elmer_intake",
         "consult_adviser",
@@ -271,6 +271,8 @@ def preview_intent(
             "inputs":{k:v for k,v in args.items() if not k.startswith('_')},
             "effects":"append-only evidence event with correlation and replay checks; no outbound action",
             "cost_bounds":{"provider_calls":0,"outreach":0}}
+    if intent in ('dispatch_owner_rework','reassess_owner_rework','file_owner_vault'):
+        return {'operations':['Append targeted rework/custody or protected vault filing'], 'external_actions':0,'inputs':args}
     if intent in ('prepare_owner_brief','resolve_owner_exception'):
         return {'operations':['prepare a source-linked owner brief' if intent=='prepare_owner_brief' else 'record an explicit operator exception disposition'],
             'inputs':{k:v for k,v in args.items() if not k.startswith('_')},
@@ -977,6 +979,19 @@ def _execute_real(
             package_entry=args.get('package_entry'),provider=args.get('provider'),provider_event_id=args.get('provider_event_id'),
             message_id=args.get('message_id'),status=args.get('status'),occurred_at=args.get('occurred_at'),
             evidence_refs=[args.get('evidence_ref')],simulated=args.get('simulated',False))
+    if intent in ('dispatch_owner_rework','reassess_owner_rework','file_owner_vault'):
+        from app import owner_work
+        if not acquire_authorized: raise WondrueAuthError('explicit operator grant required')
+        try: work_inputs=json.loads(str(args.get('inputs_json') or '{}'))
+        except ValueError: raise WondrueError('inputs_json must contain structured inputs') from None
+        return owner_work.audited(principal=str(capability_ctx.get('principal') or ''),run_id=args.get('run_id'),
+            dossier_key=str(args.get('dossier_key') or 'main'),operation_id=args.get('operation_id'),
+            expected_digest=args.get('expected_digest'),action={'dispatch_owner_rework':'dispatch','reassess_owner_rework':'reassess','file_owner_vault':'vault'}[intent],
+            inputs=work_inputs,operator_authorized=True)
+    if intent=='inspect_owner_vault':
+        from app import owner_work
+        if conn is None: raise WondrueError('vault inspection requires database')
+        return owner_work.read_vault_in_transaction(conn,run_id=args.get('run_id'),dossier_key=str(args.get('dossier_key') or 'main'))
     if intent in ('inspect_owner_brief','prepare_owner_brief','resolve_owner_exception'):
         from app import manny_review
         inputs={'run_id':args.get('run_id'),'dossier_key':str(args.get('dossier_key') or 'main')}
@@ -1453,15 +1468,15 @@ def handle_command(
             profile=effective_profile,
         )
     intent = str(intent_args["intent"])
-    if intent=='resolve_owner_exception' and intent_override is None:
+    if intent in ('resolve_owner_exception','dispatch_owner_rework','reassess_owner_rework','file_owner_vault') and intent_override is None:
         raise WondrueAuthError('exception decisions require an explicit operator intent; model proposals cannot close review tasks')
     args = dict(intent_args["args"])
-    if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "prepare_owner_brief", "resolve_owner_exception", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
+    if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "prepare_owner_brief", "resolve_owner_exception", "dispatch_owner_rework", "reassess_owner_rework", "file_owner_vault", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications"):
         if target != "real" or use_live:
             raise WondrueError("internal tracking/coordinator requires real target with live inference disabled")
         args["_coordinator_principal"] = principal
     if intent in ("release_engineering","preview_retained_assessment","commit_retained_assessment",
-                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_owner_brief","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project","preview_elmer_intake","inspect_consultation"):
+                  "inspect_agents","preview_agent_report","inspect_owner_queue","inspect_owner_brief", "inspect_owner_vault","inspect_lead_metrics","inspect_campaign_tracking","inspect_communications","inspect_resend_poll","inspect_solomon_project","preview_elmer_intake","inspect_consultation"):
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
@@ -1518,7 +1533,7 @@ def handle_command(
             if entry["intent"] != intent or entry["target"] != target:
                 raise WondrueError("approval token does not match this command")
             args = dict(entry["args"])
-            if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "prepare_owner_brief", "resolve_owner_exception", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
+            if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "prepare_owner_brief", "resolve_owner_exception", "dispatch_owner_rework", "reassess_owner_rework", "file_owner_vault", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
             if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")
