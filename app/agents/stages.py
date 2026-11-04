@@ -112,6 +112,20 @@ def build_report(agent, payload):
         result["next_steps"] = ["Obtain or resolve "+name for name in missing]
         if not missing:
             result["next_steps"].append("Preliminary underwriting may inspect this report; regulatory clearance remains unestablished.")
+    if agent == "theresia_keys":
+        from app.agents.theresia import assess
+        result["underwriting_assessment"] = assess(payload["property_id"], supplied, reports)
+        for gap in result["underwriting_assessment"]["missing"]:
+            if gap not in missing:
+                missing.append(gap)
+                result["owner_review_requests"].append({"requirement":gap,
+                    "reason":"Theresia underwriting evidence or planning inputs remain unresolved.",
+                    "status":"pending","authority":"human_owner","grants_permission":False})
+        result["owner_review_requests"].extend(result["underwriting_assessment"]["owner_review_requests"])
+        result["status"] = "needs_evidence" if missing else "prepared_not_approved"
+        result["next_steps"] = ["Obtain or resolve "+name for name in missing]
+        if not missing:
+            result["next_steps"].append("Review the unsigned conditional preparation brief; no execution or financing approval is granted.")
     result["digest"] = digest_payload(result)
     return result
 

@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = ("gabriel", "raphael", "onesimus", "michael", *AGENT_SPECS)
-FIXTURE_VERSION = "handoff-fixtures-5"
+FIXTURE_VERSION = "handoff-fixtures-6"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -114,6 +114,15 @@ def _fixture(run_key, fail_at):
          'record_id':'fiction-'+topic, 'requirement':'FICTIONAL screening record, not real law',
          'state':'not_required', 'disposition':'not_applicable', 'record_date':'2026-11-03',
          'source_url':'https://records.fiction.example/nicole/official_requirements'} for topic in TOPICS]
+    inputs['theresia_keys']['ownership_and_liens']['value'] = {'property_id':str(prop),
+        'owner_name':'FICTIONAL demo owner','lien_status':'none_reported','record_date':'2026-11-03'}
+    inputs['theresia_keys']['financing_terms']['value'] = {'property_id':str(prop),'currency':'USD',
+        'additional_project_costs_usd':'1000','contingency_usd':'1000','proposed_funding_usd':'100000000',
+        'annual_debt_service_usd':'0','minimum_coverage_ratio':'1.25'}
+    inputs['theresia_keys']['contract_terms']['value'] = {'property_id':str(prop),
+        'parties':[{'name':'FICTIONAL owner','role':'owner'},{'name':'FICTIONAL operator','role':'operator'}],
+        'scope':'FICTIONAL passive Kratky preliminary concept only','term_months':12,
+        'conditions':['FICTIONAL demonstration; no actual authority, contract or financing.']}
     if fail_at in AGENT_SPECS and AGENT_SPECS[fail_at].required_inputs:
         inputs[fail_at].pop(AGENT_SPECS[fail_at].required_inputs[0])
     return sealed(marked({"version":1,"property_id":str(prop),"artifact_refs":[],

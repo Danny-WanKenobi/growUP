@@ -5089,3 +5089,65 @@ with a Nicole-held disposable dossier: interruption after report/snapshot rolls
 back, then simultaneous same-sequence attempts commit exactly one report and
 receipt. All such proof records remain in `growup_mvp_gate`; no real operational
 candidate is promoted by the tests.
+
+
+### Theresia Keys preliminary underwriting and conditional preparation
+
+`app.agents.theresia.assess` powers the existing `theresia_keys` specialist report
+builder and canonical report preparation/snapshot path. It requires retained,
+digest-valid Michael and Nicole reports; Nicole must be ready for preliminary
+underwriting, which still does not establish regulatory clearance. No provider
+calls, title searches, lender decisions, legal instruments or signatures occur.
+The durable coordinator continues to stop on delivery to Theresia Keys; this
+upgrade strengthens her report primitive without starting an unattended worker
+or extending execution to Simeon.
+
+The existing value/evidence_refs wrappers now require property-bound structured
+inputs, with HTTP(S) source references retained as provided_unverified:
+
+- ownership_and_liens: property_id, owner_name, record_date (ISO calendar date),
+  lien_status (`none_reported`, `reported`, `unknown`). Unknown liens require
+  evidence. None reported is never authenticated clear title; reported liens
+  remain review conditions, not an invented zero balance.
+- financing_terms: property_id, currency=`USD`, additional_project_costs_usd,
+  contingency_usd, proposed_funding_usd, annual_debt_service_usd and a strictly
+  positive minimum_coverage_ratio. Amounts are explicit finite nonnegative
+  decimals, bounded to 1e15 with nonzero magnitudes at least 1e-12; booleans,
+  missing amounts, NaN/Infinity and unsafe exponents refuse. The ratio threshold
+  is supplied, not a lender rule or software-invented standard.
+- contract_terms: property_id, at least two distinctly named parties (name/role),
+  scope, positive integer term_months, and nonempty conditions. Legacy strings,
+  missing parties or unsupported property/currency bindings require evidence.
+
+For each complete Michael assessment, deterministic Decimal calculations reuse
+his capex_usd and operating_net_usd_per_year. Capital need equals Michael capex
+plus explicitly supplied additional costs plus contingency; funding gap equals
+max(0, capital need minus proposed funding). Proposed surplus is retained too.
+Annual after-debt proxy equals Michael operating surplus minus supplied annual
+debt service. The operating-surplus/debt-service ratio is a planning proxy, **not
+lender-defined DSCR**; zero debt produces a null ratio with an explanation, never
+infinity. Formulas, units, inputs, source report digests and conditional limits
+are retained per scenario. No amortization, taxes, closing-cost discovery or
+committed-funding verification is performed, and absent costs are not zeroed.
+This does not replace Michael's financial engine or promote an optimistic case.
+
+At least one scenario must have no proposed funding gap, positive after-debt
+proxy and meet the supplied ratio threshold (or explicitly zero debt service)
+for conditional preparation. Unfavorable cases remain visible. A complete intake
+is prepared_not_approved and generates an unsigned, nonbinding preparation brief:
+provided parties/scope/terms plus unresolved ownership, lien, regulatory, funding,
+legal-review and signing-authority conditions. There are no signature blocks.
+Ownership_verified, financing_approved, contract_executable and signing_authority
+remain false. Financing percentages never establish ownership rights. Conditions
+and evidence gaps reuse the existing durable owner queue when persisted; original
+reports, versions, snapshots and receipts are preserved.
+
+The synthetic handoff fixture contract is handoff-fixtures-6, with explicitly
+fictional property-bound inputs and proposed funds, not actual capital or
+commitment. Earlier v1–v5 fixtures remain inspectable and cannot advance under the
+new contract. Tests use disposable records only. Focused checks:
+`python -m pytest tests/test_theresia.py tests/test_agent_v1_contracts.py
+ tests/test_handoff_demo.py -q -p no:cacheprovider` (on one line). They cover
+inspectable money arithmetic, funding gaps, zero debt, nonfinite/unsafe values,
+missing evidence, property/currency/report binding, weak cash flow, conditional
+scope, report sealing and existing GO/NO-GO custody scenarios.
