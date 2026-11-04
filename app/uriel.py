@@ -519,7 +519,8 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     address = str(dossier.get('street_address') or 'Address unresolved')
     financial_text = '\n'.join(f"{c['scenario']}: {c['quantity']} = {c['value']} [Michael {refs['michael']['report_digest']}]" for c in claims)
     limitations = 'Preliminary concept only. Availability, vacancy, structural/electrical capacity, permitted use and executable conversion are not established by this campaign. Figures depend on retained assumptions and exclude unmodeled costs. Alternative plans are not additive.'
-    introduction = f'Grow Up: preliminary indoor-growing opportunity for {address}.\nWe would welcome a discussion of this passive Kratky concept.\n{financial_text}\n{limitations}'
+    from app.personalities import presentation
+    introduction = presentation('uriel',f'Grow Up: preliminary indoor-growing opportunity for {address}.\nWe would welcome a discussion of this passive Kratky concept.\n{financial_text}\n{limitations}','email',introduce=True)['text']
     campaign = {'version':'uriel-campaign-2','property_id':str(payload['property_id']),
         'source_dossier_digest':payload['digest'],'status':'suppressed' if policy.get('suppressed') else 'draft_not_sent',
         'source_reports':refs,'claims':claims,'to':contact_assessment['email'] if contact_assessment['eligible_for_draft'] else None,
@@ -528,7 +529,7 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         'drafts':{'introduction_email':{'subject':f'Preliminary growing concept: {address}','body':introduction},
             'follow_up_email':{'subject':f'Possible follow-up: {address}','body':introduction+'\nDraft follow-up only; send history must be checked before any contact.'},
             'letter':introduction,'flyer':introduction,'business_card':{'organization':'Grow Up','description':'Preliminary property-to-agriculture feasibility','contact':None}},
-        'execution':{'enabled':False,'sent':False,'provider_calls':0},
+        'execution':{'enabled':False,'sent':False,'provider_calls':0,'human_channels':['email'],'postal_delivery_enabled':False},
         'missing':([] if contact_assessment['eligible_for_draft'] else ['owner_contact_evidence'])+([] if claims else ['complete_financial_assessment']),
         'limitations':[limitations,'Draft creation does not establish channel permission or recipient identity.']}
     campaign['claim_review']={'financial_claim_count':len(claims),'factual_source_authentication':'not established by draft creation',
@@ -540,6 +541,7 @@ def prepare_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     campaign['collateral'] = collateral(introduction)
     campaign['data_provenance'] = 'synthetic' if dossier.get('synthetic') else 'inherited_evidence'
     campaign['campaign_plan'] = {'day_offsets':[0,7,14,21], 'window':'one month',
+        'human_contact_channel':'email','physical_mail_enabled':False,'collateral_distribution':'email_attachment_only',
         'contact':'simeon@growup.securecodeusa.com', 'costs':'increasing collateral tiers; dollar costs unknown',
         'status':'draft_not_scheduled'}
     campaign['campaign_id'] = 'campaign:'+digest_payload(campaign)

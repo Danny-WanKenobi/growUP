@@ -109,6 +109,8 @@ def http(rid,mid,phase,body=None):
     key=os.getenv('RESEND_API_KEY' if sending else 'RESEND_RECEIVING_API_KEY','')
     if not key.startswith('re_'):raise WorkflowError('CSR private API credential missing')
     if sending:
+        from app.personalities import require_channel
+        require_channel('csr','email','outbound',human_initiated=bool((body.get('headers') or {}).get('In-Reply-To')))
         if os.getenv('DEMO_MODE','yes')!='no' or os.getenv('CSR_EMAIL_DELIVERY_APPROVED','0')!='1':
             raise WorkflowError('CSR real delivery is not enabled')
         if (set(body)!={'from','to','reply_to','subject','text','headers'} or body['from']!=endpoint()
@@ -181,7 +183,7 @@ def process(rid):
                 detail={**detail,'text':text},response_digest=digest_payload(detail)))
             identity=hashlib.sha256(('csr-email:'+job['message_id']).encode()).hexdigest()
             csr.transaction('email_session',lambda conn:csr.session(conn,identity,True))
-            response=csr.respond(identity,job['message_id'],text[:4000])
+            response=csr.respond(identity,job['message_id'],text[:4000],channel='email')
             if response['status']=='queued':status='queued'
             else:
                 body={'from':endpoint(),'to':[address(detail['from'])],'reply_to':endpoint(),

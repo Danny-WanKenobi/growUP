@@ -71,6 +71,7 @@ def demo_message(campaign, *, start_at, timezone_name):
         else:
             raise ValueError('campaign date cannot clear Sabbath guard')
         itinerary.append({'burst':index + 1, 'proposed_at':adjusted.isoformat(),
+            'delivery_channel':'email','collateral_distribution':'email_attachment_only','physical_mail_enabled':False,
             'original_at':planned.isoformat(), 'timezone':timezone_name,
             'sabbath_adjusted':adjusted != planned, 'email':index + 1,
             'letter':index if index else None, 'flyer':1 if index == 2 else 2 if index == 3 else None,

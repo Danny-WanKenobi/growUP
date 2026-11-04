@@ -190,9 +190,12 @@ def control(conn,*,package_entry,action,request_id,expected_revision,principal,a
                 or slots.get(lease['worker_id'],{}).get('principal')!=principal
                 or (worker_id is not None and worker_id!=lease['worker_id'])): raise WorkflowError('current response lease required')
         if action=='draft':
+            from app.personalities import require_channel,VERSION
             if not lease.get('message_id'): raise WorkflowError('response must reference an incoming message')
+            require_channel(actor,'email','outbound',human_initiated=True)
             if not isinstance(text,str) or not text.strip() or len(text)>8000: raise WorkflowError('bounded draft text required')
             draft={'owner':actor,'worker_id':lease['worker_id'],'epoch':state['epoch'],'in_reply_to':lease['message_id'],
+                'personality_version':VERSION,
                 'source_revision':state['revision'],'text':text,'status':'draft_only',
                 'review_required':True,'send_enabled':False,'signing_authorized':False}
             write(conn,run.run_id,'draft:'+request_id,draft)

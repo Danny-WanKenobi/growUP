@@ -110,9 +110,11 @@ def control(conn, *, conversation_id, action, principal, text=None, expected_rev
     if not isinstance(text, str) or not text.strip() or len(text) > 8000:
         raise WorkflowError("bounded response or rework notes required")
     if action == "draft":
+        from app.personalities import presentation
+        shown=presentation(state['owner'],text,'email',human_initiated=True,introduce=True)
         result = {"owner": state["owner"], "from": state["owner"] + "@" + domain(),
                   "to": inbound.payload["identity"]["from"], "in_reply_to": mid,
-                  "text": text, "status": "draft_only", "send_enabled": False,
+                  "text": shown['text'],"source_text":text,"personality_version":shown['personality_version'], "status": "draft_only", "send_enabled": False,
                   "principal": principal}
     elif action == "request_uriel_followup" and state["owner"] == "simeon":
         result = {"owner": "uriel", "conversation_id": mid, "inbound_record_digest": inbound.digest,

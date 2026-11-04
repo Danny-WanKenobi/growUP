@@ -82,7 +82,9 @@ HANDOFF_CONTRACT = (
 
 
 def describe_agents():
+    from app.personalities import PROFILES,profile
     return {
+        'personalities':[profile(agent) for agent in PROFILES],
         "version": "downstream-agents-2", "single_owner": True,
         "normal_operation": "Autonomous internal preparation within configured backend permissions; owner queue for unresolved exceptions and sensitive actions.",
         "workers_started": False, "external_execution_enabled": False,

@@ -26,9 +26,10 @@ def store(monkeypatch):
 
 def test_durable_pool_queues_and_reclaims_without_duplicate_completion(store):
     jobs=[]
-    csr.session(store,'test-session',True)
-    for _ in range(5):
-        rid,mid=csr.enqueue(store,'test-session',str(uuid4()),'Does Grow Up guarantee a profitable conversion?')
+    # Distinct conversations may run concurrently; one conversation is ordered.
+    for index in range(5):
+        identity='test-session-'+str(index);csr.session(store,identity,True)
+        rid,mid=csr.enqueue(store,identity,str(uuid4()),'Does Grow Up guarantee a profitable conversion?')
         jobs.append((rid,mid,csr.claim(store,rid,mid)))
     assert len({j[2].get('worker') for j in jobs[:4]})==4 and jobs[4][2]['queued']
     rid,mid,lease=jobs[0]
@@ -69,7 +70,8 @@ def test_public_page_csr_origin_and_cookie_isolation(store):
         assert client.post('/support/start',headers=origin,json={}).status_code==200
         body={'request_id':str(uuid4()),'text':'Construction contractor question'}
         response=client.post('/support/message',headers=origin,json=body)
-        assert response.status_code==200 and response.json()['escalate']=='solomon'
+        assert response.status_code==200 and response.json()['conversation_owner']=='solomon'
+        assert response.json()['handoff']['to']=='solomon' and response.json()['escalate'] is None
         token=client.cookies.get(public.COOKIE)
         with TestClient(app,base_url='https://growup.securecodeusa.com') as stranger:
             assert stranger.post('/support/message',headers=origin,json=body).status_code==401
@@ -113,7 +115,9 @@ def test_pg_csr_worker_contention_persistence_and_appointments(monkeypatch):
     _require_gate_database();monkeypatch.setenv('SABBATH_BLACKOUT','0')
     identity='pg-csr-'+uuid4().hex
     csr.transaction('test_session',lambda conn:csr.session(conn,identity,True))
-    jobs=[csr.transaction('test_enqueue',lambda conn:csr.enqueue(conn,identity,str(uuid4()),'What is Grow Up?')) for _ in range(5)]
+    identities=[identity+'-'+str(i) for i in range(5)]
+    for who in identities:csr.transaction('test_session',lambda conn,who=who:csr.session(conn,who,True))
+    jobs=[csr.transaction('test_enqueue',lambda conn,who=who:csr.enqueue(conn,who,str(uuid4()),'What is Grow Up?')) for who in identities]
     def claim(job):return csr.transaction('test_claim',lambda conn:csr.claim(conn,*job))
     with ThreadPoolExecutor(max_workers=5) as pool:leases=list(pool.map(claim,jobs))
     assert sum('worker' in lease for lease in leases)==4

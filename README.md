@@ -244,6 +244,92 @@ Implementation: `evidence_workbench`, `document_worker`, `refresh_workflow`,
 owner rework, linked reassessment, canonical custody and calculator services.
 Rolling back hides new controls while retaining original evidence and all history.
 
+### Agent personalities and bounded specialist chat
+
+`app/personalities.py` defines 17 versioned, presentation-only profiles: Gabriel,
+Gabriella, Raphael, Onesimus, Michael, Uriel, Priscilla, Nicole, Theresia Keys,
+Simeon, Solomon, Elmer, Yoseph, Deborah, Manny, CSR and Wondrue. Historical/Biblical
+inspiration is stylistic, not a claim of identity or credentials. Personal roles
+use neutral professional defaults rather than invented private-person traits.
+Profiles do not change voices, calculations, evidence classifications, report
+history, permissions or the canonical agent sequence. Gabriella’s profile does
+not install or activate a new discovery runtime. The private agent description
+exposes the profiles; no personality confers professional approval or authority.
+
+Server-side human-channel rules:
+
+- Wondrue: cockpit only, including its existing browser speech controls.
+- Uriel: outbound email only; no inbound conversation ownership or public chat.
+  Misdirected email remains infrastructure-owned notice handling. Letters/flyers/
+  brochures/cards are draft collateral or email attachments, not postal delivery.
+- Simeon: inbound email/chat and replies to human-initiated conversations; no
+  unsolicited prospecting. Existing exact-inbound and controlled-send guards remain.
+- Solomon: email/chat construction correspondence and preparation within configured
+  project/action permissions. This profile does not authorize work or a new delivery.
+- CSR: inbound email/chat and responses, with no unsolicited outbound contact.
+- Priscilla and other internal/advisory roles receive no human transport channels.
+
+The shared channel guard is used by mailbox draft preparation, retained Simeon
+response leases and controlled proof send paths, CSR send validation and Uriel’s
+recipient-restricted demo sender. It supplements existing authorization, correlation,
+suppression, duplicate-send and spending gates; provider-enable flags and credentials
+are unchanged. Uriel campaign metadata/itineraries explicitly identify email-only
+contact and disabled physical mail. Historical campaign packages remain immutable.
+
+The public **HELP** drawer now supports customer-initiated CSR → Simeon → Solomon
+→ CSR handover in the same durable, cookie-scoped support session. Buttons and text
+requests use the existing `/support/message` endpoint; no additional public route,
+private dossier lookup or caller-supplied role field is added. Responses label their
+actual assistant. `/support/start` resumes the current owner and retained chat
+history after refresh. Raw session tokens are never returned in the transcript.
+A different visitor cannot read another visitor’s history. Existing sessions remain
+readable; history predating the ordered message index is not fabricated.
+
+Messages in one conversation are processed in sequence; different conversations
+share the existing maximum four leased workers. Additional work queues rather than
+creating unlimited clones. Lease expiry, recovery, exact-request replay and the
+40-message/24-hour session bounds remain. Handover, session ownership, result and
+worker release commit atomically. A failure after inserting the handover rolls back
+before exposing a new owner. Recovery resumes the retained job; duplicate completion
+reuses the saved answer. Recovery selects earlier sequence numbers first. Emergency
+stop retains incoming questions without dispatching a reply.
+
+`app/specialist_chat.py` provides **preliminary deterministic guidance**, including
+financial-question framing and construction/change-order checkpoints. It is not an
+unrestricted specialist model, automated negotiation, binding advice or live human
+operator. Requests to sign/accept/pay/authorize consequential matters go to the
+existing owner-review queue and make no commitment. Email CSR questions continue
+as CSR email replies plus specialist review requests; web handover does not silently
+change an email sender or deliver a new message. User-supplied property references
+are unverified conversation context and never establish dossier correlation.
+
+Focused validation:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_specialist_chat.py tests/test_customer_service.py tests/test_csr_email.py tests/test_mailbox_routing.py tests/test_communications.py tests/test_correspondence_proof.py tests/test_uriel_campaign_package.py tests/test_wondrue_workspace.py -q -p no:cacheprovider
+node --check app/public_assets/site.js
+```
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-specialist-chat.py
+```
+
+The helper is development-only, restricted to `growup_mvp_gate`, with external
+network blocked. It proves bounded parallel conversations, ordered specialist
+handover, interrupted-write rollback, replay and retained session history. No full
+regression suite, real emails, calls, contracts or provider spending are required.
+Verified checkpoint: 57 targeted local tests passed (6 PostgreSQL-gated skips);
+2 dedicated PostgreSQL tests passed with external networking blocked. Browser checks
+confirmed CSR → Simeon → Solomon → CSR and retained owner/history after refresh.
+Implementation also touches `customer_service`, existing email/draft/campaign guards,
+private agent descriptions, public support presentation and the HELP drawer script.
+
+**Work That Can Wait — telephony: DEFERRED INDEFINITELY.** No telephony package,
+account, number, webhook, calling adapter, provider access or automatic activation
+is installed. If the owner later resumes this initiative, the proposed order is one
+inbound CSR call, then separately approved requested callbacks, then specialist
+routing. Submission passing does not automatically authorize or schedule those calls.
+
 ### Wondrue isolated narrated demonstration
 
 Open **https://growup.local:8443/wondrue/demo-tour** after preparation. From the

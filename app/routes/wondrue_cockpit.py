@@ -173,6 +173,8 @@ def message(chat_id:UUID,body:Message,request:Request):
             from app.wondrue_dossier_chat import explain
             result=explain(conn,context,body.text)
         else:result=answer(conn,body.text,body.intent)
+        from app.personalities import presentation
+        result={**result,**presentation('wondrue',result['text'],'cockpit',human_initiated=True)}
         return ws.append_turn(conn,chat_id,body.request_id,body.text,result,fingerprint)
     return safe_call('message',mutate,True)
 

@@ -71,6 +71,8 @@ def request(cfg, operation, method, path, body=None):
             raise WorkflowError('owner-only recipient and actor envelope required')
         if cfg['agent']=='simeon' and not (body.get('headers') or {}).get('In-Reply-To'):
             raise WorkflowError('Simeon cannot initiate contact')
+        from app.personalities import require_channel
+        require_channel(cfg['agent'],'email','outbound',human_initiated=bool((body.get('headers') or {}).get('In-Reply-To')))
     elif path not in ('/emails/receiving',) and not (
             path.startswith('/emails/receiving/') and str(UUID(path.rsplit('/',1)[1])) == path.rsplit('/',1)[1]) and not (
             path.startswith('/emails/') and str(UUID(path.rsplit('/',1)[1])) == path.rsplit('/',1)[1]):

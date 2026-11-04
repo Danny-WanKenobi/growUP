@@ -102,6 +102,8 @@ def outcome(config, rid, status, provider_id=None):
 
 
 def send_once(campaign, *, start_at, timezone_name):
+    from app.personalities import require_channel
+    require_channel('uriel','email','outbound')
     config = configuration()
     prepared = demo_message(campaign, start_at=start_at, timezone_name=timezone_name)
     mime = BytesParser(policy=policy.default).parsebytes(prepared['message_bytes'])

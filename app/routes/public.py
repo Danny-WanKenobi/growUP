@@ -86,8 +86,8 @@ async def start(request:Request):
     if request.cookies.get(COOKIE):
         try:
             who=identity(request)
-            await call('session_resume',lambda conn:csr.session(conn,who) and {'ok':True})
-            return JSONResponse({'ready':True,'assistant':'Grow Up Care','resumed':True})
+            state=await call('session_resume',lambda conn:csr.inspect_session(conn,who))
+            return JSONResponse({**state,'resumed':True})
         except HTTPException as exc:
             if exc.status_code not in (401,409):raise
     token=secrets.token_urlsafe(32); hashed=hashlib.sha256(token.encode()).hexdigest()
