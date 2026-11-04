@@ -189,3 +189,12 @@ def test_pg_workspace_history_search_library_review_and_claim_race(monkeypatch):
         assert ws.catalogue(conn,'Fictional test address')['items']
         assert ws.catalogue(conn,tasks=True)['items'] is not None
         assert ws.record(conn,run.run_id,'dossier_version','main')['digest']==row.digest
+    # Historical negative-test rows must be quarantined individually, not hide the Library.
+    bad_key='integrity-'+uuid4().hex
+    ws.transaction('test_bad_fixture',lambda c:put_record_in_transaction(c,run.run_id,kind='qualification',
+        record_key=bad_key,version=1,payload={'probe':bad_key},digest='ff'*32))
+    with get_connection() as conn:
+        item=ws.catalogue(conn,bad_key)['items'][0]
+        assert item['status']=='integrity_failed' and 'probe' not in item
+        with pytest.raises(WorkflowError,match='integrity'):
+            ws.record(conn,run.run_id,'qualification',bad_key)

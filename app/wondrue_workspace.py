@@ -65,18 +65,18 @@ def turns(conn, chat_id):
     return {'conversation':meta.payload, 'turns':items}
 
 
-def append_turn(conn, chat_id, request_id, text, answer):
+def append_turn(conn, chat_id, request_id, text, answer, input_digest=None):
     request_id = str(UUID(str(request_id)))
     text = _text(text, 4000, 'message')
     run, meta = chat(conn, chat_id)
     replay = read(conn, run.run_id, 'request:' + request_id)
     if replay:
-        if replay.payload['text'] != text:
+        if replay.payload['text'] != text or replay.payload.get('input_digest')!=input_digest:
             raise WorkflowError('message identity conflict')
         return replay.payload
     if meta.payload['count'] >= 200:
         raise WorkflowError('conversation has reached 200 turns; start a new chat')
-    value = {'request_id':request_id, 'text':text, 'answer':answer,
+    value = {'request_id':request_id, 'text':text, 'answer':answer, 'input_digest':input_digest,
              'created_at':instant().isoformat(), 'sequence':meta.payload['count'] + 1}
     if len(json.dumps(value)) > 150000:
         raise WorkflowError('answer too large; inspect the Library record instead')
@@ -120,8 +120,14 @@ def catalogue(conn, query='', offset=0, tasks=False):
     items = []
     for row in rows:
         if row['digest'] != digest_payload(row['payload']):
-            raise WorkflowError('retained record integrity failure')
+            # A quarantined row must not make every other retained record invisible.
+            # Never expose its claims or permit an action based on its payload.
+            items.append({'run_id':str(row['run_id']),'kind':row['kind'],'key':row['record_key'],
+                          'version':row['version'],'digest':row['digest'],'title':'Record needs integrity review',
+                          'status':'integrity_failed','note':'Claims quarantined. Inspection and operational proposals are refused.'})
+            continue
         p = row['payload']; d = p.get('dossier') or p
+        if not isinstance(d,dict):d={}
         items.append({'run_id':str(row['run_id']), 'kind':row['kind'], 'key':row['record_key'],
                       'version':row['version'], 'digest':row['digest'],
                       'title':str(d.get('name') or d.get('street_address') or p.get('requirement') or row['record_key'])[:180],

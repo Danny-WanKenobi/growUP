@@ -14,6 +14,7 @@ Mobile navigation overlays the page. Chat uses deterministic retained-record
 inspection, not a new language model or invented findings. It makes no provider
 calls. Library records are the latest dossier/qualification/Raphael/custody rows
 in the selected server database; the synthetic catalogue uses its separate viewer.
+Records with failed digests are quarantined individually: their claims/actions are blocked without hiding valid Library records.
 Retained agent tasks are explicitly marked as retained tasks: their original
 status alone does not establish the current owner-resolution state.
 
@@ -81,6 +82,20 @@ before this change also restores its older browser execution permissions, so do
 not treat that as a security-equivalent rollback. No SQL migrations are required
 for the cockpit's existing workflow store; sandbox DDL affects only its new database.
 Native mobile/store applications remain deferred; this milestone is browser-based.
+
+
+Verified checkpoint (November 4): 133 focused local checks passed, four gated checks
+skipped locally; all 14 workspace checks passed against dedicated PostgreSQL.
+The separate sandbox installer/runtime isolation proof passed on both approved
+servers before enablement. Browser verification used a localhost-only, network-blocked
+UI harness against `growup_mvp_gate` (test authentication only, never installed in
+the public application): conversation creation/reload/search, Library quarantine,
+explicit proposal rejection without dispatch, and isolated hypothetical storage.
+Desktop and 390-pixel phone layouts, navigation/account controls and zero horizontal
+overflow were inspected. Temporary preview services/tunnels are removed afterward.
+No paid providers, property discovery, outbound email or production dossier mutations
+were part of these checks. Unscoped agent tasks remain inspectable; this interface
+does not invent a generic resolver for tasks whose agent contracts lack one.
 
 
 ## Agent workflow decisions — November 3, 2026

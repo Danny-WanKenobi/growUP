@@ -131,13 +131,14 @@ def answer(conn,text,intent=None):
 def message(chat_id:UUID,body:Message,request:Request):
     authorize(request,True)
     def mutate(conn):
+        fingerprint=ws.digest_payload({'text':body.text.strip(),'intent':body.intent})
         run,_=ws.chat(conn,chat_id)
         replay=ws.read(conn,run.run_id,'request:'+str(body.request_id))
         if replay:
-            if replay.payload['text']!=body.text.strip():raise WorkflowError('message identity conflict')
+            if replay.payload['text']!=body.text.strip() or replay.payload.get('input_digest')!=fingerprint:raise WorkflowError('message identity conflict')
             return replay.payload
         result=answer(conn,body.text,body.intent)
-        return ws.append_turn(conn,chat_id,body.request_id,body.text,result)
+        return ws.append_turn(conn,chat_id,body.request_id,body.text,result,fingerprint)
     return safe_call('message',mutate,True)
 
 
