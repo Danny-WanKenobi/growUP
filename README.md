@@ -233,7 +233,9 @@ without horizontal overflow. No full regression suite was run.
 records found zero persisted verified category candidates. The real-proof view
 checks stored authorization/custody/downstream gaps; it does not execute a fresh
 end-to-end pipeline or certify a real property. Legitimate Raphael needs-evidence
-returns remain intact. A positive real-data operating proof requires authenticated
+returns, downstream report gaps and incomplete handoff to Manny remain blockers.
+The existence of reports alone never establishes completed downstream processing.
+A positive real-data operating proof requires authenticated
 category evidence before further authorized execution; synthetic fixtures cannot
 close that milestone.
 

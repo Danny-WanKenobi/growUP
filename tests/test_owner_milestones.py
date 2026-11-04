@@ -218,6 +218,26 @@ def test_real_operating_proof_refuses_test_material(retained):
     with pytest.raises(WorkflowError,match='test fixtures'):inspect(conn,ref)
 
 
+def test_real_gate_summary_does_not_confuse_reports_with_completed_handoff(monkeypatch):
+    from types import SimpleNamespace
+    from app import real_operating_proof as proof
+    from app.agents.registry import PIPELINE_IDS
+    reports={a:{'digest':'TEST-report','missing':[],'status':'complete'} for a in PIPELINE_IDS}
+    row=SimpleNamespace(payload={'property_id':'TEST','dossier':{'reports':reports}},digest='TEST-source',version=1)
+    monkeypatch.setattr(proof,'_load',lambda *a:(row,'TEST-dossier'))
+    monkeypatch.setattr(proof,'guard',lambda *a:None)
+    monkeypatch.setattr(proof,'evaluate_dossier',lambda *a:{'outcome':'authorized','basis':[]})
+    monkeypatch.setattr(proof,'verify_chain_in_transaction',lambda *a:2)
+    monkeypatch.setattr(proof,'current_custody_in_transaction',lambda *a:{'holder':'simeon'})
+    monkeypatch.setattr(proof,'stale_dependencies',lambda *a:{})
+    ref={'run_id':str(uuid4()),'key':'TEST','version':1,'digest':'TEST-source'}
+    result=proof.inspect(None,ref)
+    assert result['status']=='authorized_with_downstream_work_pending' and 'owner_handoff_not_complete' in result['blockers']
+    monkeypatch.setattr(proof,'current_custody_in_transaction',lambda *a:{'holder':'manny'})
+    reports['solomon']['missing']=['TEST inspection evidence']
+    assert 'report_gap:solomon' in proof.inspect(None,ref)['blockers']
+
+
 @pytest.mark.skipif(os.getenv('GROWUP_PG_INTEGRATION')!='1',reason='Dedicated gate proof explicitly disabled')
 def test_pg_evidence_rework_refresh_and_interruption(monkeypatch):
     from tests.test_dcad_admission import _require_gate_database

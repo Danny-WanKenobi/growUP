@@ -19,6 +19,8 @@ def inspect(conn,source):
         'missing':(reports.get(a) or {}).get('missing',['retained_report'])} for a in PIPELINE_IDS if a!='gabriel']
     blockers=list(verdict['basis']) if verdict['outcome']!='authorized' else []
     blockers+=['missing_report:'+m['agent'] for m in manifest if not m['report_digest']]
+    blockers+=['report_gap:'+m['agent'] for m in manifest if m['report_digest'] and (m['missing'] or m['status'] in ('needs_evidence','rejected','blocked'))]
+    if (holder or {}).get('holder')!='manny':blockers.append('owner_handoff_not_complete')
     blockers+=['stale_report:'+a for a in stale_dependencies(reports)]
     return {'source':source,'property_id':row.payload['property_id'],'address':row.payload['dossier'].get('street_address'),
         'status':'blocked_needs_evidence' if verdict['outcome']!='authorized' else 'retained_downstream_complete' if not blockers else 'authorized_with_downstream_work_pending',
