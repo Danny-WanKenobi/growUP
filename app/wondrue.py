@@ -86,6 +86,7 @@ CONSEQUENTIAL_INTENTS = frozenset(
         "commit_retained_assessment",
         "start_demo",
         "start_handoff_demo",
+        "exercise_demo_obligations",
         "advance_handoff_demo",
         "compare_scenarios",
         "stop",
@@ -248,7 +249,7 @@ def preview_intent(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Concrete preview for ask mode (operations, effects, cost bounds)."""
-    if intent in ("start_handoff_demo","advance_handoff_demo"):
+    if intent in ("start_handoff_demo","advance_handoff_demo","exercise_demo_obligations"):
         return {"operations":["one bounded synthetic custody step in the isolated demo database"],
             "inputs":dict(args),"effects":"synthetic append-only records only; no operational property or external action",
             "cost_bounds":{"provider_calls":0,"outreach":0,"operational_writes":0}}
@@ -547,10 +548,10 @@ def _synthetic_gate() -> None:
 
 
 def _execute_demo(intent: str, args: dict[str, Any], store: DemoStore) -> dict[str, Any]:
-    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
+    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo","exercise_demo_obligations"):
         from app.handoff_demo import service
-        action={"start_handoff_demo":"start","advance_handoff_demo":"advance","inspect_handoff_demo":"inspect"}[intent]
-        return service(action,run_key=args.get("run_key"),fail_at=args.get("fail_at") or None,
+        action={"start_handoff_demo":"start","advance_handoff_demo":"advance","inspect_handoff_demo":"inspect","exercise_demo_obligations":"owner_story"}[intent]
+        return service(action,run_key=args.get("run_key"),fail_at=args.get("fail_at") or None,scenario_id=args.get("scenario_id") or None,
                        expected_sequence=args.get("expected_sequence"),principal=args.get("_handoff_principal") or "unknown")
     if intent == "start_demo":
         _synthetic_gate()
@@ -1500,7 +1501,7 @@ def handle_command(
         if target != "real":
             raise WondrueError("engineering release is restricted to the real pipeline")
         args["_release_principal"] = principal
-    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo"):
+    if intent in ("start_handoff_demo","advance_handoff_demo","inspect_handoff_demo","exercise_demo_obligations"):
         if target!="demo" or use_live:
             raise WondrueError("handoff demonstrations require synthetic target and live inference disabled")
         args["_handoff_principal"] = principal
@@ -1555,7 +1556,7 @@ def handle_command(
             args = dict(entry["args"])
             if intent in ("coordinate_dossier", "record_solomon_project", "prepare_elmer_intake", "prepare_owner_brief", "resolve_owner_exception", "dispatch_owner_rework", "reassess_owner_rework", "file_owner_vault", "record_asset_observation", "monitor_asset_obligations", "reconcile_elmer", "complete_elmer_intake", "consult_adviser", "dispatch_simeon", "import_campaign_tracking", "enroll_resend_message", "control_communications") and args.get("_coordinator_principal") != principal:
                 raise WondrueAuthError("coordinator approval belongs to a different operator")
-            if intent in ("start_handoff_demo","advance_handoff_demo") and args.get("_handoff_principal")!=principal:
+            if intent in ("start_handoff_demo","advance_handoff_demo","exercise_demo_obligations") and args.get("_handoff_principal")!=principal:
                 raise WondrueAuthError("handoff demo approval belongs to a different operator")
             if intent in ("release_engineering","commit_retained_assessment") and args.get("_release_principal") != principal:
                 raise WondrueAuthError("engineering release approval belongs to a different operator")

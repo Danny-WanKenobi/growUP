@@ -6011,3 +6011,108 @@ exclusion, development-target refusal, overlap, deadline and cursor/failure
 fairness. The PostgreSQL coordinator gate exercises the real candidate query,
 daily idempotency, persisted check status and unchanged canonical dossier on an
 unchanged routine check. These tests do not activate a timer or enroll production.
+
+#### Nationwide synthetic property showcase (isolated demo only)
+
+The current fixture contract is `handoff-fixtures-12`. Previous contracts 1–11
+remain inspectable; unfinished historical runs are read-only. New records never
+rewrite the earlier proof or substitute synthetic data into `growup_dev`.
+`app.demo_catalogue` supplies **16 invented properties**, four per display type:
+
+| Type | Fictional properties and real geographic settings |
+| --- | --- |
+| High-rise | Hudson Lantern Tower, New York NY (62 stories); Cascadia Glass Spire, Seattle WA (44); Loop Atrium Tower, Chicago IL (53); Tidal Crown Tower, Miami FL (38) |
+| General commercial | Plainview Neighborhood Plaza, Cleveland OH; Archive Arcade, Boston MA; Station Annex Offices, Los Angeles CA; Breeze Court Shops, Honolulu HI |
+| Warehouse/industrial | Rivet Hall Distribution, Detroit MI; Elm Fork Sample Depot, Dallas TX; Mesa Coolhouse, Phoenix AZ; Boreal Bay Logistics, Anchorage AK |
+| Empty outdoor lot | Rowhouse Grove Lot, Baltimore MD; Peach Canopy Lot, Atlanta GA; High Plains Pocket Lot, Denver CO; Rain Garden Commons Lot, Portland OR |
+
+Names, street addresses, evidence, obligations, contacts and capacities are
+invented and prominently labeled. Cities/states are geographic settings, not
+claims about real buildings or source coverage. This illustrates US regions,
+Alaska and Hawaii; it is not all-state coverage. No real address, owner, delivery
+recipient or business commitment is generated. `records.fiction.example` and
+fictional email destinations are non-delivery example references.
+
+The **13-run checkpoint matrix** still covers one complete Gabriel→Manny GO path
+and one deliberate NO-GO at each of the 12 agents, followed by each return receipt
+back to Gabriel. The **16 property stories** add seven GO and nine NO-GO outcomes:
+missing usable floor area despite a tall building; unresolved tower/annex identity;
+missing regulatory jurisdiction; missing market price with explicit HVAC
+assumptions; duplicate invoice identity; and outdoor admission/evidence gaps.
+Actual shared deterministic policies, calculators, specialist intake functions and
+canonical dossier/version/snapshot/receipt services decide these implemented
+checks. This is not proof of professional competence, source authenticity, actual
+ownership, legal permission, construction safety, financing or real deal closure.
+
+Building categories use category-specific inputs in a private fictional authority
+registry; high-rises are not verified as warehouses. Successful catalogue layouts
+use explicit assumed dimensions and quantified light, nutrient and labor inputs.
+Only a selected pilot room/floor is modeled, not an entire skyscraper. Financial
+GO requires a favorable complete result under the fictional assumptions. Tenant
+relocation, daylight, water availability and other story details remain unresolved
+constraints unless actually calculated by an existing helper; narrative is not
+proof that those problems were solved.
+
+**Outdoor boundary:** the schemaless demo descriptor `vacant_lot` does not add a
+new production database category, discovery engine or verification policy. Each
+lot is returned at Raphael because real outdoor admission is unsupported. The
+existing Onesimus food-forest concept helper produces a separately labeled
+preview with layered-planting context and unknown soil/water inputs. It provides
+no fabricated outdoor yield, profitability, planting density or authorization.
+Indoor Kratky formulas are never applied to these lots.
+
+Every successful catalogue property can retain a fictional dated obligation in
+Manny's register. Elm Fork's bounded owner story additionally exercises due-today
+(not overdue), later overdue, queue creation, reported completion, explicit
+synthetic administrative review, immutable vault filing, a later dispute, a new
+exception and Elmer's read-only verification that the archived copy is unchanged.
+Fixed story dates are 2026-11-03 through 2026-11-13. They are a replayable clock,
+not actual current deadlines or payments. Original reports remain unchanged.
+The operational automatic monitor continues to exclude these synthetic records.
+This proves the isolated owner workflow without removing real evidence/custody
+requirements or enrolling invented obligations as real liabilities.
+
+The authenticated `/wondrue/handoff-demo` page now offers the property selector,
+the generic per-agent checkpoint selector, a property-specific story, the custody
+timeline and full labeled dossier. Use **Exercise owner obligations & protected
+filing** only after a current catalogue GO run reaches Manny. It executes a bounded
+predefined synthetic script; no arbitrary real obligation or review is accepted.
+Wondrue requires demo target, live inference disabled and existing mutation
+permissions; approval tokens remain principal-bound. Inspection stays read-only.
+The UI uses textContent/escaped labels, keeps credentials in memory only, and
+supports inspecting historical runs. It does not send mail or record a video.
+
+Populate and prove the existing dedicated demo database after deployment:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-demo-catalogue.py
+```
+
+The owner-run wrapper requires securecode-dev and the active development release,
+uses only the existing root-restricted `handoff-demo.env`, and supplies
+`MVP_WORKFLOW_ENABLED=1` only to its transient isolated child. It does not alter
+shared settings, rotate credentials, provision databases, migrate, restart the
+application or enable operational workers. It persists **29 runs** (13 matrix +
+16 catalogue), emits a sanitized proof under `/home/ubuntu/`, and lists run keys
+for the viewer. On interruption, retry with the **same** `--run-key` printed by
+the wrapper; run identities and completed steps are idempotent. A new prefix
+creates additional synthetic history rather than replacing old records. The
+wrapper has a 300-second service limit; each pipeline run uses the existing
+bounded step limit. The owner lifecycle commits atomically and its completed
+marker prevents duplicate execution.
+
+Direct commands in an explicitly configured demo environment:
+
+```bash
+python -B -m app.handoff_demo catalogue
+python -B -m app.handoff_demo run --run-key demo-handoff-my-tower --scenario-id hudson-sky
+python -B -m app.handoff_demo owner_story --run-key demo-handoff-my-tower
+python -B -m app.handoff_demo showcase-suite --run-key demo-handoff-my-showcase
+```
+
+Catalogue selection is pinned to the run and conflicting replays/failure overrides
+refuse. A database/role/domain/key mismatch still refuses before synthetic writes.
+Tests cover every catalogue outcome, geographic/type diversity, correct gate and
+return path, profile binding, owner lifecycle replay and vault preservation;
+existing matrix, isolation, JavaScript rendering and history tests remain in use.
+No provider calls or real-world business actions are part of these scenarios.

@@ -74,7 +74,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release",required=True)
     parser.add_argument("--apply",action="store_true")
-    parser.add_argument("--prove",action="store_true",help="run and archive all 15 synthetic scenarios after setup")
+    parser.add_argument("--prove",action="store_true",help="run and archive the canonical checkpoint scenarios after setup")
     args=parser.parse_args()
     release=Path(args.release).resolve(strict=True)
     if release.parent!=Path("/var/www/growup/releases") or not (release/"app/handoff_demo.py").is_file():

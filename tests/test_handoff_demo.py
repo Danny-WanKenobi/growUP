@@ -336,12 +336,12 @@ def test_viewer_render_synchronizes_current_and_historical_scenarios():
 const assert=require('node:assert/strict');
 function element(){return {value:'',options:[],children:[],appendChild(child){this.children.push(child);this.options.push(child);},replaceChildren(){this.children=[];}};}
 const elements={};
-for(const id of ['scenario','status','identity','events','details','key','run','new','step','play','inspect','stop'])elements[id]=element();
+for(const id of ['property','owner','story','owner-status','scenario','status','identity','events','details','key','run','new','step','play','inspect','stop'])elements[id]=element();
 elements.scenario.options=[{value:''},{value:'manny'}];
 const document={getElementById:id=>elements[id],createElement:()=>element()};
 """
     assertions = r"""
-const data={phase:'complete_go',current_holder:'manny',verified_receipts:13,dossier_id:'fictional',property_id:'fictional',events:[]};
+const data={phase:'complete_go',current_holder:'manny',verified_receipts:13,dossier_id:'fictional',property_id:'fictional',events:[],dossier:{dossier:{}}};
 render({...data,scenario:'manny'});assert.equal(elements.scenario.value,'manny');
 render({...data,scenario:'all_go'});assert.equal(elements.scenario.value,'');
 render({...data,scenario:'dan'});assert.equal(elements.scenario.value,'dan');

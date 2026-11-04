@@ -293,3 +293,19 @@ Stop future ticks using `sudo systemctl disable --now growup-asset-monitor.timer
 stop an active cycle separately using `sudo systemctl stop growup-asset-monitor.service`.
 The durable cursor/checkpoints survive stops and release updates. Root README
 contains detailed bounds, daily deduplication and failure semantics.
+
+## Expanded isolated US demo catalogue
+
+After normal code/regression acceptance, populate the existing dedicated demo DB:
+
+```bash
+sudo /usr/bin/python3 /var/www/growup/current/deployment/prove-demo-catalogue.py
+```
+
+This runs 29 bounded synthetic cases using the existing demo-only environment,
+role and signing key, and prints stored run keys plus a sanitized proof path.
+No provisioning, migrations, operational records, shared configuration, services,
+providers or deliveries are changed. Failure preserves partial demo progress;
+retry with the same printed `--run-key` to resume. See the root README for the
+16-property catalogue, 12-agent GO/NO-GO matrix, synthetic owner-obligation/vault
+story and the deliberately unsupported outdoor-admission boundary.

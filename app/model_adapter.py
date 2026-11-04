@@ -182,7 +182,7 @@ INTENTS = frozenset(
         "dispatch_simeon",
         "inspect_communications",
         "inspect_resend_poll",
-        "start_handoff_demo",
+        "start_handoff_demo", "exercise_demo_obligations",
         "advance_handoff_demo",
         "inspect_handoff_demo",
     }

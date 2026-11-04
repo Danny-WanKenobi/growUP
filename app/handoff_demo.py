@@ -21,7 +21,7 @@ from app.custody_db import (create_version_in_transaction, snapshot_in_transacti
     latest_version_in_transaction)
 
 STAGES = PIPELINE_IDS
-FIXTURE_VERSION = "handoff-fixtures-11"
+FIXTURE_VERSION = "handoff-fixtures-12"
 MAX_STEPS = 2*len(STAGES)
 
 
@@ -66,7 +66,7 @@ def _get(conn, run_key, lock=False):
         raise WorkflowError("unknown synthetic handoff run")
     if lock:
         run = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", "handoff-fixtures-10", FIXTURE_VERSION) or not run.limits.get("synthetic"):
+    if (run.limits or {}).get("fixture_version") not in ("handoff-fixtures-1", "handoff-fixtures-2", "handoff-fixtures-3", "handoff-fixtures-4", "handoff-fixtures-5", "handoff-fixtures-6", "handoff-fixtures-7", "handoff-fixtures-8", "handoff-fixtures-9", "handoff-fixtures-10", "handoff-fixtures-11", FIXTURE_VERSION) or not run.limits.get("synthetic"):
         raise WorkflowError("run is not a supported synthetic handoff fixture")
     return run
 
@@ -84,17 +84,19 @@ def _write_state(conn, run, state, version):
                                      version=version,payload=state,digest=digest_payload(state))
 
 
-def _fixture_verification():
+def _fixture_verification(category="warehouse_industrial", levels=40):
     from app.agents.gabriel.source_registry import SourceRegistry, RegistryEntry, SourceClass
     from app.agents.gabriel.verification import verify_category, VerificationRequest, VoiceInput, IdentityAttestation
     # Private FICTIONAL registry: never inserted into the production registry.
     registry = SourceRegistry(entries={"records.fiction.example":RegistryEntry(
         hostname="records.fiction.example",source_class=SourceClass.AUTHORITATIVE,
         publisher="Fictional demo authority",record_types=["fictional_account"])})
-    return verify_category(VerificationRequest(claim="warehouse_industrial",registry=registry,
+    if category not in ("high_rise","commercial_property","warehouse_industrial"): return None
+    facts={"levels":str(levels),"building":"skyscraper"} if category=="high_rise" else {"use":"office" if category=="commercial_property" else "warehouse","use_status":"current"}
+    return verify_category(VerificationRequest(claim=category,registry=registry,
         identity=IdentityAttestation(group_key="main",aligned=True,note="SYNTHETIC identity fixture only"),
         voices=[VoiceInput(url="https://records.fiction.example/fiction-warehouse",record_type="fictional_account",
-                           provenance="adapter_collected",defining_facts={"use":"warehouse","use_status":"recorded"})])).model_dump(mode="json")
+                           provenance="adapter_collected",defining_facts=facts)])).model_dump(mode="json")
 
 
 def _fixture(run_key, fail_at):
@@ -159,25 +161,31 @@ def _fixture(run_key, fail_at):
             "identity_disputes":{},"conflicts":[],"reports":{},"specialist_inputs":inputs})}))
 
 
-def start_in_transaction(conn, *, run_key, fail_at=None):
+def start_in_transaction(conn, *, run_key, fail_at=None, scenario_id=None):
     assert_database(conn)
     run_key = _key(run_key)
+    from app.demo_catalogue import get_case,apply
+    profile=get_case(scenario_id)
+    if profile:
+        if fail_at not in (None,profile["expected_failure"]): raise WorkflowError("catalogue failure cannot be overridden")
+        fail_at=profile["expected_failure"]
     if fail_at is not None and fail_at not in STAGES:
         raise WorkflowError("fail_at must name one canonical checkpoint")
     prior = get_run_by_key_in_transaction(conn,run_key)
     if prior:
-        if prior.limits.get("fail_at")!=fail_at or prior.limits.get("fixture_version")!=FIXTURE_VERSION:
+        if prior.limits.get("fail_at")!=fail_at or prior.limits.get("fixture_version")!=FIXTURE_VERSION or prior.limits.get("scenario_id")!=scenario_id:
             raise WorkflowError("conflicting demo scenario replay")
         return inspect_in_transaction(conn,run_key=run_key)
     run = create_run_in_transaction(conn,idempotency_key=run_key,stage="handoff_demo",
-        limits={"synthetic":True,"fixture_version":FIXTURE_VERSION,"fail_at":fail_at})
+        limits={"synthetic":True,"fixture_version":FIXTURE_VERSION,"fail_at":fail_at,"scenario_id":scenario_id})
     # Serialize starts before writing append-only versions, including racing replays.
     locked = get_run_in_transaction(conn,run.run_id,for_update=True)
-    if locked.limits.get("fail_at")!=fail_at or locked.limits.get("fixture_version")!=FIXTURE_VERSION:
+    if locked.limits.get("fail_at")!=fail_at or locked.limits.get("fixture_version")!=FIXTURE_VERSION or locked.limits.get("scenario_id")!=scenario_id:
         raise WorkflowError("conflicting concurrent demo scenario replay")
     if get_record_in_transaction(conn,run.run_id,"research_artifact","handoff-state"):
         return inspect_in_transaction(conn,run_key=run_key)
-    payload = _fixture(run_key,fail_at)
+    payload = _fixture(run_key,None if profile else fail_at)
+    if profile: payload=sealed(apply(payload,profile,_fixture_verification(profile["property_type"],profile.get("levels") or 40)))
     put_record_in_transaction(conn,run.run_id,kind="dossier_version",record_key="main",version=1,
                               payload=payload,digest=payload["digest"])
     did = dossier_id_for_property(payload["property_id"])
@@ -191,12 +199,15 @@ def start_in_transaction(conn, *, run_key, fail_at=None):
     return inspect_in_transaction(conn,run_key=run_key)
 
 
-def _site(fail=False):
+def _site(fail=False, profile=None):
     from app.agents.onesimus.service import ClassifiedInput
     from app.agents.onesimus.engineering import SITE_UNITS
     raw = {"usable_area_m2":100,"room_length_m":10,"room_width_m":10,"clear_height_m":4,
         "rack_length_m":2,"rack_width_m":1,"aisle_width_m":1,"service_clearance_m":.5,
         "tier_pitch_m":1,"ceiling_clearance_m":.5,"hvac_w_per_m2":10,"cleaning_l_per_site_cycle":.25}
+    if profile:
+        raw.update(profile.get("site_overrides") or {})
+        if profile.get("fault")=="missing_area": raw["usable_area_m2"]=None
     if fail:
         raw["usable_area_m2"] = None
     return {name:ClassifiedInput(name=name,value=value,unit=SITE_UNITS[name],classification="assumed",
@@ -212,6 +223,8 @@ def _report(agent, payload, fail_at):
     from app.agents.stages import build_report
     from app.michael import assess
     reports = payload["dossier"]["reports"]
+    profile=payload["dossier"].get("demo_scenario")
+    if profile: fail_at=None
     if agent=="gabriel":
         ok = bool(payload["dossier"]["sources"])
         report = {"schema_version":"gabriel-discovery-report-1","source_dossier_digest":payload["digest"],
@@ -219,21 +232,27 @@ def _report(agent, payload, fail_at):
     elif agent=="raphael":
         decision = evaluate_dossier(payload)
         report = build_inspection_report(payload,decision=decision,
-            site_inputs={k:v.model_dump(mode="json") for k,v in _site(fail_at=="onesimus").items()})
+            site_inputs={k:v.model_dump(mode="json") for k,v in _site(fail_at=="onesimus",profile).items()})
         ok = decision["outcome"]=="authorized"
         report["missing"] = [] if ok else decision["basis"]
     elif agent=="onesimus":
-        scenario = evaluate_scenario("bench",crop_profile(),_site(fail_at==agent))
+        crop=crop_profile()
+        if profile:
+            from app.agents.onesimus.service import ClassifiedInput
+            from app.agents.onesimus.engineering import CROP_UNITS
+            for name,value in {"ppfd_umol_m2_s":200,"labor_min_per_site_cycle":2,"nutrient_ml_per_site_cycle":10}.items():
+                crop[name]=ClassifiedInput(name=name,value=value,unit=CROP_UNITS[name],classification="assumed",provenance="FICTIONAL quantified planning assumption")
+        scenario = evaluate_scenario("bench",crop,_site(fail_at==agent,profile))
         scenario["dossier_digest"] = payload["digest"]
         report = build_engineering_report({"bench":scenario},inspection=reports["raphael"])
         ok = bool(scenario["complete"]) and report["status"]=="concept_ready"
     elif agent=="michael":
         scenario = reports["onesimus"]["alternatives"]["bench"]["scenario"]
         finance = _demo_financial_inputs("bench")
-        if fail_at==agent:
+        if fail_at==agent or (profile and profile.get("fault")=="market_price"):
             finance.pop("price_per_kg")
         assessment = assess("bench",scenario,finance)
-        ok = bool(assessment["complete"])
+        ok = bool(assessment["complete"]) and (not profile or assessment.get("verdict")=="favorable_under_assumptions")
         report = {"schema_version":"michael-finance-report-1","source_dossier_digest":payload["digest"],
             "source_engineering_digest":reports["onesimus"]["digest"],"assessments":{"bench":assessment},
             "missing":assessment["missing"]}
@@ -278,6 +297,8 @@ def advance_in_transaction(conn, *, run_key, expected_sequence):
         event.update(checkpoint=report["checkpoint"],report_digest=report["digest"],version=latest.version)
         if not ok:
             reason = "SYNTHETIC NO-GO at "+agent+": "+", ".join(report.get("missing") or ["intake checks incomplete"])
+            profile=source.payload["dossier"].get("demo_scenario")
+            if profile: reason+=" | "+profile["story"]
             state.update(reason=reason[:450],phase="returning" if state["index"] else "returned_to_gabriel")
             event["reason"] = state["reason"]
         elif state["index"]==len(STAGES)-1:
@@ -318,7 +339,11 @@ def inspect_in_transaction(conn, *, run_key):
         raise WorkflowError("synthetic display does not bind the current canonical dossier")
     verified = verify_chain_in_transaction(conn,did)
     holder = current_custody_in_transaction(conn,did)
-    return marked({"run_key":run_key,"fixture_version":run.limits["fixture_version"],"scenario":run.limits.get("fail_at") or "all_go",
+    owner_story=get_record_in_transaction(conn,run.run_id,"research_artifact","showcase-owner-story")
+    seed=get_record_in_transaction(conn,run.run_id,"research_artifact","showcase-owner-seed")
+    for item in (owner_story,seed):
+        if item and item.digest!=digest_payload(item.payload): raise WorkflowError("synthetic owner story failed integrity verification")
+    return marked({"owner_story":owner_story.payload if owner_story else None,"owner_obligation_seed":seed.payload if seed else None,"run_key":run_key,"fixture_version":run.limits["fixture_version"],"scenario":run.limits.get("fail_at") or "all_go","scenario_id":run.limits.get("scenario_id"),
         "property_id":source.payload["property_id"],"dossier_id":str(did),"phase":state["phase"],
         "sequence":state["sequence"],"current_holder":holder["holder"] if holder else "gabriel",
         "verified_receipts":verified,"events":deepcopy(state["events"]),
@@ -326,7 +351,7 @@ def inspect_in_transaction(conn, *, run_key):
         "proof_scope":"Shared canonical custody plus implemented synthetic checkpoint checks; not real property verification."})
 
 
-def service(action, *, run_key, fail_at=None, expected_sequence=None, principal="owner-cli"):
+def service(action, *, run_key, fail_at=None, scenario_id=None, expected_sequence=None, principal="owner-cli"):
     run_key = _key(run_key)
     from app.properties_db import get_connection
     cfg,key = configuration()
@@ -334,9 +359,13 @@ def service(action, *, run_key, fail_at=None, expected_sequence=None, principal=
         with scope(conn,key):
             try:
                 if action=="start":
-                    result = start_in_transaction(conn,run_key=run_key,fail_at=fail_at)
+                    result = start_in_transaction(conn,run_key=run_key,fail_at=fail_at,scenario_id=scenario_id)
                 elif action=="advance":
                     result = advance_in_transaction(conn,run_key=run_key,expected_sequence=expected_sequence)
+                elif action in ("seed_obligation","owner_story"):
+                    from app.demo_owner_story import exercise
+                    exercise(conn,_get(conn,run_key,lock=True),full=action=="owner_story")
+                    result=inspect_in_transaction(conn,run_key=run_key)
                 elif action=="inspect":
                     result = inspect_in_transaction(conn,run_key=run_key)
                 else:
@@ -366,8 +395,8 @@ def initialize():
     return {"database":DATABASE,"role":ROLE,"applied":run_migrations(config=cfg),"synthetic":True}
 
 
-def run_bounded_scenario(run_key, fail_at=None):
-    result = service("start",run_key=run_key,fail_at=fail_at)
+def run_bounded_scenario(run_key, fail_at=None, scenario_id=None):
+    result = service("start",run_key=run_key,fail_at=fail_at,scenario_id=scenario_id)
     for _ in range(MAX_STEPS):
         if result["phase"] in ("complete_go","returned_to_gabriel"):
             return result
@@ -397,22 +426,54 @@ def run_suite(prefix):
         "provider_calls":0,"operational_writes":0,"external_actions":0})
 
 
+
+def run_catalogue(prefix):
+    from app.demo_catalogue import CASES
+    _key(prefix)
+    if len(prefix)>55: raise WorkflowError('catalogue prefix must be at most 55 characters')
+    results=[]
+    for profile in CASES:
+        key=prefix+'-'+profile['id']
+        result=run_bounded_scenario(key,scenario_id=profile['id'])
+        expected='returned_to_gabriel' if profile['expected_failure'] else 'complete_go'
+        if result['phase']!=expected: raise WorkflowError('catalogue terminal outcome differs from declared expectation')
+        failures=[e['agent'] for e in result['events'] if e.get('checkpoint')=='NO-GO']
+        if failures!=([profile['expected_failure']] if profile['expected_failure'] else []): raise WorkflowError('catalogue rejected at an unintended checkpoint')
+        if not profile['expected_failure']:
+            result=service('owner_story' if profile['id']=='elm-fork' else 'seed_obligation',run_key=key)
+        results.append(dict(run_key=key,name=profile['name'],city=profile['city'],state=profile['state'],property_type=profile['property_type'],
+            phase=result['phase'],current_holder=result['current_holder'],verified_receipts=result['verified_receipts'],failure=failures,
+            owner_obligation_seed=result['owner_obligation_seed'],owner_story=result['owner_story']))
+    return marked(dict(result='PASS',scenarios=len(results),results=results,provider_calls=0,external_actions=0,operational_writes=0,
+        coverage='16 invented properties across US regions, Alaska and Hawaii; 4 per property type. Outdoor admission remains fail-closed.'))
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action",choices=("init","start","advance","inspect","run","suite"))
+    parser.add_argument("action",choices=("init","start","advance","inspect","run","suite","catalogue","catalogue-suite","showcase-suite","seed_obligation","owner_story"))
     parser.add_argument("--run-key")
     parser.add_argument("--fail-at",choices=STAGES)
     parser.add_argument("--sequence",type=int)
+    parser.add_argument("--scenario-id")
     args = parser.parse_args()
-    if args.action=="init":
+    if args.action=="catalogue":
+        from app.demo_catalogue import catalogue
+        result=catalogue()
+    elif args.action=="showcase-suite":
+        matrix=run_suite(args.run_key+"-matrix")
+        catalogue=run_catalogue(args.run_key+"-us")
+        result=marked(dict(result="PASS",scenarios=matrix["scenarios"]+catalogue["scenarios"],checkpoint_matrix=matrix,property_catalogue=catalogue,provider_calls=0,operational_writes=0,external_actions=0))
+    elif args.action=="catalogue-suite":
+        result=run_catalogue(args.run_key)
+    elif args.action=="init":
         result = initialize()
     elif args.action=="run":
-        result = run_bounded_scenario(args.run_key,args.fail_at)
+        result = run_bounded_scenario(args.run_key,args.fail_at,scenario_id=args.scenario_id)
     elif args.action=="suite":
         result = run_suite(args.run_key)
     else:
-        result = service(args.action,run_key=args.run_key,fail_at=args.fail_at,expected_sequence=args.sequence)
+        result = service(args.action,run_key=args.run_key,fail_at=args.fail_at,scenario_id=args.scenario_id,expected_sequence=args.sequence)
     print(json.dumps(result,indent=2,default=str))
 
 
