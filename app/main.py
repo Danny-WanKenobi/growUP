@@ -20,6 +20,7 @@ from app.routes.readiness import router as readiness_router
 from app.routes.wondrue import router as wondrue_router
 from app.routes.tracking_ingress import router as tracking_ingress_router
 from app.routes.resend_tracking import router as resend_tracking_router
+from app.routes.public import router as public_router
 
 
 def create_app() -> FastAPI:
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     application.include_router(wondrue_router)
     application.include_router(tracking_ingress_router)
     application.include_router(resend_tracking_router)
+    application.include_router(public_router)
     application.add_middleware(ReviewNoStoreMiddleware)
     return application
 

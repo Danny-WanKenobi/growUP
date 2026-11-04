@@ -4,7 +4,7 @@ from app.server_target import get_server_target,inspect
 from app.main import app
 
 
-@pytest.mark.parametrize('mode,origin,database',[('DEV_SERVER','https://securecodeusa.local:8443','growup_dev'),('LIVE_SERVER','https://growup.securecodeusa.com','growup_prod')])
+@pytest.mark.parametrize('mode,origin,database',[('DEV_SERVER','https://growup.local:8443','growup_dev'),('LIVE_SERVER','https://growup.securecodeusa.com:8443','growup_prod')])
 @pytest.mark.parametrize('demo',['yes','no'])
 def test_server_and_action_modes_are_independent(mode,origin,database,demo):
     result=inspect({'SERVER_MODE':mode,'DEMO_MODE':demo,'DATABASE_NAME':database})
@@ -21,6 +21,13 @@ def test_unknown_target_and_cross_server_database_do_not_fall_back(monkeypatch):
     with TestClient(app) as client:
         response=client.get('/ready')
         assert response.status_code==503 and response.json()['server_target']=='database_mismatch'
+
+
+def test_registered_callback_is_independent_of_public_ui_ports():
+    target=get_server_target({'SERVER_MODE':'LIVE_SERVER'})
+    assert target.url('/wondrue')=='https://growup.securecodeusa.com:8443/wondrue'
+    assert target.url('/integrations/resend/webhook')=='https://growup.securecodeusa.com/integrations/resend/webhook'
+    assert inspect({'SERVER_MODE':'DEV_SERVER'})['http_origin']=='http://growup.local:8080'
 
 
 def test_development_webhook_is_explicitly_unavailable_without_dispatch(monkeypatch):

@@ -6277,7 +6277,7 @@ repopulation or full regression is required.
 Set `SERVER_MODE=DEV_SERVER` (default) or `SERVER_MODE=LIVE_SERVER` in the private
 service environment. The central `app/server_target.py` maps Grow Up health,
 readiness, command, cockpit, demo-viewer and enrollment URLs to
-`https://securecodeusa.local:8443` or `https://growup.securecodeusa.com`. Browser
+`https://growup.local:8443` or `https://growup.securecodeusa.com:8443`. Browser
 relative calls stay on their current host; this setting does not redirect a
 credential-bearing request between servers or rewrite external provider URLs.
 Inspect the nonsecret selection with `python -B -m app.server_target`.
@@ -6586,3 +6586,116 @@ ordinary demo outreach remain disabled/simulated. VPS callback activation was
 not part of this proof; real transport ran from the development service.
 
 Resend threading reference: https://resend.com/docs/dashboard/receiving/reply-to-emails
+
+### Public landing page and Grow Up Care (CSR v1)
+
+The repository-native FastAPI root now serves a responsive public FAQ page with
+15 evidence-qualified questions, slim header/footer HELP and LOGIN controls,
+a left customer-care drawer and a right owner-login drawer. No account is needed
+for FAQ browsing or support. Local assets use no third-party fonts, scripts or
+trackers. Native modal dialogs provide focus trapping, Escape/close behavior,
+reduced-motion support and narrow-screen layouts. Text is inserted with textContent;
+public chat never renders customer HTML. Public support does not expose dossiers,
+financial records, API keys, operator grants or the Wondrue command interface.
+
+CSR is an off-pipeline support capability (`app.customer_service`, AgentId.CSR),
+not a new dossier custodian. V1 uses the shared FAQ knowledge deterministically;
+it does not claim an LLM was called. Unknown issues become support-review tickets.
+Deal questions route to Simeon, construction questions to Solomon, and exceptional
+issues to human_owner. A route is a durable request for review, not a promise that
+an agent has already resolved it. Four independent leased CSR workers share a
+persistent pool. Busy messages remain queued; a bounded recovery timer drains
+queued/expired jobs, fences stale workers and retains message-id replay protection.
+No new database or migration is required; shared workflow/audit stores are reused.
+
+POST /support/start creates/resumes an opaque 24-hour HttpOnly SameSite support
+session. POST /support/message requires that cookie, same-origin requests and a
+stable UUID request_id; sessions are isolated and capped at 40 messages. Edge and
+application rate limits bound abuse. Messages are actual support records, even
+when property DEMO_MODE is enabled; they are never relabeled as synthetic leads.
+The drawer warns visitors not to submit passwords or confidential documents.
+
+POST /support/appointment reserves a tentative 30-minute slot for Simeon or Solomon
+with an explicit contact email and aware timestamp. V1 windows are future weekdays
+09:00–17:00 America/Chicago, at most 90 days out, excluding Jerusalem Sabbath.
+Conflicts/repeated request IDs are checked durably. This is an internal tentative
+reservation requiring confirmation, not proof of external-calendar availability
+or an invitation. Calendar integration, cancellation/rescheduling UI and autonomous
+calendar acceptance are deferred. Private GET /support/admin/tickets requires
+Wondrue full access in addition to the private gateway and exposes only support
+review requests. The CSR cannot sign, procure, promise profitability or authorize work.
+
+The existing Nginx Basic Authentication file/credentials remain the owner validator.
+`deployment/configure-public-site.py --apply` (root on srv1577410) backs up the
+route/environment, creates private bridge/session secrets and exposes ONLY the
+exact public root, local asset directory and designated support endpoints.
+POST /owner-auth still requires the existing Basic credential; Nginx overwrites
+trusted identity/bridge headers. After successful validation a four-hour Secure,
+HttpOnly, SameSite owner cookie allows the existing private interface to open.
+Nginx auth_request validates it via an internal-only subrequest; Basic auth remains
+a fallback for existing clients. Unlisted paths, docs, enrollment and operational
+commands remain private; Wondrue's separate backend permission checks remain.
+Bad form credentials return JSON 403 rather than forcing a browser-native prompt.
+No owner password is stored by the new app and the htpasswd file is not replaced.
+The installer tests nginx/health and restores its configuration on failure.
+
+Inbound email address: csr@growup.securecodeusa.com. CSR-only webhook activation
+uses CSR_EMAIL_ENABLED=1 plus RESEND_MAILBOX_ROUTING_ENABLED=1 with the actual
+receiving domain/signing secret. RESEND_TRACKING_ENABLED can remain 0: other
+mailboxes/campaign events are acknowledged as ignored under this CSR-only scope.
+The existing signed raw-body verification remains mandatory. Duplicate callbacks
+reuse one message/job. A separate worker fetches only that authenticated message,
+checks exact retained envelope/RFC Message-ID, suppresses auto/list/bounce/self mail
+and requires provider DMARC pass before preparing an automated reply. Bounded
+HTML-to-text conversion executes no markup or remote content. No attachments are
+downloaded. The same CSR worker/FAQ/escalation logic handles email and web questions.
+
+DEMO_MODE=yes retains email drafts only. Actual CSR replies additionally require
+DEMO_MODE=no and CSR_EMAIL_DELIVERY_APPROVED=1; ordinary demo outreach remains
+simulated. The reply recipient and thread must bind the genuine retained inbound
+message and exact draft. There is no unsolicited send operation. Defaults cap
+fetches at 100/day, sends at 20/day and one automatic reply per sender per hour;
+a durable claim and Resend idempotency key precede transmission. Ambiguous/refused
+attempts require owner review; they are not automatically resent. API acceptance
+is not proof of delivery/read/interest. Real delivery activation has not been
+implied by creating the public page or configuring CSR-only inbound intake.
+
+Install `deployment/install-csr-worker.py --apply` with root on an approved host
+after deployment to enable the one-minute bounded timer. It inspects at most 20
+web jobs and 10 email jobs per invocation, with four workers and a 90-second unit
+limit. It respects the emergency stop/Sabbath guards and does not enable providers,
+change action mode or run discovery. Stop with
+`sudo systemctl disable --now growup-csr.timer`.
+
+Configuration: CSR_PUBLIC_ENABLED, CSR_EMAIL_ENABLED,
+CSR_EMAIL_DELIVERY_APPROVED, CSR_EMAIL_DAILY_MAX, CSR_EMAIL_FETCH_DAILY_MAX,
+PUBLIC_LOGIN_BRIDGE_SECRET and PUBLIC_SESSION_SECRET; private API credentials
+remain in server environment files. Use generated secrets, never repository values.
+Focused checks: tests/test_customer_service.py, tests/test_csr_email.py,
+tests/test_mailbox_routing.py and tests/test_resend_tracking.py. The PG test
+`test_pg_csr_worker_contention_persistence_and_appointments` is restricted to
+`growup_mvp_gate`. It verifies real contention, persisted replies/escalations and
+appointment replay. Browser visual QA depends on browser automation being enabled;
+HTTP/security tests alone do not establish a visual screenshot review.
+
+#### Explicit landing and operator ports
+
+DEV_SERVER uses http://growup.local:8080/ and https://growup.local:8443/;
+LIVE_SERVER uses http://growup.securecodeusa.com:8080/ and
+https://growup.securecodeusa.com:8443/. HTTP 8080 preserves the requested path
+and redirects to HTTPS 8443 before credentials can be submitted. Successful
+LOGIN opens /wondrue on that same HTTPS host/port. Standard live 443 remains
+a compatible site alias and continues to serve the registered signed Resend
+callback without redirecting provider POSTs. Callback origin is deliberately
+independent of the canonical UI origin in ServerTarget. No Resend registration
+change is required. Backend loopback ports remain dev 8001/live 8010.
+
+The public-site installer supports both approved hosts. Dev uses a dedicated
+growup.local virtual host, including guest ports 80/443 for the existing Windows
+8080/8443 forwards and direct guest ports 8080/8443. Existing other-site virtual
+hosts are preserved. The dev leaf certificate is issued by the already trusted
+Dev Local CA; adding growup.local does not add a new trusted root. Windows hosts
+needs 127.0.0.1 growup.local. The existing owner gateway hashes are privately
+reused on dev; no owner password is changed or exposed. The live installer opens
+only requested TCP ports 8080/8443 when UFW is active. Cloudflare supports those
+proxied HTTP/HTTPS ports: https://developers.cloudflare.com/fundamentals/reference/network-ports/.

@@ -74,7 +74,8 @@ async def enroll(body: Enrollment, request: Request):
 
 @router.post("/integrations/resend/webhook")
 async def webhook(request: Request):
-    enabled()
+    if os.getenv('CSR_EMAIL_ENABLED','0')!='1':
+        enabled()
     from app.server_target import get_server_target
     try: target=get_server_target()
     except ValueError: raise HTTPException(503,'invalid_server_target') from None
@@ -99,5 +100,14 @@ async def webhook(request: Request):
             raise ValueError()
     except (ValueError, UnicodeDecodeError, RecursionError):
         raise HTTPException(400, "invalid_resend_event") from None
+    if os.getenv('RESEND_TRACKING_ENABLED','0')!='1':
+        # CSR-only activation does not activate other mailboxes or campaign tracking.
+        from app.resend_tracking import address
+        try:
+            recipients=(event.get('data') or {}).get('to',[])
+            expected='csr@'+os.getenv('RESEND_RECEIVING_DOMAIN','').strip().lower()
+            is_csr=event.get('type')=='email.received' and len(recipients)==1 and address(recipients[0])==expected
+        except (ValueError,TypeError,PriscillaError):is_csr=False
+        if not is_csr:return {'accepted':True,'ignored':True,'reason':'csr_only_activation'}
     return await dispatch("receive", "resend-webhook", {
         "event": event, "event_id": event_id, "body_digest": hashlib.sha256(body).hexdigest()})

@@ -323,3 +323,26 @@ credentials. It does not run `tests/` or modify application environment files,
 service units, operational records or production. The command is deferred when
 local sudo authentication is unavailable; Windows targeted results and development
 health checks do not stand in for that PostgreSQL proof.
+
+
+## Public landing, login drawer and CSR (current URLs)
+
+- DEV_SERVER: http://growup.local:8080/ redirects to https://growup.local:8443/.
+- LIVE_SERVER: http://growup.securecodeusa.com:8080/ redirects to https://growup.securecodeusa.com:8443/.
+- LOGIN retains the existing Basic gateway, issues a short-lived secure owner
+  session and opens /wondrue on the same HTTPS host/port. Wondrue API grants remain
+  separate. Other operational routes are not exposed by public landing access.
+- Registered callback remains https://growup.securecodeusa.com/integrations/resend/webhook
+  on standard 443. It must not redirect provider POSTs to UI port 8443.
+
+After deploying reviewed code, root may preview/apply
+`python3 /var/www/growup/current/deployment/configure-public-site.py --apply`.
+The helper keeps private backups, validates nginx/readiness and preserves existing
+credentials/action-mode flags. Dev requires its trusted growup.local certificate
+and existing owner gateway file first; Windows needs its growup.local hosts entry.
+Then `python3 /var/www/growup/current/deployment/install-csr-worker.py --apply`
+installs bounded one-minute queue recovery. Neither command enables actual email
+delivery. CSR-only signed intake can be enabled without general campaign tracking.
+DEMO_MODE=yes retains replies as drafts; live CSR reply delivery needs an explicit
+DEMO_MODE=no and CSR_EMAIL_DELIVERY_APPROVED=1. Do not change global action mode
+merely to demonstrate the public page. No new migrations are required.

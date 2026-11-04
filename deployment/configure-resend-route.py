@@ -29,7 +29,8 @@ BLOCK='''    # Grow Up signed Resend callback; private preview remains inherited
 
 def revised(text):
     if 'location = /integrations/resend/webhook' in text:
-        if BLOCK not in text: raise ValueError('Existing callback location requires manual review')
+        if BLOCK not in text and BLOCK.replace('        auth_basic off;','        auth_basic off;\n        auth_request off;') not in text:
+            raise ValueError('Existing callback location requires manual review')
         return text
     pattern=r'(?m)^    location / \{\s*\n        proxy_pass http://127\.0\.0\.1:8010;'
     matches=list(re.finditer(pattern,text))

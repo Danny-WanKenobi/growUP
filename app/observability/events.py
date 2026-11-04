@@ -45,6 +45,7 @@ class AgentId(str, Enum):
     NICOLE = "nicole"
     THERESIA_KEYS = "theresia_keys"
     SIMEON = "simeon"
+    CSR = "csr"
     SOLOMON = "solomon"
     ELMER = "elmer"
     YOSEPH = "yoseph"

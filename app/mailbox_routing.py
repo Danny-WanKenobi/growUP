@@ -54,7 +54,7 @@ def receive(conn, *, metadata, event_id, body_digest, authentication):
         state = read(conn, run.run_id, "state")
         return {"accepted": True, "replayed": True, "mailbox": state.payload["owner"],
                 "conversation_id": mid, "external_actions": 0}
-    names = {"uriel", "simeon", "solomon"}
+    names = {"uriel", "simeon", "solomon", "csr"}
     name = local[0].split("@", 1)[0] if len(local) == 1 else None
     owner = name if name in names else "human_review"
     state = {"owner": owner, "revision": 1, "status": "metadata_requires_review",
@@ -105,8 +105,8 @@ def control(conn, *, conversation_id, action, principal, text=None, expected_rev
         raise WorkflowError("communications emergency-stopped")
     if isinstance(expected_revision, bool) or expected_revision != state["revision"]:
         raise WorkflowError("conversation revision changed")
-    if state["owner"] not in ("simeon", "solomon"):
-        raise WorkflowError("only Simeon or Solomon can prepare conversation responses")
+    if state["owner"] not in ("simeon", "solomon", "csr"):
+        raise WorkflowError("only Simeon or Solomon or CSR can prepare conversation responses")
     if not isinstance(text, str) or not text.strip() or len(text) > 8000:
         raise WorkflowError("bounded response or rework notes required")
     if action == "draft":

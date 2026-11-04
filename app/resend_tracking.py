@@ -157,6 +157,9 @@ def consume(conn, event, event_id, body_digest, *, authentication="resend_svix_h
             direct = receive_mailbox(conn, metadata=data, event_id=event_id,
                 body_digest=body_digest, authentication=authentication)
             if direct is not None:
+                if direct.get('mailbox')=='csr':
+                    from app.csr_email import enqueue
+                    enqueue(conn, data)
                 return direct
         recipients = data.get("to")
         if not isinstance(recipients, list) or not 1 <= len(recipients) <= 50:
