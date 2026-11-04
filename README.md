@@ -6699,3 +6699,13 @@ needs 127.0.0.1 growup.local. The existing owner gateway hashes are privately
 reused on dev; no owner password is changed or exposed. The live installer opens
 only requested TCP ports 8080/8443 when UFW is active. Cloudflare supports those
 proxied HTTP/HTTPS ports: https://developers.cloudflare.com/fundamentals/reference/network-ports/.
+
+Public routing verification includes public FAQ/assets, original Basic credential
+validation followed by the secure drawer session, denial of forged cookies/private
+API access, and real PostgreSQL CSR responses/replay on both hosts. Temporary
+gateway test credentials are removed after verification; original hashes remain
+byte-identical. Public browser automation is disabled in Work settings, so visual
+screenshot QA is not claimed. A public empty favicon response prevents incidental
+browser icon requests from invoking private Basic auth. Cloudflare may first
+redirect HTTP 8080 to standard HTTPS; the live 443 UI then redirects to canonical
+8443 while exempting the registered signed callback.

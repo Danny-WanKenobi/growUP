@@ -20,6 +20,18 @@ PROXY='''        proxy_pass http://127.0.0.1:8010;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 '''
+LIVE_REDIRECT='''    # Canonical UI port; preserve the registered standard-443 callback.
+    set $growup_ui_redirect 0;
+    if ($server_port = 443) { set $growup_ui_redirect 1; }
+    if ($uri = /integrations/resend/webhook) { set $growup_ui_redirect 0; }
+    if ($growup_ui_redirect = 1) { return 308 https://growup.securecodeusa.com:8443$request_uri; }
+'''
+FAVICON='''    location = /favicon.ico {
+        auth_basic off;
+        auth_request off;
+        return 204;
+    }
+'''
 
 
 def blocks(port=8010):
@@ -62,20 +74,24 @@ def blocks(port=8010):
         client_max_body_size 8k;
 '''+PROXY+'''    }
 '''
-    result+='''    location ^~ /public-assets/ {
+    result+=FAVICON+'''    location ^~ /public-assets/ {
         auth_basic off;
         auth_request off;
         limit_except GET { deny all; }
 '''+PROXY+'''    }
     # END Grow Up public landing
 '''
+    if port==8010:result=result.replace('    include /etc/nginx/growup-login-bridge.inc;',LIVE_REDIRECT+'    include /etc/nginx/growup-login-bridge.inc;')
     return result.replace('127.0.0.1:8010','127.0.0.1:'+str(port))
 
 
 def revised(text):
     marker='    # BEGIN Grow Up public landing'
     if marker in text:
-        if blocks() not in text:raise ValueError('Existing public routing requires review')
+        if blocks() not in text:
+            legacy=blocks().replace(LIVE_REDIRECT,'').replace(FAVICON,'')
+            if legacy in text:return text.replace(legacy,blocks())
+            raise ValueError('Existing public routing requires review')
         return text
     expected='    auth_basic_user_file /etc/nginx/growup.htpasswd;\n'
     if text.count(expected)!=1 or text.count('location = /integrations/resend/webhook')!=1:
@@ -133,7 +149,8 @@ def main():
     env=Path('/var/www/growup/shared/growup.env')
     if route.is_symlink() or env.is_symlink() or env.stat().st_mode&0o077:raise SystemExit('Regular reviewed route and private environment required.')
     original=route.read_text() if route.exists() else ''
-    if dev and original and original!=development_route():raise SystemExit('Existing growup.local route needs review.')
+    if dev and original and original not in (development_route(),development_route().replace(FAVICON,'')):
+        raise SystemExit('Existing growup.local route needs review.')
     updated=development_route() if dev else revised(original)
     if not Path('/etc/nginx/growup.htpasswd').is_file():raise SystemExit('Existing gateway credential file required.')
     if dev and not Path('/etc/nginx/ssl/growup.local.crt').is_file():raise SystemExit('Trusted growup.local certificate required first.')
