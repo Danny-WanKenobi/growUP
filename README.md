@@ -7610,3 +7610,16 @@ For an explicitly configured isolated demo environment,
 `python -m app.conversion_owner_demo` runs the bounded two-preference persistence
 proof and verifies unchanged source/custody. It appends demo records on first use;
 it is not a read-only command. No providers or external actions are involved.
+
+### Wondrue cockpit read-aloud
+
+The default cockpit supports **Read aloud** on each reply, optional **Read new
+replies aloud**, a local-voice selector and **Stop speaking**. Enable the checkbox
+for automatic reading of newly received replies; opening stored conversations
+does not start playback. Speech stops on a new chat or leaving the page. Only
+browser voices marked local are used; no microphone, paid speech service or
+remote-voice fallback is enabled. If no local voice is installed/available, text
+remains usable. Speech is bounded to the first 12,000 characters of a reply.
+This adds voice to the existing cockpit; it does not merge the separate tour UI.
+
+Focused check: `node --test tests/test_wondrue_speech.cjs`.
