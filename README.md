@@ -7611,19 +7611,20 @@ For an explicitly configured isolated demo environment,
 proof and verifies unchanged source/custody. It appends demo records on first use;
 it is not a read-only command. No providers or external actions are involved.
 
-### Wondrue cockpit read-aloud
+### Wondrue cockpit voice control
 
-The default cockpit supports **Read aloud** on each reply, optional **Read new
-replies aloud**, fixed local Microsoft Zira and **Stop speaking**. Enable the checkbox
-for automatic reading of newly received replies; opening stored conversations
-does not start playback. Speech stops on a new chat or leaving the page. Only
-local Microsoft Zira is used; there is no alternative-voice fallback or paid speech
-adapter. The **Microphone** button starts one browser dictation session after a
-click and permission; the browser may process audio online. Recognized words go
-into the composer for review, never automatic submission. Click again to stop.
-Unsupported/blocked dictation provides permission guidance and Windows+H fallback.
-If Microsoft Zira is unavailable, text
-remains usable. Speech is bounded to the first 12,000 characters of a reply.
-This adds voice to the existing cockpit; it does not merge the separate tour UI.
+The default cockpit uses one composer control: microphone when empty, stop while
+listening, and send-arrow when words are ready. Click to dictate, click stop to
+finish, review the transcript, then click the same control to send. Typed messages
+use the same send-arrow. Dictation never submits automatically. Browser permission
+is required; audio may be processed by the browser's online speech service.
+Unsupported browsers provide Windows+H fallback. No paid speech adapter is used.
+
+New replies automatically read aloud using local Microsoft Zira only. With an
+empty composer the same control stops playback. Each stored reply also has a
+Read aloud action. There is no voice selector or read-aloud checkbox. If Zira
+is unavailable, text remains available. Leaving the page or starting a new chat
+cancels speech and dictation. Playback is bounded to 12,000 characters per reply.
+This is browser dictation/read-aloud, not ChatGPT's realtime voice service.
 
 Focused check: `node --test tests/test_wondrue_speech.cjs`.
