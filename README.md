@@ -7614,11 +7614,15 @@ it is not a read-only command. No providers or external actions are involved.
 ### Wondrue cockpit read-aloud
 
 The default cockpit supports **Read aloud** on each reply, optional **Read new
-replies aloud**, a local-voice selector and **Stop speaking**. Enable the checkbox
+replies aloud**, fixed local Microsoft Zira and **Stop speaking**. Enable the checkbox
 for automatic reading of newly received replies; opening stored conversations
 does not start playback. Speech stops on a new chat or leaving the page. Only
-browser voices marked local are used; no microphone, paid speech service or
-remote-voice fallback is enabled. If no local voice is installed/available, text
+local Microsoft Zira is used; there is no alternative-voice fallback or paid speech
+adapter. The **Microphone** button starts one browser dictation session after a
+click and permission; the browser may process audio online. Recognized words go
+into the composer for review, never automatic submission. Click again to stop.
+Unsupported/blocked dictation provides permission guidance and Windows+H fallback.
+If Microsoft Zira is unavailable, text
 remains usable. Speech is bounded to the first 12,000 characters of a reply.
 This adds voice to the existing cockpit; it does not merge the separate tour UI.
 
